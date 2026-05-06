@@ -91,21 +91,6 @@ wire_api = "responses"  # 或 "chat"
 
 `~/.codex/auth.json` 可以忽略了。
 
-## 获取帮助
-
-<table>
-  <tr>
-    <td align="center"><img src="https://gitee.com/hea7en/images/raw/master/group/chat.png" alt="微信群" width="200"></td>
-    <td align="center"><img src="cmd/desktop/frontend/public/WeChat.jpg" alt="公众号" width="200"></td>
-    <td align="center"><img src="cmd/desktop/frontend/public/ME.png" alt="个人微信" width="200"></td>
-  </tr>
-  <tr>
-    <td align="center">问题反馈请加群</td>
-    <td align="center">公众号</td>
-    <td align="center">群过期请加好友</td>
-  </tr>
-</table>
-
 ## 文档
 
 - [详细配置](docs/configuration.md)
