@@ -247,6 +247,8 @@ export function initUI() {
                                         <label><input type="checkbox" value="gemini"> Gemini</label>
                                         <label><input type="checkbox" value="openai"> OpenAI</label>
                                         <label><input type="checkbox" value="openai2"> OpenAI2</label>
+                                        <label><input type="checkbox" value="deepseek"> DeepSeek</label>
+                                        <label><input type="checkbox" value="kimi"> Kimi</label>
                                     </div>
                                     <div class="panel-footer">
                                         <button class="btn-clear-dimension">${t('endpoints.filterClearDimension')}</button>
@@ -422,6 +424,8 @@ export function initUI() {
                             <option value="openai">OpenAI</option>
                             <option value="openai2">OpenAI2 (Responses API)</option>
                             <option value="gemini">Gemini</option>
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="kimi">Kimi / Moonshot</option>
                         </select>
                         <p style="color: #666; font-size: 12px; margin-top: 5px;">
                             ${t('modal.transformerHelp')}

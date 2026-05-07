@@ -20,9 +20,11 @@ Click the port number at the top of the interface and change it to another port 
 
 - Claude official or compatible services → `claude`
 - OpenAI or compatible services → `openai`
+- DeepSeek → `deepseek`
+- Kimi/Moonshot → `kimi`
 - Google Gemini → `gemini`
 
-**Q: Why is the model field required for OpenAI/Gemini?**
+**Q: Why is the model field required for OpenAI/Gemini/DeepSeek/Kimi?**
 
 Claude Code requests contain Claude model names. The proxy needs to know which target model to convert to.
 

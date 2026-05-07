@@ -21,6 +21,8 @@
 | `openai` | OpenAI Chat API |
 | `openai2` | OpenAI Response API |
 | `gemini` | Google Gemini API |
+| `deepseek` | DeepSeek OpenAI Chat compatible API |
+| `kimi` | Kimi/Moonshot OpenAI Chat compatible API |
 
 ### Configuration Examples
 
@@ -56,6 +58,30 @@
   "enabled": true,
   "transformer": "gemini",
   "model": "gemini-pro"
+}
+```
+
+**DeepSeek Endpoint:**
+```json
+{
+  "name": "DeepSeek",
+  "apiUrl": "https://api.deepseek.com",
+  "apiKey": "sk-xxx",
+  "enabled": true,
+  "transformer": "deepseek",
+  "model": "deepseek-v4-pro"
+}
+```
+
+**Kimi Endpoint:**
+```json
+{
+  "name": "Kimi",
+  "apiUrl": "https://api.moonshot.ai/v1",
+  "apiKey": "sk-xxx",
+  "enabled": true,
+  "transformer": "kimi",
+  "model": "kimi-k2.6"
 }
 ```
 

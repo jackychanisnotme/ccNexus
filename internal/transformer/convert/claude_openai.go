@@ -345,6 +345,12 @@ func OpenAIRespToClaude(openaiResp []byte) ([]byte, error) {
 
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
+		if choice.Message.ReasoningContent != "" {
+			content = append(content, map[string]interface{}{
+				"type":     "thinking",
+				"thinking": choice.Message.ReasoningContent,
+			})
+		}
 		if choice.Message.Content != "" {
 			content = append(content, splitThinkTaggedText(choice.Message.Content)...)
 		}

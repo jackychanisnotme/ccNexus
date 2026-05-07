@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/lich0821/ccNexus/internal/providercompat"
 )
 
 const (
@@ -64,7 +66,7 @@ func ApplyEndpointAuthModeRules(ep *Endpoint) {
 	ep.AuthMode = NormalizeAuthMode(ep.AuthMode)
 	ep.Thinking = NormalizeThinkingEffort(ep.Thinking)
 	ep.APIUrl = strings.TrimSuffix(strings.TrimSpace(ep.APIUrl), "/")
-	ep.Transformer = strings.TrimSpace(ep.Transformer)
+	ep.Transformer = providercompat.NormalizeTransformer(ep.Transformer)
 
 	// Compatibility migration:
 	// legacy token_pool + openai2 + codex backend URL => codex_token_pool.
@@ -120,7 +122,7 @@ type Endpoint struct {
 	APIKey      string `json:"apiKey"`
 	AuthMode    string `json:"authMode,omitempty"`
 	Enabled     bool   `json:"enabled"`
-	Transformer string `json:"transformer,omitempty"` // Transformer type: claude, openai, gemini, deepseek
+	Transformer string `json:"transformer,omitempty"` // Transformer type: claude, openai, openai2, gemini, deepseek, kimi
 	Model       string `json:"model,omitempty"`       // Target model name for non-Claude APIs
 	Thinking    string `json:"thinking,omitempty"`    // Reasoning effort: off, low, medium, high, xhigh
 	ForceStream bool   `json:"forceStream,omitempty"`

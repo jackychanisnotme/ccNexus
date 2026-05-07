@@ -51,7 +51,7 @@
 
 ### 2. 添加端点
 
-点击「添加端点」，填写 API 地址、密钥、选择转换器（claude/openai/gemini/openai2）。
+点击「添加端点」，填写 API 地址、密钥、选择转换器（claude/openai/gemini/openai2/deepseek/kimi）。
 
 如需使用 Codex Token Pool：
 - 认证方式选择 `Codex Token Pool`

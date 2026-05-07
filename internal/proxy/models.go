@@ -10,6 +10,7 @@ import (
 
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/providercompat"
 )
 
 // ModelInfo represents a single model information
@@ -76,23 +77,44 @@ func (p *Proxy) fetchModelsFromEndpoint(ep config.Endpoint) ([]ModelInfo, error)
 	var req *http.Request
 	var err error
 
-	switch strings.ToLower(ep.Transformer) {
-	case "openai", "openai2":
+	switch providercompat.NormalizeTransformer(ep.Transformer) {
+	case "openai", "deepseek", "kimi", "openai2":
 		// OpenAI compatible endpoints
-		baseURL := strings.TrimSuffix(ep.APIUrl, "/")
-		if strings.Contains(baseURL, "/v1") {
-			modelsURL = baseURL + "/models"
+		var candidates []string
+		if ep.AuthMode == config.AuthModeCodexTokenPool {
+			candidates = []string{providercompat.JoinBaseURLAndPath(ep.APIUrl, "/models")}
 		} else {
-			modelsURL = baseURL + "/v1/models"
+			c, err := providercompat.BuildOpenAIModelURLCandidates(ep.APIUrl, ep.Transformer)
+			if err != nil {
+				return nil, err
+			}
+			candidates = c
 		}
-		req, err = http.NewRequest("GET", modelsURL, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
+		var lastErr error
+		for _, modelsURL = range candidates {
+			req, err = http.NewRequest("GET", modelsURL, nil)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create request: %w", err)
+			}
+			// Add authorization header
+			if ep.AuthMode == config.AuthModeAPIKey && ep.APIKey != "" {
+				req.Header.Set("Authorization", "Bearer "+ep.APIKey)
+			}
+			req.Header.Set("User-Agent", "ccNexus/1.0")
+
+			models, fetchErr := p.fetchOpenAIModelsWithRequest(req, ep.Name)
+			if fetchErr == nil {
+				return models, nil
+			}
+			lastErr = fetchErr
+			if !isModelsCandidateFallbackError(fetchErr) {
+				return nil, fetchErr
+			}
 		}
-		// Add authorization header
-		if ep.AuthMode == config.AuthModeAPIKey && ep.APIKey != "" {
-			req.Header.Set("Authorization", "Bearer "+ep.APIKey)
+		if lastErr != nil {
+			return nil, lastErr
 		}
+		return nil, fmt.Errorf("no models URL candidates")
 
 	case "gemini":
 		// Google Gemini endpoints
@@ -159,12 +181,60 @@ func (p *Proxy) fetchModelsFromEndpoint(ep config.Endpoint) ([]ModelInfo, error)
 	return models, nil
 }
 
+func (p *Proxy) fetchOpenAIModelsWithRequest(req *http.Request, endpointName string) ([]ModelInfo, error) {
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch models: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Object  string `json:"object"`
+			Created int64  `json:"created"`
+			OwnedBy string `json:"owned_by"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	models := make([]ModelInfo, len(result.Data))
+	for i, m := range result.Data {
+		models[i] = ModelInfo{
+			ID:         m.ID,
+			Object:     m.Object,
+			Created:    m.Created,
+			OwnedBy:    m.OwnedBy,
+			EndpointID: endpointName,
+		}
+	}
+
+	return models, nil
+}
+
+func isModelsCandidateFallbackError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "status code: 404") ||
+		strings.Contains(msg, "status code: 405") ||
+		strings.Contains(msg, "failed to decode response")
+}
+
 // getDefaultModels returns default models for endpoints that don't support /v1/models
 func (p *Proxy) getDefaultModels(ep config.Endpoint) []ModelInfo {
 	var modelID string
 	var ownedBy string
 
-	switch strings.ToLower(ep.Transformer) {
+	switch providercompat.NormalizeTransformer(ep.Transformer) {
 	case "claude":
 		// Claude endpoints
 		if ep.Model != "" {
@@ -184,6 +254,14 @@ func (p *Proxy) getDefaultModels(ep config.Endpoint) []ModelInfo {
 			modelID = "gpt-4o" // Default OpenAI model
 		}
 		ownedBy = "openai"
+
+	case "deepseek", "kimi", "openai":
+		if ep.Model != "" {
+			modelID = ep.Model
+		} else {
+			modelID = providercompat.DefaultModel(ep.Transformer)
+		}
+		ownedBy = providercompat.Owner(ep.Transformer)
 
 	default:
 		// Fallback for any other transformer
@@ -222,11 +300,16 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to get from cache if not refreshing
+	allModels := p.loadModelsForResponse(refresh)
+
+	// Write response
+	p.writeModelsResponse(w, allModels)
+}
+
+func (p *Proxy) loadModelsForResponse(refresh bool) []ModelInfo {
 	if !refresh {
 		if cached, ok := p.modelsCache.Get(); ok {
-			p.writeModelsResponse(w, cached)
-			return
+			return cached
 		}
 	}
 
@@ -264,8 +347,7 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 	// Cache the result
 	p.modelsCache.Set(allModels)
 
-	// Write response
-	p.writeModelsResponse(w, allModels)
+	return allModels
 }
 
 // writeModelsResponse writes the models list response

@@ -214,6 +214,7 @@ export default {
         openai: 'OpenAI',
         openai2: 'OpenAI 响应',
         gemini: 'Gemini',
-        deepseek: 'DeepSeek'
+        deepseek: 'DeepSeek',
+        kimi: 'Kimi'
     }
 };

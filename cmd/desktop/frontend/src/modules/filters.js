@@ -4,7 +4,7 @@ import { t } from '../i18n/index.js';
 
 // 筛选状态（多选数组）
 let filterState = {
-    types: [],            // ['claude', 'gemini', 'openai', 'openai2']
+    types: [],            // ['claude', 'gemini', 'openai', 'openai2', 'deepseek', 'kimi']
     availabilities: [],   // ['available', 'unknown', 'unavailable']
     enabledStates: []     // ['enabled', 'disabled']
 };

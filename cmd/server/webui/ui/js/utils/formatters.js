@@ -42,7 +42,8 @@ export function getTransformerLabel(transformer) {
         'openai': 'OpenAI',
         'openai2': 'OpenAI Responses',
         'gemini': 'Gemini',
-        'deepseek': 'DeepSeek'
+        'deepseek': 'DeepSeek',
+        'kimi': 'Kimi'
     };
     return labels[transformer] || transformer;
 }

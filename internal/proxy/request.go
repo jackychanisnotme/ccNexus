@@ -16,6 +16,7 @@ import (
 
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/providercompat"
 	"github.com/lich0821/ccNexus/internal/storage"
 	"github.com/lich0821/ccNexus/internal/transformer"
 	"github.com/lich0821/ccNexus/internal/transformer/cc"
@@ -49,14 +50,14 @@ func prepareTransformerForClient(clientFormat ClientFormat, endpoint config.Endp
 
 // prepareCCTransformer creates transformer for Claude Code client
 func prepareCCTransformer(endpoint config.Endpoint, endpointTransformer string) (transformer.Transformer, error) {
-	switch endpointTransformer {
+	switch providercompat.NormalizeTransformer(endpointTransformer) {
 	case "claude":
 		if endpoint.Model != "" {
 			logger.Debug("[%s] Using cc_claude with model override: %s", endpoint.Name, endpoint.Model)
 			return cc.NewClaudeTransformerWithModel(endpoint.Model), nil
 		}
 		return cc.NewClaudeTransformer(), nil
-	case "openai":
+	case "openai", "deepseek", "kimi":
 		if endpoint.Model == "" {
 			return nil, fmt.Errorf("OpenAI transformer requires model field")
 		}
@@ -78,14 +79,14 @@ func prepareCCTransformer(endpoint config.Endpoint, endpointTransformer string) 
 
 // prepareCxChatTransformer creates transformer for Codex Chat API client
 func prepareCxChatTransformer(endpoint config.Endpoint, endpointTransformer string) (transformer.Transformer, error) {
-	switch endpointTransformer {
+	switch providercompat.NormalizeTransformer(endpointTransformer) {
 	case "claude":
 		model := endpoint.Model
 		if model == "" {
 			model = "claude-sonnet-4-20250514"
 		}
 		return chat.NewClaudeTransformer(model), nil
-	case "openai":
+	case "openai", "deepseek", "kimi":
 		if endpoint.Model == "" {
 			return nil, fmt.Errorf("OpenAI transformer requires model field")
 		}
@@ -107,14 +108,14 @@ func prepareCxChatTransformer(endpoint config.Endpoint, endpointTransformer stri
 
 // prepareCxRespTransformer creates transformer for Codex Responses API client
 func prepareCxRespTransformer(endpoint config.Endpoint, endpointTransformer string) (transformer.Transformer, error) {
-	switch endpointTransformer {
+	switch providercompat.NormalizeTransformer(endpointTransformer) {
 	case "claude":
 		model := endpoint.Model
 		if model == "" {
 			model = "claude-sonnet-4-20250514"
 		}
 		return responses.NewClaudeTransformer(model), nil
-	case "openai":
+	case "openai", "deepseek", "kimi":
 		if endpoint.Model == "" {
 			return nil, fmt.Errorf("OpenAI transformer requires model field")
 		}
@@ -140,7 +141,7 @@ func getTargetPath(originalPath string, endpoint config.Endpoint, transformedBod
 	case "cc_claude", "cx_chat_claude", "cx_resp_claude":
 		return "/v1/messages"
 	case "cc_openai", "cx_chat_openai", "cx_resp_openai":
-		return "/v1/chat/completions"
+		return providercompat.OpenAIChatTargetPath(endpoint.Transformer, endpoint.APIUrl)
 	case "cc_openai2", "cx_resp_openai2", "cx_chat_openai2":
 		return "/v1/responses"
 	case "cc_gemini", "cx_chat_gemini", "cx_resp_gemini":
@@ -166,6 +167,9 @@ func buildProxyRequest(r *http.Request, endpoint config.Endpoint, apiKey string,
 	normalizedAPIUrl := normalizeAPIUrl(endpoint.APIUrl)
 	targetPath = normalizeTargetPathForBaseURL(normalizedAPIUrl, targetPath)
 	requestBody := transformedBody
+	if isOpenAIChatTransformerName(transformerName) {
+		requestBody = providercompat.AdaptOpenAIChatPayload(requestBody, endpoint.Transformer, normalizedAPIUrl, endpoint.Thinking)
+	}
 	if isCodexBackendBaseURL(normalizedAPIUrl) && isResponsesPath(targetPath) {
 		requestBody = ensureCodexResponsesPayload(requestBody)
 	}
@@ -214,6 +218,15 @@ func buildProxyRequest(r *http.Request, endpoint config.Endpoint, apiKey string,
 	applyCodexCredentialHeaders(proxyReq, credential, requestBody)
 
 	return proxyReq, nil
+}
+
+func isOpenAIChatTransformerName(transformerName string) bool {
+	switch strings.ToLower(strings.TrimSpace(transformerName)) {
+	case "cc_openai", "cx_chat_openai", "cx_resp_openai":
+		return true
+	default:
+		return false
+	}
 }
 
 func applyCodexCredentialHeaders(req *http.Request, credential *storage.EndpointCredential, payload []byte) {
@@ -284,7 +297,7 @@ func normalizeTargetPathForBaseURL(baseURL, targetPath string) string {
 	cleanPath := path.Clean(strings.TrimSpace(parsed.Path))
 	isCodexBackend := strings.HasSuffix(cleanPath, "/backend-api/codex")
 	if !isCodexBackend {
-		return targetPath
+		return providercompat.NormalizeTargetPathForBaseURL(baseURL, targetPath)
 	}
 
 	switch strings.TrimSpace(targetPath) {
@@ -442,6 +455,34 @@ func overrideModelInPayload(payload []byte, model string) []byte {
 		return payload
 	}
 	return updated
+}
+
+func enforceEndpointModelInPayload(payload []byte, endpoint config.Endpoint, transformerName string) []byte {
+	if strings.TrimSpace(endpoint.Model) == "" {
+		return payload
+	}
+	if isGeminiTransformerName(transformerName) {
+		return payload
+	}
+	return overrideModelInPayload(payload, endpoint.Model)
+}
+
+func isGeminiTransformerName(transformerName string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(transformerName)), "gemini")
+}
+
+func extractModelFromPayload(payload []byte) string {
+	trimmed := strings.TrimSpace(string(payload))
+	if trimmed == "" || strings.HasPrefix(trimmed, "[") {
+		return ""
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return ""
+	}
+	model, _ := body["model"].(string)
+	return strings.TrimSpace(model)
 }
 
 // sendRequest sends the HTTP request and returns the response

@@ -112,12 +112,7 @@ func (p *Proxy) StartWithMux(customMux *http.ServeMux) error {
 		mux = http.NewServeMux()
 	}
 
-	// Register proxy routes
-	mux.HandleFunc("/", p.handleProxy)
-	mux.HandleFunc("/v1/messages/count_tokens", p.handleCountTokens)
-	mux.HandleFunc("/v1/models", p.handleModels)
-	mux.HandleFunc("/health", p.handleHealth)
-	mux.HandleFunc("/stats", p.handleStats)
+	p.registerRoutes(mux)
 
 	p.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -128,6 +123,20 @@ func (p *Proxy) StartWithMux(customMux *http.ServeMux) error {
 	logger.Info("Configured %d endpoints", len(p.config.GetEndpoints()))
 
 	return p.server.ListenAndServe()
+}
+
+func (p *Proxy) registerRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/", p.handleProxy)
+	mux.HandleFunc("/v1/messages/count_tokens", p.handleCountTokens)
+	mux.HandleFunc("/v1/models", p.handleModels)
+	mux.HandleFunc("/models", p.handleModels)
+	mux.HandleFunc("/api/v1/models", p.handleModels)
+	mux.HandleFunc("/api/tags", p.handleOllamaTags)
+	mux.HandleFunc("/version", p.handleVersion)
+	mux.HandleFunc("/props", p.handleProps)
+	mux.HandleFunc("/v1/props", p.handleProps)
+	mux.HandleFunc("/health", p.handleHealth)
+	mux.HandleFunc("/stats", p.handleStats)
 }
 
 // Stop stops the proxy server
@@ -385,7 +394,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 尝试解析客户端指定的端点
-	specifiedEndpoint, modelOverride, resolveErr := p.resolver.ResolveEndpoint(r, bodyBytes)
+	specifiedEndpoint, requestedModelSuffix, resolveErr := p.resolver.ResolveEndpoint(r, bodyBytes)
 	if resolveErr != nil {
 		// 端点指定错误，返回错误响应
 		logger.Warn("端点解析失败: %v %s", resolveErr, requestLogFields(obs, "", 0, http.StatusBadRequest, "endpoint_resolve_failed"))
@@ -524,21 +533,12 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		logger.DebugLog("[%s] Transformer: %s", endpoint.Name, transformerName)
 		logger.DebugLog("[%s] Transformed Request: %s", endpoint.Name, string(transformedBody))
 
-		// 如果有模型覆盖值，应用到转换后的请求体中
-		if modelOverride != "" {
-			transformedBody = overrideModelInPayload(transformedBody, modelOverride)
-			logger.DebugLog("[%s] 应用模型覆盖后的请求: %s", endpoint.Name, string(transformedBody))
-		}
-
 		cleanedBody, err := cleanIncompleteToolCalls(transformedBody)
 		if err != nil {
 			logger.Warn("[%s] Failed to clean tool calls: %v", endpoint.Name, err)
 			cleanedBody = transformedBody
 		}
 		transformedBody = cleanedBody
-		if config.NormalizeAuthMode(endpoint.AuthMode) == config.AuthModeCodexTokenPool {
-			transformedBody = overrideModelInPayload(transformedBody, endpoint.Model)
-		}
 		if !streamReq.Stream && endpoint.ForceStream {
 			transformedBody = forceStreamInPayload(transformedBody)
 			logger.DebugLog("[%s] ForceStream enabled: forcing upstream stream=true for non-stream client", endpoint.Name)
@@ -546,15 +546,23 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if clientFormat != ClientFormatClaude {
 			transformedBody = injectEndpointThinkingInPayload(transformedBody, transformerName, endpoint.Thinking)
 		}
+		transformedBody = enforceEndpointModelInPayload(transformedBody, endpoint, transformerName)
+		logger.DebugLog("[%s] Final upstream request: %s", endpoint.Name, string(transformedBody))
 
-		// 处理模型名称：优先使用模型覆盖值，然后是请求中的模型，最后是端点配置的模型
-		modelName := strings.TrimSpace(streamReq.Model)
-		if modelOverride != "" {
-			// 使用解析器提供的模型覆盖值
-			modelName = modelOverride
-			logger.Debug("[%s] 使用模型覆盖值: %s", endpoint.Name, modelName)
-		} else if modelName == "" || (authMode == config.AuthModeCodexTokenPool && strings.TrimSpace(endpoint.Model) != "") {
+		clientModelName := strings.TrimSpace(streamReq.Model)
+		upstreamModelName := extractModelFromPayload(transformedBody)
+		modelName := upstreamModelName
+		if modelName == "" {
+			modelName = clientModelName
+		}
+		if modelName == "" {
 			modelName = endpoint.Model
+		}
+		if requestedModelSuffix != "" {
+			logger.Debug("[%s] Ignoring model suffix from endpoint selector due endpoint model priority: %s", endpoint.Name, requestedModelSuffix)
+		}
+		if clientModelName != "" && upstreamModelName != "" && clientModelName != upstreamModelName {
+			logger.Debug("[%s] Model mapping: client_model=%s upstream_model=%s", endpoint.Name, clientModelName, upstreamModelName)
 		}
 
 		var thinkingEnabled bool

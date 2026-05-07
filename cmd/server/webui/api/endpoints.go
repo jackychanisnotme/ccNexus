@@ -8,6 +8,7 @@ import (
 
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/providercompat"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
@@ -167,6 +168,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	if normalizedEndpoint.Transformer == "" {
 		normalizedEndpoint.Transformer = "claude"
 	}
+	normalizedEndpoint.Transformer = providercompat.NormalizeTransformer(normalizedEndpoint.Transformer)
 	config.ApplyEndpointAuthModeRules(&normalizedEndpoint)
 	authMode = normalizedEndpoint.AuthMode
 	req.APIUrl = normalizedEndpoint.APIUrl
@@ -311,6 +313,9 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	if normalizedEndpoint.Transformer == "" {
 		normalizedEndpoint.Transformer = "claude"
 	}
+	if req.Transformer != "" {
+		normalizedEndpoint.Transformer = providercompat.NormalizeTransformer(req.Transformer)
+	}
 	config.ApplyEndpointAuthModeRules(&normalizedEndpoint)
 	existing.APIUrl = normalizedEndpoint.APIUrl
 	existing.APIKey = normalizedEndpoint.APIKey
@@ -323,9 +328,7 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 		return
 	}
 	existing.Enabled = req.Enabled
-	if req.Transformer != "" {
-		existing.Transformer = req.Transformer
-	}
+	existing.Transformer = normalizedEndpoint.Transformer
 	if req.Model != "" {
 		existing.Model = req.Model
 	}

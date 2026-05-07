@@ -65,6 +65,52 @@ func TestOpenAIRespToClaudeWithThinking(t *testing.T) {
 	}
 }
 
+func TestOpenAIRespToClaudeWithReasoningContent(t *testing.T) {
+	openaiResp := `{
+		"id": "chatcmpl-deepseek",
+		"object": "chat.completion",
+		"created": 1677652288,
+		"model": "deepseek-reasoner",
+		"choices": [{
+			"index": 0,
+			"message": {
+				"role": "assistant",
+				"reasoning_content": "Reasoning from provider",
+				"content": "Final answer"
+			},
+			"finish_reason": "stop"
+		}],
+		"usage": {
+			"prompt_tokens": 9,
+			"completion_tokens": 12,
+			"total_tokens": 21
+		}
+	}`
+
+	claudeRespBytes, err := OpenAIRespToClaude([]byte(openaiResp))
+	if err != nil {
+		t.Fatalf("OpenAIRespToClaude failed: %v", err)
+	}
+
+	var claudeResp map[string]interface{}
+	if err := json.Unmarshal(claudeRespBytes, &claudeResp); err != nil {
+		t.Fatalf("Failed to unmarshal Claude response: %v", err)
+	}
+
+	content := claudeResp["content"].([]interface{})
+	if len(content) != 2 {
+		t.Fatalf("Expected 2 content blocks, got %d", len(content))
+	}
+	thinkingBlock := content[0].(map[string]interface{})
+	if thinkingBlock["type"] != "thinking" || thinkingBlock["thinking"] != "Reasoning from provider" {
+		t.Fatalf("unexpected thinking block: %#v", thinkingBlock)
+	}
+	textBlock := content[1].(map[string]interface{})
+	if textBlock["type"] != "text" || textBlock["text"] != "Final answer" {
+		t.Fatalf("unexpected text block: %#v", textBlock)
+	}
+}
+
 func TestOpenAIRespToClaudeWithMultipleThinking(t *testing.T) {
 	openaiResp := `{
 		"id": "chatcmpl-456",

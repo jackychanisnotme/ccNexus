@@ -11,6 +11,7 @@ import (
 
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/providercompat"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
@@ -74,9 +75,12 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 	var url string
 	var err error
 
-	switch endpoint.Transformer {
+	normalizedURL := providercompat.NormalizeBaseURL(endpoint.APIUrl)
+	transformer := providercompat.NormalizeTransformer(endpoint.Transformer)
+
+	switch transformer {
 	case "claude":
-		url = fmt.Sprintf("%s/v1/messages", endpoint.APIUrl)
+		url = providercompat.JoinBaseURLAndPath(normalizedURL, "/v1/messages")
 		reqBody, err = json.Marshal(map[string]interface{}{
 			"model": "claude-3-5-sonnet-20241022",
 			"messages": []map[string]interface{}{
@@ -87,11 +91,11 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 			},
 			"max_tokens": 16,
 		})
-	case "openai", "openai2":
-		url = fmt.Sprintf("%s/v1/chat/completions", endpoint.APIUrl)
+	case "openai", "deepseek", "kimi":
+		url = providercompat.JoinBaseURLAndPath(normalizedURL, providercompat.OpenAIChatTargetPath(transformer, normalizedURL))
 		model := endpoint.Model
 		if model == "" {
-			model = "gpt-4"
+			model = providercompat.DefaultModel(transformer)
 		}
 		reqBody, err = json.Marshal(map[string]interface{}{
 			"model": model,
@@ -103,12 +107,31 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 			},
 			"max_tokens": 16,
 		})
+	case "openai2":
+		url = providercompat.JoinBaseURLAndPath(normalizedURL, "/v1/responses")
+		model := endpoint.Model
+		if model == "" {
+			model = providercompat.DefaultModel(transformer)
+		}
+		reqBody, err = json.Marshal(map[string]interface{}{
+			"model":             model,
+			"max_output_tokens": 16,
+			"input": []map[string]interface{}{
+				{
+					"type": "message",
+					"role": "user",
+					"content": []map[string]interface{}{
+						{"type": "input_text", "text": "你是什么模型?"},
+					},
+				},
+			},
+		})
 	case "gemini":
 		model := endpoint.Model
 		if model == "" {
-			model = "gemini-pro"
+			model = providercompat.DefaultModel(transformer)
 		}
-		url = fmt.Sprintf("%s/v1beta/models/%s:generateContent", endpoint.APIUrl, model)
+		url = providercompat.JoinBaseURLAndPath(normalizedURL, fmt.Sprintf("/v1beta/models/%s:generateContent", model))
 		reqBody, err = json.Marshal(map[string]interface{}{
 			"contents": []map[string]interface{}{
 				{
@@ -136,11 +159,11 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 
 	// Add authentication based on transformer
-	switch endpoint.Transformer {
+	switch transformer {
 	case "claude":
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
-	case "openai", "openai2":
+	case "openai", "openai2", "deepseek", "kimi":
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	case "gemini":
 		// Gemini uses API key in URL query parameter
@@ -175,7 +198,7 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 	}
 
 	// Extract message based on transformer
-	switch endpoint.Transformer {
+	switch transformer {
 	case "claude":
 		if content, ok := result["content"].([]interface{}); ok && len(content) > 0 {
 			if block, ok := content[0].(map[string]interface{}); ok {
@@ -184,7 +207,7 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 				}
 			}
 		}
-	case "openai", "openai2":
+	case "openai", "openai2", "deepseek", "kimi":
 		if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
 			if choice, ok := choices[0].(map[string]interface{}); ok {
 				if message, ok := choice["message"].(map[string]interface{}); ok {
@@ -265,12 +288,18 @@ func (h *Handler) handleFetchModels(w http.ResponseWriter, r *http.Request) {
 
 // fetchModelsFromProvider fetches available models from a provider
 func (h *Handler) fetchModelsFromProvider(apiUrl, apiKey, transformer string) ([]string, error) {
-	var url string
+	transformer = providercompat.NormalizeTransformer(transformer)
+	apiUrl = providercompat.NormalizeBaseURL(apiUrl)
+	var urls []string
 	var authHeader string
 
 	switch transformer {
-	case "openai", "openai2":
-		url = fmt.Sprintf("%s/v1/models", apiUrl)
+	case "openai", "openai2", "deepseek", "kimi":
+		candidates, err := providercompat.BuildOpenAIModelURLCandidates(apiUrl, transformer)
+		if err != nil {
+			return nil, err
+		}
+		urls = candidates
 		authHeader = "Bearer " + apiKey
 	case "claude":
 		// Claude doesn't have a models endpoint, return known models
@@ -292,42 +321,57 @@ func (h *Handler) fetchModelsFromProvider(apiUrl, apiKey, transformer string) ([
 		return nil, fmt.Errorf("unsupported transformer: %s", transformer)
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for _, url := range urls {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Authorization", authHeader)
+
+		client := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("API returned status %d: %s", resp.StatusCode, providercompat.TruncateErrorBody(string(body)))
+			if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+				continue
+			}
+			return nil, lastErr
+		}
+
+		var result struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("failed to parse response from %s: %w", url, err)
+			continue
+		}
+		resp.Body.Close()
+
+		models := make([]string, 0, len(result.Data))
+		for _, model := range result.Data {
+			models = append(models, model.ID)
+		}
+
+		return models, nil
 	}
 
-	req.Header.Set("Authorization", authHeader)
-
-	client := &http.Client{
-		Timeout: 10 * time.Second,
+	if lastErr != nil {
+		return nil, lastErr
 	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	models := make([]string, 0, len(result.Data))
-	for _, model := range result.Data {
-		models = append(models, model.ID)
-	}
-
-	return models, nil
+	return nil, fmt.Errorf("no models URL candidates")
 }

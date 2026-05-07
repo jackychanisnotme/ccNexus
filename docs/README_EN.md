@@ -43,7 +43,7 @@
 
 ### 2. Add Endpoints
 
-Click "Add Endpoint", fill in API URL, key, and select transformer (claude/openai/gemini/openai2).
+Click "Add Endpoint", fill in API URL, key, and select transformer (claude/openai/gemini/openai2/deepseek/kimi).
 
 For Codex Token Pool mode:
 - Set auth mode to `Codex Token Pool`

@@ -20,9 +20,11 @@
 
 - Claude 官方或兼容服务 → `claude`
 - OpenAI 或兼容服务 → `openai`
+- DeepSeek → `deepseek`
+- Kimi/Moonshot → `kimi`
 - Google Gemini → `gemini`
 
-**Q: 为什么 OpenAI/Gemini 必须填模型？**
+**Q: 为什么 OpenAI/Gemini/DeepSeek/Kimi 必须填模型？**
 
 Claude Code 请求中包含 Claude 模型名，代理需要知道转换为哪个目标模型。
 

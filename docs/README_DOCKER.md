@@ -105,8 +105,8 @@ http://localhost:3021/ui/
    - **Name**（名称）：为端点起一个易识别的名称，如 "Claude Official"
    - **API URL**：API 服务地址，如 `https://api.anthropic.com`
    - **API Key**：您的 API 密钥，如 `sk-ant-...`
-   - **Transformer**（转换器）：选择 API 类型（claude/openai/gemini/deepseek）
-   - **Model**（模型）：指定模型名称（Claude 可留空，OpenAI 需填写如 `gpt-4`）
+   - **Transformer**（转换器）：选择 API 类型（claude/openai/openai2/gemini/deepseek/kimi）
+   - **Model**（模型）：指定模型名称（Claude 可留空，OpenAI/DeepSeek/Kimi/Gemini 需填写）
    - **Remark**（备注）：可选的说明信息
    - **Enabled**（启用）：勾选以立即启用该端点
 5. 点击"Create"（创建）保存

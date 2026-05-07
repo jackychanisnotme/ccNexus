@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -59,6 +60,220 @@ func TestNormalizeTargetPathForBaseURLOnCodexBackend(t *testing.T) {
 	}
 }
 
+func TestNormalizeTargetPathForBaseURLAvoidsDuplicateV1(t *testing.T) {
+	got := normalizeTargetPathForBaseURL("https://api.moonshot.ai/v1", "/v1/chat/completions")
+	if got != "/chat/completions" {
+		t.Fatalf("expected /chat/completions, got %s", got)
+	}
+}
+
+func TestGetTargetPathUsesDeepSeekChatPath(t *testing.T) {
+	ep := config.Endpoint{Transformer: "deepseek", APIUrl: "https://api.deepseek.com"}
+	got := getTargetPath("/v1/messages", ep, []byte(`{}`), "cc_openai")
+	if got != "/chat/completions" {
+		t.Fatalf("expected /chat/completions, got %s", got)
+	}
+}
+
+func TestGetTargetPathUsesV1ForCustomDeepSeekGateway(t *testing.T) {
+	ep := config.Endpoint{Transformer: "deepseek", APIUrl: "https://gateway.example.com"}
+	got := getTargetPath("/v1/responses", ep, []byte(`{}`), "cx_resp_openai")
+	if got != "/v1/chat/completions" {
+		t.Fatalf("expected /v1/chat/completions, got %s", got)
+	}
+}
+
+func TestHandleProxyResponsesToCustomDeepSeekUsesV1ChatPath(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode upstream payload: %v", err)
+		}
+		if payload["model"] != "deepseek-v4-pro" {
+			t.Fatalf("expected endpoint model override, got %#v", payload["model"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{
+		{
+			Name:        "DeepSeekGateway",
+			APIUrl:      upstream.URL,
+			APIKey:      "test-key",
+			AuthMode:    config.AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "deepseek",
+			Model:       "deepseek-v4-pro",
+		},
+	})
+
+	p := &Proxy{
+		config:         cfg,
+		stats:          NewStats(&noopStatsStorage{}, "test-device"),
+		httpClient:     upstream.Client(),
+		activeRequests: make(map[string]int),
+		endpointCtx:    make(map[string]context.Context),
+		endpointCancel: make(map[string]context.CancelFunc),
+		currentIndex:   0,
+		resolver:       NewEndpointResolverWithFunc(cfg.GetEndpoints),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"object":"response"`) {
+		t.Fatalf("expected responses-format body, got %q", rec.Body.String())
+	}
+}
+
+func TestHandleProxyChatToCustomDeepSeekUsesEndpointModel(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode upstream payload: %v", err)
+		}
+		if payload["model"] != "deepseek-v4-pro" {
+			t.Fatalf("expected endpoint model override, got %#v", payload["model"])
+		}
+		if stream, ok := payload["stream"].(bool); !ok || !stream {
+			t.Fatalf("expected stream=true to be preserved, got %#v", payload["stream"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{
+		{
+			Name:        "1052-2nd",
+			APIUrl:      upstream.URL,
+			APIKey:      "test-key",
+			AuthMode:    config.AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "deepseek",
+			Model:       "deepseek-v4-pro",
+		},
+	})
+
+	p := &Proxy{
+		config:         cfg,
+		stats:          NewStats(&noopStatsStorage{}, "test-device"),
+		httpClient:     upstream.Client(),
+		activeRequests: make(map[string]int),
+		endpointCtx:    make(map[string]context.Context),
+		endpointCancel: make(map[string]context.CancelFunc),
+		currentIndex:   0,
+		resolver:       NewEndpointResolverWithFunc(cfg.GetEndpoints),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5.5","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+
+	logs := logger.GetLogger().GetLogs()
+	joined := ""
+	for _, entry := range logs {
+		joined += entry.Message + "\n"
+	}
+	for _, want := range []string{
+		"Model mapping: client_model=gpt-5.5 upstream_model=deepseek-v4-pro",
+		"Streaming deepseek-v4-pro",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected logs to contain %q; logs:\n%s", want, joined)
+		}
+	}
+}
+
+func TestHandleProxyEndpointSelectorModelSuffixDoesNotOverrideEndpointModel(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode upstream payload: %v", err)
+		}
+		if payload["model"] != "deepseek-v4-pro" {
+			t.Fatalf("expected endpoint model to win over selector suffix, got %#v", payload["model"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{
+		{
+			Name:        "other",
+			APIUrl:      "https://unused.example.com",
+			APIKey:      "unused",
+			AuthMode:    config.AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "openai",
+			Model:       "gpt-4.1",
+		},
+		{
+			Name:        "1052-2nd",
+			APIUrl:      upstream.URL,
+			APIKey:      "test-key",
+			AuthMode:    config.AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "deepseek",
+			Model:       "deepseek-v4-pro",
+		},
+	})
+
+	p := &Proxy{
+		config:         cfg,
+		stats:          NewStats(&noopStatsStorage{}, "test-device"),
+		httpClient:     upstream.Client(),
+		activeRequests: make(map[string]int),
+		endpointCtx:    make(map[string]context.Context),
+		endpointCancel: make(map[string]context.CancelFunc),
+		currentIndex:   0,
+		resolver:       NewEndpointResolverWithFunc(cfg.GetEndpoints),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"@1052-2nd/gpt-5.5","stream":false,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-ccNexus-Endpoint"); got != "1052-2nd" {
+		t.Fatalf("expected request to select 1052-2nd, got %q", got)
+	}
+}
+
 func TestOverrideModelInPayload(t *testing.T) {
 	raw := []byte(`{"model":"gpt-5.3-codex","stream":true}`)
 	out := overrideModelInPayload(raw, "gpt-5.2-codex")
@@ -69,6 +284,22 @@ func TestOverrideModelInPayload(t *testing.T) {
 	}
 	if payload["model"] != "gpt-5.2-codex" {
 		t.Fatalf("expected model override to gpt-5.2-codex, got %#v", payload["model"])
+	}
+}
+
+func TestEnforceEndpointModelInPayloadSkipsGeminiBody(t *testing.T) {
+	endpoint := config.Endpoint{Model: "gemini-2.0-flash"}
+	raw := []byte(`{"contents":[]}`)
+	out := enforceEndpointModelInPayload(raw, endpoint, "cx_chat_gemini")
+	if string(out) != string(raw) {
+		t.Fatalf("expected Gemini body to be unchanged, got %s", string(out))
+	}
+}
+
+func TestExtractModelFromPayload(t *testing.T) {
+	got := extractModelFromPayload([]byte(`{"model":"deepseek-v4-pro","messages":[]}`))
+	if got != "deepseek-v4-pro" {
+		t.Fatalf("expected deepseek-v4-pro, got %q", got)
 	}
 }
 

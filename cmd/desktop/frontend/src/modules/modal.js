@@ -359,6 +359,12 @@ export function handleTransformerChange() {
     } else if (transformer === 'gemini') {
         modelInput.placeholder = 'e.g., gemini-pro';
         modelHelpText.textContent = t('modal.modelHelpGemini');
+    } else if (transformer === 'deepseek') {
+        modelInput.placeholder = 'e.g., deepseek-v4-pro';
+        modelHelpText.textContent = t('modal.modelHelpDeepSeek');
+    } else if (transformer === 'kimi') {
+        modelInput.placeholder = 'e.g., kimi-k2.6';
+        modelHelpText.textContent = t('modal.modelHelpKimi');
     }
 }
 

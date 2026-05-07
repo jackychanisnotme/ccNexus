@@ -36,7 +36,7 @@ func NewEndpointResolverWithFunc(getEndpointsFunc func() []config.Endpoint) *End
 }
 
 // ResolveEndpoint 从请求中解析端点，按优先级处理
-// 返回：解析到的端点（可能为 nil），模型覆盖值（可能为空），错误信息
+// 返回：解析到的端点（可能为 nil），模型名后缀（仅用于诊断，不覆盖端点模型），错误信息
 func (r *EndpointResolver) ResolveEndpoint(req *http.Request, bodyBytes []byte) (*config.Endpoint, string, error) {
 	// 获取最新的端点列表
 	endpoints := r.getEndpointsFunc()
@@ -61,13 +61,13 @@ func (r *EndpointResolver) ResolveEndpoint(req *http.Request, bodyBytes []byte) 
 	modelName := strings.TrimSpace(streamReq.Model)
 
 	if modelName != "" && strings.HasPrefix(modelName, "@") {
-		endpointName, modelOverride := r.parseEndpointFromModel(modelName)
+		endpointName, modelSuffix := r.parseEndpointFromModel(modelName)
 		endpoint := r.findEndpointByName(endpointName, endpoints)
 		if endpoint == nil {
 			return nil, "", fmt.Errorf("指定的端点 '%s' 不存在或未启用", endpointName)
 		}
-		logger.Debug("[Resolver] 通过模型名格式指定端点: %s, 模型: %s", endpointName, modelOverride)
-		return endpoint, modelOverride, nil
+		logger.Debug("[Resolver] 通过模型名格式指定端点: %s, 模型后缀: %s", endpointName, modelSuffix)
+		return endpoint, modelSuffix, nil
 	}
 
 	// 优先级 3: 查询参数

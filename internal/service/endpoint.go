@@ -16,6 +16,7 @@ import (
 
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/providercompat"
 	"github.com/lich0821/ccNexus/internal/proxy"
 	"github.com/lich0821/ccNexus/internal/storage"
 	"github.com/lich0821/ccNexus/internal/transformer/convert"
@@ -147,6 +148,7 @@ func (e *EndpointService) AddEndpoint(name, apiUrl, apiKey, authMode, transforme
 	if transformer == "" {
 		transformer = "claude"
 	}
+	transformer = providercompat.NormalizeTransformer(transformer)
 	authMode = config.NormalizeAuthMode(authMode)
 	if config.IsTokenPoolAuthMode(authMode) {
 		apiKey = ""
@@ -251,6 +253,7 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 	if transformer == "" {
 		transformer = "claude"
 	}
+	transformer = providercompat.NormalizeTransformer(transformer)
 	authMode = config.NormalizeAuthMode(authMode)
 	if config.IsTokenPoolAuthMode(authMode) {
 		apiKey = ""
@@ -440,13 +443,14 @@ func (e *EndpointService) TestEndpoint(index int) string {
 	if transformer == "" {
 		transformer = "claude"
 	}
+	transformer = providercompat.NormalizeTransformer(transformer)
 
 	switch transformer {
 	case "claude":
 		apiPath = "/v1/messages"
 		model := endpoint.Model
 		if model == "" {
-			model = "claude-sonnet-4-5-20250929"
+			model = providercompat.DefaultModel(transformer)
 		}
 		requestBody, err = json.Marshal(map[string]interface{}{
 			"model":      model,
@@ -456,11 +460,11 @@ func (e *EndpointService) TestEndpoint(index int) string {
 			},
 		})
 
-	case "openai":
-		apiPath = "/v1/chat/completions"
+	case "openai", "deepseek", "kimi":
+		apiPath = providercompat.OpenAIChatTargetPath(transformer, endpoint.APIUrl)
 		model := endpoint.Model
 		if model == "" {
-			model = "gpt-4-turbo"
+			model = providercompat.DefaultModel(transformer)
 		}
 		requestBody, err = json.Marshal(map[string]interface{}{
 			"model":      model,
@@ -474,7 +478,7 @@ func (e *EndpointService) TestEndpoint(index int) string {
 		apiPath = "/v1/responses"
 		model := endpoint.Model
 		if model == "" {
-			model = "gpt-5-codex"
+			model = providercompat.DefaultModel(transformer)
 		}
 		requestBody, err = json.Marshal(map[string]interface{}{
 			"model": model,
@@ -492,7 +496,7 @@ func (e *EndpointService) TestEndpoint(index int) string {
 	case "gemini":
 		model := endpoint.Model
 		if model == "" {
-			model = "gemini-pro"
+			model = providercompat.DefaultModel(transformer)
 		}
 		apiPath = "/v1beta/models/" + model + ":generateContent"
 		requestBody, err = json.Marshal(map[string]interface{}{
@@ -527,6 +531,9 @@ func (e *EndpointService) TestEndpoint(index int) string {
 	if transformer == "openai2" && isCodexBackendAPIURL(normalizedAPIUrl) {
 		requestBody = ensureCodexResponsesProbePayload(requestBody)
 	}
+	if providercompat.IsOpenAIChatTransformer(transformer) {
+		requestBody = providercompat.AdaptOpenAIChatPayload(requestBody, transformer, normalizedAPIUrl, endpoint.Thinking)
+	}
 	url := fmt.Sprintf("%s%s", normalizedAPIUrl, normalizeEndpointPathForBaseURL(normalizedAPIUrl, apiPath))
 
 	req, err := http.NewRequest("POST", url, bytes.NewReader(requestBody))
@@ -544,7 +551,7 @@ func (e *EndpointService) TestEndpoint(index int) string {
 	case "claude":
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
-	case "openai", "openai2":
+	case "openai", "openai2", "deepseek", "kimi":
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	case "gemini":
 		q := req.URL.Query()
@@ -608,7 +615,7 @@ func (e *EndpointService) TestEndpoint(index int) string {
 				}
 			}
 		}
-	case "openai":
+	case "openai", "deepseek", "kimi":
 		if choices, ok := responseData["choices"].([]interface{}); ok && len(choices) > 0 {
 			if choice, ok := choices[0].(map[string]interface{}); ok {
 				if msg, ok := choice["message"].(map[string]interface{}); ok {
@@ -670,6 +677,7 @@ func (e *EndpointService) TestEndpointLight(index int) string {
 	if transformer == "" {
 		transformer = "claude"
 	}
+	transformer = providercompat.NormalizeTransformer(transformer)
 
 	normalizedURL := normalizeAPIUrl(endpoint.APIUrl)
 	if !strings.HasPrefix(normalizedURL, "http://") && !strings.HasPrefix(normalizedURL, "https://") {
@@ -732,7 +740,7 @@ func (e *EndpointService) TestEndpointLight(index int) string {
 		if statusCode == 401 || statusCode == 403 {
 			return e.testResult(false, "invalid_key", "token_count", fmt.Sprintf("Authentication failed: HTTP %d", statusCode))
 		}
-	} else if transformer == "openai" || transformer == "openai2" {
+	} else if providercompat.IsOpenAIChatTransformer(transformer) || transformer == "openai2" {
 		statusCode, err = e.testBillingAPI(normalizedURL, apiKey)
 		if err == nil {
 			return e.testResult(true, "ok", "billing", "Billing API accessible")
@@ -810,6 +818,7 @@ func (e *EndpointService) testSingleEndpointZeroCost(endpoint config.Endpoint) s
 	if transformer == "" {
 		transformer = "claude"
 	}
+	transformer = providercompat.NormalizeTransformer(transformer)
 
 	normalizedURL := normalizeAPIUrl(endpoint.APIUrl)
 	if !strings.HasPrefix(normalizedURL, "http://") && !strings.HasPrefix(normalizedURL, "https://") {
@@ -846,7 +855,7 @@ func (e *EndpointService) testSingleEndpointZeroCost(endpoint config.Endpoint) s
 			} else if statusCode == 401 || statusCode == 403 {
 				status = "invalid_key"
 			}
-		} else if transformer == "openai" || transformer == "openai2" {
+		} else if providercompat.IsOpenAIChatTransformer(transformer) || transformer == "openai2" {
 			statusCode, err = e.testBillingAPI(normalizedURL, apiKey)
 			if err == nil {
 				status = "ok"
@@ -860,58 +869,81 @@ func (e *EndpointService) testSingleEndpointZeroCost(endpoint config.Endpoint) s
 }
 
 func (e *EndpointService) testModelsAPI(apiUrl, apiKey, transformer string) (int, error) {
-	var url string
+	transformer = providercompat.NormalizeTransformer(transformer)
+	var urls []string
 	if transformer == "gemini" {
-		url = fmt.Sprintf("%s/v1beta/models?key=%s", apiUrl, apiKey)
+		urls = []string{fmt.Sprintf("%s/v1beta/models?key=%s", apiUrl, apiKey)}
 	} else {
-		url = fmt.Sprintf("%s/v1/models", apiUrl)
-	}
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return 0, err
-	}
-
-	if transformer != "gemini" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	client := e.createHTTPClient(8*time.Second, req.URL.String())
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return resp.StatusCode, fmt.Errorf("failed to read response")
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return resp.StatusCode, fmt.Errorf("failed to parse response")
-	}
-
-	if data, ok := result["data"].([]interface{}); ok {
-		if len(data) == 0 {
-			return resp.StatusCode, fmt.Errorf("no models found")
+		candidates, candidateErr := providercompat.BuildOpenAIModelURLCandidates(apiUrl, transformer)
+		if candidateErr != nil || len(candidates) == 0 {
+			return 0, fmt.Errorf("failed to build models URL: %v", candidateErr)
 		}
-		return resp.StatusCode, nil
+		urls = candidates
 	}
 
-	if models, ok := result["models"].([]interface{}); ok {
-		if len(models) == 0 {
-			return resp.StatusCode, fmt.Errorf("no models found")
+	var lastStatus int
+	var lastErr error
+	for _, url := range urls {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return 0, err
 		}
-		return resp.StatusCode, nil
+
+		if transformer != "gemini" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+
+		client := e.createHTTPClient(8*time.Second, req.URL.String())
+		resp, err := client.Do(req)
+		if err != nil {
+			return 0, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			status := resp.StatusCode
+			resp.Body.Close()
+			lastStatus = status
+			lastErr = fmt.Errorf("HTTP %d", status)
+			if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
+				continue
+			}
+			return status, lastErr
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return resp.StatusCode, fmt.Errorf("failed to read response")
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(body, &result); err != nil {
+			lastStatus = resp.StatusCode
+			lastErr = fmt.Errorf("failed to parse response")
+			continue
+		}
+
+		if data, ok := result["data"].([]interface{}); ok {
+			if len(data) == 0 {
+				return resp.StatusCode, fmt.Errorf("no models found")
+			}
+			return resp.StatusCode, nil
+		}
+
+		if models, ok := result["models"].([]interface{}); ok {
+			if len(models) == 0 {
+				return resp.StatusCode, fmt.Errorf("no models found")
+			}
+			return resp.StatusCode, nil
+		}
+
+		return resp.StatusCode, fmt.Errorf("unexpected response format")
 	}
 
-	return resp.StatusCode, fmt.Errorf("unexpected response format")
+	if lastErr != nil {
+		return lastStatus, lastErr
+	}
+	return 0, fmt.Errorf("no models URL candidates")
 }
 
 func (e *EndpointService) testTokenCountAPI(apiUrl, apiKey string) (int, error) {
@@ -997,6 +1029,7 @@ func (e *EndpointService) testBillingAPI(apiUrl, apiKey string) (int, error) {
 }
 
 func (e *EndpointService) testMinimalRequest(apiUrl, apiKey, transformer, model string, credential *storage.EndpointCredential) (int, error) {
+	transformer = providercompat.NormalizeTransformer(transformer)
 	var reqURL string
 	var body []byte
 	var apiPath string
@@ -1012,10 +1045,10 @@ func (e *EndpointService) testMinimalRequest(apiUrl, apiKey, transformer, model 
 			"max_tokens": 1,
 			"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
 		})
-	case "openai":
-		apiPath = "/v1/chat/completions"
+	case "openai", "deepseek", "kimi":
+		apiPath = providercompat.OpenAIChatTargetPath(transformer, apiUrl)
 		if model == "" {
-			model = "gpt-4-turbo"
+			model = providercompat.DefaultModel(transformer)
 		}
 		body, _ = json.Marshal(map[string]interface{}{
 			"model":      model,
@@ -1070,6 +1103,9 @@ func (e *EndpointService) testMinimalRequest(apiUrl, apiKey, transformer, model 
 	}
 	if transformer == "openai2" && isCodexBackendAPIURL(apiUrl) {
 		body = ensureCodexResponsesProbePayload(body)
+	}
+	if providercompat.IsOpenAIChatTransformer(transformer) {
+		body = providercompat.AdaptOpenAIChatPayload(body, transformer, apiUrl, "")
 	}
 
 	attempts := 1
@@ -1211,7 +1247,7 @@ func normalizeEndpointPathForBaseURL(baseURL, apiPath string) string {
 
 	cleanPath := path.Clean(strings.TrimSpace(parsed.Path))
 	if !strings.HasSuffix(cleanPath, "/backend-api/codex") {
-		return apiPath
+		return providercompat.NormalizeTargetPathForBaseURL(baseURL, apiPath)
 	}
 
 	switch strings.TrimSpace(apiPath) {
@@ -1332,6 +1368,7 @@ func (e *EndpointService) FetchModels(apiUrl, apiKey, transformer string) string
 	if transformer == "" {
 		transformer = "claude"
 	}
+	transformer = providercompat.NormalizeTransformer(transformer)
 
 	normalizedAPIUrl := normalizeAPIUrl(apiUrl)
 	if !strings.HasPrefix(normalizedAPIUrl, "http://") && !strings.HasPrefix(normalizedAPIUrl, "https://") {
@@ -1356,10 +1393,10 @@ func (e *EndpointService) FetchModels(apiUrl, apiKey, transformer string) string
 	var models []string
 	var err error
 
-	switch transformer {
+	switch providercompat.NormalizeTransformer(transformer) {
 	case "claude":
 		models, err = e.fetchOpenAIModels(normalizedAPIUrl, resolvedAPIKey, transformer, resolvedCredential)
-	case "openai", "openai2":
+	case "openai", "deepseek", "kimi", "openai2":
 		if transformer == "openai2" && isCodexBackendAPIURL(normalizedAPIUrl) {
 			models, err = e.fetchCodexModels(normalizedAPIUrl, resolvedAPIKey, resolvedCredential)
 			break
@@ -1398,69 +1435,89 @@ func (e *EndpointService) FetchModels(apiUrl, apiKey, transformer string) string
 }
 
 func (e *EndpointService) fetchOpenAIModels(apiUrl, apiKey, transformer string, credential *storage.EndpointCredential) ([]string, error) {
-	modelsPath := "/v1/models"
+	transformer = providercompat.NormalizeTransformer(transformer)
+	isCodexBackend := isCodexBackendAPIURL(apiUrl)
+	var candidates []string
 	if isCodexBackendAPIURL(apiUrl) {
-		modelsPath = "/models"
-	}
-	url := fmt.Sprintf("%s%s", strings.TrimSuffix(apiUrl, "/"), modelsPath)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		logger.Error("Failed to create request for %s: %v", url, err)
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Accept", "application/json")
-	applyCodexCredentialHeadersForTest(req, credential, nil)
-	logger.Debug("Fetching models from: %s (transformer=%s)", url, transformer)
-
-	client := e.createHTTPClient(30*time.Second, req.URL.String())
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error("Request failed for %s: %v", url, err)
-		return nil, fmt.Errorf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		// Read response body for error details
-		body, _ := io.ReadAll(resp.Body)
-		errMsg := string(body)
-		if len(errMsg) > 200 {
-			errMsg = errMsg[:200] + "..."
-		}
-		logger.Error("Models API failed for %s: HTTP %d - %s", url, resp.StatusCode, errMsg)
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, errMsg)
-	}
-
-	var result struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		logger.Error("Failed to parse models response from %s: %v", url, err)
-		return nil, fmt.Errorf("failed to parse response: %v", err)
-	}
-
-	if len(result.Data) == 0 {
-		logger.Warn("No models found in response from %s", url)
-	}
-
-	seen := make(map[string]bool)
-	models := make([]string, 0, len(result.Data))
-	for _, m := range result.Data {
-		id := strings.TrimSpace(m.ID)
-		if id != "" && !seen[id] {
-			seen[id] = true
-			models = append(models, id)
+		candidates = []string{providercompat.JoinBaseURLAndPath(apiUrl, "/models")}
+	} else {
+		var err error
+		candidates, err = providercompat.BuildOpenAIModelURLCandidates(apiUrl, transformer)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	logger.Debug("Successfully fetched %d models from %s", len(models), url)
-	return models, nil
+	var lastErr error
+	for _, url := range candidates {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			logger.Error("Failed to create request for %s: %v", url, err)
+			return nil, fmt.Errorf("failed to create request: %v", err)
+		}
+
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Accept", "application/json")
+		if isCodexBackend {
+			applyCodexCredentialHeadersForTest(req, credential, nil)
+		}
+		logger.Debug("Fetching models from: %s (transformer=%s)", url, transformer)
+
+		client := e.createHTTPClient(30*time.Second, req.URL.String())
+		resp, err := client.Do(req)
+		if err != nil {
+			logger.Error("Request failed for %s: %v", url, err)
+			return nil, fmt.Errorf("request failed: %v", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			errMsg := providercompat.TruncateErrorBody(string(body))
+			logger.Error("Models API failed for %s: HTTP %d - %s", url, resp.StatusCode, errMsg)
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, errMsg)
+			if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+				continue
+			}
+			return nil, lastErr
+		}
+
+		var result struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			logger.Error("Failed to parse models response from %s: %v", url, err)
+			lastErr = fmt.Errorf("failed to parse response from %s: %v", url, err)
+			continue
+		}
+		resp.Body.Close()
+
+		if len(result.Data) == 0 {
+			logger.Warn("No models found in response from %s", url)
+		}
+
+		seen := make(map[string]bool)
+		models := make([]string, 0, len(result.Data))
+		for _, m := range result.Data {
+			id := strings.TrimSpace(m.ID)
+			if id != "" && !seen[id] {
+				seen[id] = true
+				models = append(models, id)
+			}
+		}
+
+		logger.Debug("Successfully fetched %d models from %s", len(models), url)
+		return models, nil
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no models URL candidates")
 }
 
 func (e *EndpointService) fetchCodexModels(apiURL, apiKey string, credential *storage.EndpointCredential) ([]string, error) {
