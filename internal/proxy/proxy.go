@@ -344,7 +344,15 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	logger.DebugLog("Request Body: %s", string(bodyBytes))
 
 	if err := validateClientJSONRequestBody(bodyBytes); err != nil {
-		logger.Warn("Invalid request body: %v content_type=%q content_length=%d %s", err, r.Header.Get("Content-Type"), len(bodyBytes), requestLogFields(obs, "", 0, http.StatusBadRequest, "invalid_request_body"))
+		logger.Warn(
+			"Invalid request body: %v method=%s path=%s content_type=%q content_length=%d %s",
+			err,
+			sanitizeLogField(r.Method),
+			sanitizeLogField(r.URL.Path),
+			r.Header.Get("Content-Type"),
+			len(bodyBytes),
+			requestLogFields(obs, "", 0, http.StatusBadRequest, "invalid_request_body"),
+		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		errorResp := map[string]interface{}{

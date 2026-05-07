@@ -2,9 +2,13 @@ package proxy
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/lich0821/ccNexus/internal/config"
+	"github.com/lich0821/ccNexus/internal/logger"
 )
 
 func TestEnsureCodexResponsesPayload(t *testing.T) {
@@ -93,6 +97,38 @@ func TestValidateClientJSONRequestBody(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleProxyInvalidBodyLogIncludesMethodAndPath(t *testing.T) {
+	logger.GetLogger().Clear()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses?token=hidden", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	(&Proxy{}).handleProxy(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected HTTP 400, got %d", rec.Code)
+	}
+
+	for _, entry := range logger.GetLogger().GetLogs() {
+		if !strings.Contains(entry.Message, "Invalid request body") {
+			continue
+		}
+		if !strings.Contains(entry.Message, "method=POST") {
+			t.Fatalf("expected invalid-body log to include method, got %q", entry.Message)
+		}
+		if !strings.Contains(entry.Message, "path=/v1/responses") {
+			t.Fatalf("expected invalid-body log to include path, got %q", entry.Message)
+		}
+		if strings.Contains(entry.Message, "token=hidden") {
+			t.Fatalf("expected invalid-body log to omit query string, got %q", entry.Message)
+		}
+		return
+	}
+
+	t.Fatal("expected invalid-body log entry")
 }
 
 func TestForceStreamInPayloadAddsChatUsageOptions(t *testing.T) {
