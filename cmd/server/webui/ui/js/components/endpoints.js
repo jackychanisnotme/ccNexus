@@ -2,6 +2,12 @@ import { api } from '../api.js';
 import { state } from '../state.js';
 import { notifications } from '../utils/notifications.js';
 import { getTransformerLabel } from '../utils/formatters.js';
+import {
+    autoTestEndpoint,
+    autoTestEndpoints,
+    getEndpointTestStatus,
+    saveEndpointTestStatus
+} from '../utils/endpointHealth.js';
 import { t } from '../utils/i18n.js';
 
 class Endpoints {
@@ -43,7 +49,9 @@ class Endpoints {
         await this.loadEndpoints();
     }
 
-    async loadEndpoints() {
+    async loadEndpoints(options = {}) {
+        const shouldAutoTest = options.autoTest !== false;
+
         try {
             const data = await api.getEndpoints();
             this.endpoints = data.endpoints || [];
@@ -59,6 +67,9 @@ class Endpoints {
             }
 
             this.renderTable();
+            if (shouldAutoTest) {
+                this.autoTestEnabledEndpoints();
+            }
         } catch (error) {
             notifications.error(`${t('endpoints.failedToLoad')}: ${error.message}`);
         }
@@ -317,22 +328,37 @@ class Endpoints {
     }
 
     getTestStatus(endpointName) {
-        try {
-            const statusMap = JSON.parse(localStorage.getItem('ccNexus_endpointTestStatus') || '{}');
-            return statusMap[endpointName];
-        } catch {
-            return undefined;
-        }
+        return getEndpointTestStatus(endpointName);
     }
 
     saveTestStatus(endpointName, success) {
-        try {
-            const statusMap = JSON.parse(localStorage.getItem('ccNexus_endpointTestStatus') || '{}');
-            statusMap[endpointName] = success;
-            localStorage.setItem('ccNexus_endpointTestStatus', JSON.stringify(statusMap));
-        } catch (error) {
-            console.error('Failed to save test status:', error);
+        saveEndpointTestStatus(endpointName, success);
+    }
+
+    autoTestEnabledEndpoints() {
+        autoTestEndpoints(api, this.endpoints, {
+            onUpdate: () => {
+                if (state.get('currentView') === 'endpoints') {
+                    this.renderTable();
+                }
+            }
+        });
+    }
+
+    async autoTestNewEndpoint(endpointName) {
+        const endpoint = this.endpoints.find(ep => ep.name === endpointName);
+        if (!endpoint || !endpoint.enabled) {
+            return;
         }
+
+        await autoTestEndpoint(api, endpoint, {
+            force: true,
+            onUpdate: () => {
+                if (state.get('currentView') === 'endpoints') {
+                    this.renderTable();
+                }
+            }
+        });
     }
 
     showAddModal() {
@@ -569,7 +595,10 @@ class Endpoints {
             }
 
             this.closeModal();
-            await this.loadEndpoints();
+            await this.loadEndpoints({ autoTest: isEdit });
+            if (!isEdit) {
+                await this.autoTestNewEndpoint(data.name);
+            }
         } catch (error) {
             notifications.error(`${t('endpoints.failedToSave')}: ${error.message}`);
         }
@@ -595,16 +624,16 @@ class Endpoints {
                 this.saveTestStatus(name, true);
                 notifications.success(`${t('notifications.testSuccessful')} ${result.latency}ms`);
                 this.showTestResultModal(name, result);
-                await this.loadEndpoints(); // Refresh to show test status
+                await this.loadEndpoints({ autoTest: false }); // Refresh to show test status
             } else {
                 this.saveTestStatus(name, false);
                 notifications.error(`${t('notifications.testFailed')} ${result.error}`);
-                await this.loadEndpoints(); // Refresh to show test status
+                await this.loadEndpoints({ autoTest: false }); // Refresh to show test status
             }
         } catch (error) {
             this.saveTestStatus(name, false);
             notifications.error(`${t('endpoints.failedToTest')}: ${error.message}`);
-            await this.loadEndpoints(); // Refresh to show test status
+            await this.loadEndpoints({ autoTest: false }); // Refresh to show test status
         }
     }
 

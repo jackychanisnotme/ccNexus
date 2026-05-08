@@ -2,11 +2,13 @@ import { api } from '../api.js';
 import { state } from '../state.js';
 import { notifications } from '../utils/notifications.js';
 import { formatNumber, formatTokens } from '../utils/formatters.js';
+import { autoTestEndpoints, getEndpointTestStatus } from '../utils/endpointHealth.js';
 import { t } from '../utils/i18n.js';
 
 class Dashboard {
     constructor() {
         this.container = document.getElementById('view-container');
+        this.endpoints = [];
         // 监听语言切换
         window.addEventListener('languageChanged', () => {
             if (state.get('currentView') === 'dashboard') {
@@ -71,7 +73,9 @@ class Dashboard {
 
             // Load endpoints
             const endpointsData = await api.getEndpoints();
-            this.updateEndpoints(endpointsData.endpoints);
+            this.endpoints = endpointsData.endpoints || [];
+            this.updateEndpoints(this.endpoints);
+            this.autoTestEnabledEndpoints();
 
             // Load daily stats for chart
             const dailyStats = await api.getStatsDaily();
@@ -148,12 +152,17 @@ class Dashboard {
     }
 
     getEndpointTestStatus(endpointName) {
-        try {
-            const statusMap = JSON.parse(localStorage.getItem('ccNexus_endpointTestStatus') || '{}');
-            return statusMap[endpointName];
-        } catch {
-            return undefined;
-        }
+        return getEndpointTestStatus(endpointName);
+    }
+
+    autoTestEnabledEndpoints() {
+        autoTestEndpoints(api, this.endpoints, {
+            onUpdate: () => {
+                if (state.get('currentView') === 'dashboard') {
+                    this.updateEndpoints(this.endpoints);
+                }
+            }
+        });
     }
 
     renderChart(dailyStats) {
