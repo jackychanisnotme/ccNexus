@@ -19,7 +19,7 @@ ccNexus is more than a smart endpoint rotation proxy for Claude Code and Codex C
 > [!IMPORTANT]
 > This fork maintains the Optimized line, with extra compatibility for Codex CLI, OpenAI Responses API, DeepSeek, and Kimi/Moonshot.
 >
-> Latest release: [`ccNexus Optimized 20260508 (7f3d067)`](https://github.com/jackychanisnotme/ccNexus/releases/latest)
+> Latest release: [`ccNexus Optimized`](https://github.com/jackychanisnotme/ccNexus/releases/latest)
 
 ## Features
 
