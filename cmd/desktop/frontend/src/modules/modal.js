@@ -713,15 +713,6 @@ export async function showChangelogIfNewVersion() {
     localStorage.setItem('ccNexus_lastVersion', currentVersion);
 }
 
-export function showWelcomeModalIfFirstTime() {
-    const hasShown = localStorage.getItem('ccNexus_welcomeShown');
-    if (!hasShown) {
-        setTimeout(() => {
-            showWelcomeModal();
-        }, 500);
-    }
-}
-
 // 判断是否为"不支持测试"的情况
 function isTestNotSupported(statusCode, message) {
     // 可能不支持测试的 HTTP 状态码

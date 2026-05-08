@@ -14,7 +14,6 @@ import { initSession } from './modules/session.js'
 import { showSettingsModal, closeSettingsModal, saveSettings, applyTheme, initTheme, showAutoThemeConfigModal, closeAutoThemeConfigModal, saveAutoThemeConfig } from './modules/settings.js'
 import { checkUpdatesOnStartup, checkForUpdates, initUpdateSettings } from './modules/updater.js'
 import { initBroadcast } from './modules/broadcast.js'
-import { initSponsor, showSponsorModal, closeSponsorModal, openSponsorLink } from './modules/sponsor.js'
 import { initFilterDropdowns, clearAllFilters } from './modules/filters.js'
 import { formatTokens } from './utils/format.js'
 import {
@@ -36,7 +35,6 @@ import {
     closePortModal,
     showWelcomeModal,
     closeWelcomeModal,
-    showWelcomeModalIfFirstTime,
     showChangelogModal,
     closeChangelogModal,
     showChangelogIfNewVersion,
@@ -182,8 +180,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Refresh logs every 2 seconds
     setInterval(loadLogs, 2000);
 
-    // Show welcome modal on first launch
-    showWelcomeModalIfFirstTime();
     // showChangelogIfNewVersion(); // 暂时禁用自动弹窗
 
     // Check for updates on startup
@@ -192,8 +188,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Initialize broadcast banner
     initBroadcast();
 
-    // Initialize sponsor module
-    initSponsor();
 
     // Initialize update settings
     initUpdateSettings();
@@ -270,9 +264,6 @@ window.saveSettings = saveSettings;
 window.showAutoThemeConfigModal = showAutoThemeConfigModal;
 window.closeAutoThemeConfigModal = closeAutoThemeConfigModal;
 window.saveAutoThemeConfig = saveAutoThemeConfig;
-window.showSponsorModal = showSponsorModal;
-window.closeSponsorModal = closeSponsorModal;
-window.openSponsorLink = openSponsorLink;
 
 // History modal functions
 window.closeHistoryModal = async () => {

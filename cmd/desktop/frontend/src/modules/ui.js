@@ -6,8 +6,6 @@ export function initUI() {
 
     const app = document.getElementById('app');
     app.innerHTML = `
-        <!-- 页面右上角斜拉横幅 -->
-        <div class="ribbon-banner hidden" onclick="window.showSponsorModal()" title="${t('sponsor.ribbonTip')}">${t('sponsor.ribbon')}</div>
 
         <div class="header">
             <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
@@ -310,7 +308,6 @@ export function initUI() {
                         </button>
                     </div>
                 </div>
-
 
                 <!-- 筛选激活警告条 -->
                 <div id="filterActiveBanner" class="filter-active-banner hidden">
@@ -851,18 +848,6 @@ export function initUI() {
             </div>
         </div>
 
-        <!-- Sponsor Modal -->
-        <div id="sponsorModal" class="modal">
-            <div class="modal-content sponsor-modal-content">
-                <div class="modal-header">
-                    <h2>❤️ ${t('sponsor.title')}</h2>
-                    <button class="modal-close" onclick="window.closeSponsorModal()">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="sponsor-grid"></div>
-                </div>
-            </div>
-        </div>
     `;
 
     setupModalEventListeners();
