@@ -5,6 +5,7 @@ class APIClient {
     }
 
     async request(method, path, data = null) {
+        const requestUrl = new URL(`${this.baseURL}${path}`, window.location.origin);
         const options = {
             method,
             headers: {
@@ -17,7 +18,7 @@ class APIClient {
         }
 
         try {
-            const response = await fetch(`${this.baseURL}${path}`, options);
+            const response = await fetch(requestUrl, options);
             const result = await response.json();
 
             if (!response.ok) {

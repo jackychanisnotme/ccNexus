@@ -70,7 +70,7 @@ class Endpoints {
         if (this.endpoints.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-state-icon">🔗</div>
+                    <div class="empty-state-icon">◇</div>
                     <div class="empty-state-title">${t('endpoints.noEndpoints')}</div>
                     <div class="empty-state-message">${t('endpoints.noEndpointsMessage')}</div>
                 </div>
@@ -108,14 +108,17 @@ class Endpoints {
     renderEndpointRow(ep, index) {
         const isCurrentEndpoint = ep.name === this.currentEndpoint;
         const testStatus = this.getTestStatus(ep.name);
-        let testStatusIcon = '⚠️';
+        let testStatusIcon = '•';
+        let testStatusClass = 'pending';
         let testStatusTitle = t('endpoints.notTested');
 
         if (testStatus === true) {
-            testStatusIcon = '✅';
+            testStatusIcon = '✓';
+            testStatusClass = 'passed';
             testStatusTitle = t('endpoints.testPassed');
         } else if (testStatus === false) {
-            testStatusIcon = '❌';
+            testStatusIcon = '!';
+            testStatusClass = 'failed';
             testStatusTitle = t('endpoints.testFailed');
         }
 
@@ -124,13 +127,13 @@ class Endpoints {
                 <td style="cursor: grab; text-align: center;">⋮⋮</td>
                 <td>
                     <strong>${this.escapeHtml(ep.name)}</strong>
-                    <span title="${testStatusTitle}" style="margin-left: 5px;">${testStatusIcon}</span>
+                    <span class="endpoint-health ${testStatusClass}" title="${testStatusTitle}">${testStatusIcon}</span>
                     ${isCurrentEndpoint ? `<span class="badge badge-primary" style="margin-left: 5px;">${t('endpoints.current')}</span>` : ''}
                 </td>
                 <td>
                     <code style="font-size: 12px;">${this.escapeHtml(ep.apiUrl)}</code>
                     <button class="btn-icon copy-btn" data-copy="${this.escapeHtml(ep.apiUrl)}" title="${t('endpoints.copyUrl')}">
-                        📋
+                        ⧉
                     </button>
                 </td>
                 <td>${getTransformerLabel(ep.transformer)}</td>

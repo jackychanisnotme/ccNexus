@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { state } from '../state.js';
 import { notifications } from '../utils/notifications.js';
 import { t } from '../utils/i18n.js';
 
@@ -82,7 +83,7 @@ class Testing {
 
             if (result.success) {
                 resultDiv.innerHTML = `
-                    <div class="card" style="background-color: var(--bg-secondary);">
+                    <div class="result-panel">
                         <div class="mb-2">
                             <span class="badge badge-success">${t('common.success')}</span>
                             <span class="text-muted ml-2">${t('testing.latency')}: ${result.latency}ms</span>
@@ -96,7 +97,7 @@ class Testing {
                 notifications.success(t('testing.testCompletedSuccessfully'));
             } else {
                 resultDiv.innerHTML = `
-                    <div class="card" style="background-color: var(--bg-secondary);">
+                    <div class="result-panel">
                         <div class="mb-2">
                             <span class="badge badge-danger">${t('testing.testFailed')}</span>
                         </div>
@@ -110,7 +111,7 @@ class Testing {
             }
         } catch (error) {
             resultDiv.innerHTML = `
-                <div class="card" style="background-color: var(--bg-secondary);">
+                <div class="result-panel">
                     <div class="mb-2">
                         <span class="badge badge-danger">${t('common.error')}</span>
                     </div>
