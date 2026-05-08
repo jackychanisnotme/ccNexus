@@ -66,6 +66,8 @@ export default {
         actions: '操作',
         current: '当前',
         notTested: '未测试',
+        available: '可用',
+        unavailable: '不可用',
         testPassed: '测试通过',
         testFailed: '测试失败',
         switchToEndpoint: '切换到此端点',

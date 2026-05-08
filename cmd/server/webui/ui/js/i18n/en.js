@@ -66,6 +66,8 @@ export default {
         actions: 'Actions',
         current: 'Current',
         notTested: 'Not tested',
+        available: 'Available',
+        unavailable: 'Unavailable',
         testPassed: 'Test passed',
         testFailed: 'Test failed',
         switchToEndpoint: 'Switch to this endpoint',

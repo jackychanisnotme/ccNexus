@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { state } from '../state.js';
 import { notifications } from '../utils/notifications.js';
-import { getTransformerLabel, getStatusBadge } from '../utils/formatters.js';
+import { getTransformerLabel } from '../utils/formatters.js';
 import { t } from '../utils/i18n.js';
 
 class Endpoints {
@@ -139,7 +139,7 @@ class Endpoints {
                 <td>${getTransformerLabel(ep.transformer)}</td>
                 <td>${this.escapeHtml(ep.model || '-')}</td>
                 <td>${this.renderTokenPoolSummary(this.tokenPools[ep.name])}</td>
-                <td>${getStatusBadge(ep.enabled)}</td>
+                <td>${this.renderEndpointStatus(ep, testStatus)}</td>
                 <td>
                     <div class="flex gap-2">
                         ${ep.enabled && !isCurrentEndpoint ? `
@@ -170,6 +170,19 @@ class Endpoints {
                 </td>
             </tr>
         `;
+    }
+
+    renderEndpointStatus(ep, testStatus) {
+        if (!ep.enabled) {
+            return `<span class="badge badge-danger">${t('common.disabled')}</span>`;
+        }
+        if (testStatus === true) {
+            return `<span class="badge badge-success">${t('endpoints.available')}</span>`;
+        }
+        if (testStatus === false) {
+            return `<span class="badge badge-danger">${t('endpoints.unavailable')}</span>`;
+        }
+        return `<span class="badge badge-warning">${t('endpoints.notTested')}</span>`;
     }
 
     renderTokenPoolSummary(pool) {
