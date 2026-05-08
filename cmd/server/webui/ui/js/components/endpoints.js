@@ -411,6 +411,7 @@ class Endpoints {
                             <div class="form-group">
                                 <label class="form-label">${t('endpoints.transformer')} *</label>
                                 <select class="form-select" name="transformer" required>
+                                    <option value="auto" ${!endpoint?.transformer || endpoint?.transformer === 'auto' ? 'selected' : ''}>${t('transformers.auto')}</option>
                                     <option value="claude" ${endpoint?.transformer === 'claude' ? 'selected' : ''}>${t('transformers.claude')}</option>
                                     <option value="openai" ${endpoint?.transformer === 'openai' ? 'selected' : ''}>${t('transformers.openai')}</option>
                                     <option value="openai2" ${endpoint?.transformer === 'openai2' ? 'selected' : ''}>${t('transformers.openai2')}</option>
@@ -486,6 +487,10 @@ class Endpoints {
             fetchBtn.textContent = 'Fetching...';
 
             const result = await api.fetchModels(apiUrl, apiKey, transformer);
+            if (result.transformer && transformer === 'auto') {
+                transformerSelect.value = result.transformer;
+                notifications.info(`${t('endpoints.autoTransformerDetected')} ${getTransformerLabel(result.transformer)}`);
+            }
 
             if (result.models && result.models.length > 0) {
                 // Show model selection modal

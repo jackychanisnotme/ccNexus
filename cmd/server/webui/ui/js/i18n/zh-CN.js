@@ -122,6 +122,7 @@ export default {
         failedToCopy: '复制到剪贴板失败',
         urlCopied: 'URL 已复制',
         enterApiUrlAndKey: '请先输入 API 地址和 API 密钥',
+        autoTransformerDetected: '已自动识别转换器：',
         modelSelected: '已选择模型：',
         tokenPoolTitle: '令牌池：',
         total: '总计',
@@ -214,6 +215,7 @@ export default {
         urlCopied: 'URL 已复制'
     },
     transformers: {
+        auto: '自动匹配',
         claude: 'Claude',
         openai: 'OpenAI',
         openai2: 'OpenAI 响应',

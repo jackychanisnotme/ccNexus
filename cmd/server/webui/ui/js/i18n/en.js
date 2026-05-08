@@ -122,6 +122,7 @@ export default {
         failedToCopy: 'Failed to copy to clipboard',
         urlCopied: 'URL copied',
         enterApiUrlAndKey: 'Please enter API URL and API Key first',
+        autoTransformerDetected: 'Auto-detected transformer:',
         modelSelected: 'Model selected: ',
         tokenPoolTitle: 'Token Pool: ',
         total: 'Total',
@@ -214,6 +215,7 @@ export default {
         urlCopied: 'URL copied'
     },
     transformers: {
+        auto: 'Auto detect',
         claude: 'Claude',
         openai: 'OpenAI',
         openai2: 'OpenAI Responses',

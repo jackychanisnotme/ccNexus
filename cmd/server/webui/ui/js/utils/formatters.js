@@ -38,6 +38,7 @@ export function formatLatency(ms) {
 
 export function getTransformerLabel(transformer) {
     const labels = {
+        'auto': 'Auto',
         'claude': 'Claude',
         'openai': 'OpenAI',
         'openai2': 'OpenAI Responses',

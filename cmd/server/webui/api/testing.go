@@ -64,8 +64,100 @@ func (h *Handler) testEndpoint(w http.ResponseWriter, r *http.Request, name stri
 	})
 }
 
+const autoTransformer = "auto"
+
+func isAutoTransformer(transformer string) bool {
+	switch strings.ToLower(strings.TrimSpace(transformer)) {
+	case "", autoTransformer, "automatic", "auto_detect", "autodetect", "detect":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Handler) detectEndpointTransformer(endpoint *storage.Endpoint) (string, error) {
+	candidates := autoTransformerCandidates(endpoint.APIUrl)
+	errors := make([]string, 0, len(candidates))
+
+	for _, transformer := range candidates {
+		probe := *endpoint
+		probe.Transformer = transformer
+		if strings.TrimSpace(probe.Model) == "" {
+			probe.Model = h.firstProbeModel(&probe, transformer)
+		}
+		if _, err := h.sendTestRequestWithTransformer(&probe, transformer, 10*time.Second); err == nil {
+			if strings.TrimSpace(probe.Model) == "" && transformer != "claude" {
+				probe.Model = providercompat.DefaultModel(transformer)
+			}
+			endpoint.Model = probe.Model
+			return transformer, nil
+		} else {
+			errors = append(errors, fmt.Sprintf("%s: %s", transformer, truncateDetectError(err.Error())))
+		}
+	}
+
+	return "", fmt.Errorf("auto-detect transformer failed: %s", strings.Join(errors, "; "))
+}
+
+func (h *Handler) firstProbeModel(endpoint *storage.Endpoint, transformer string) string {
+	apiKey, err := h.resolveEndpointAPIKey(endpoint)
+	if err != nil {
+		return ""
+	}
+	models, err := h.fetchModelsFromProvider(endpoint.APIUrl, apiKey, transformer)
+	if err != nil || len(models) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(models[0])
+}
+
+func autoTransformerCandidates(apiURL string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(apiURL))
+	preferred := make([]string, 0, 2)
+
+	switch {
+	case strings.Contains(normalized, "anthropic") || strings.Contains(normalized, "claude"):
+		preferred = append(preferred, "claude")
+	case strings.Contains(normalized, "generativelanguage.googleapis.com") || strings.Contains(normalized, "googleapis.com"):
+		preferred = append(preferred, "gemini")
+	case strings.Contains(normalized, "deepseek"):
+		preferred = append(preferred, "deepseek")
+	case strings.Contains(normalized, "moonshot") || strings.Contains(normalized, "kimi"):
+		preferred = append(preferred, "kimi")
+	default:
+		preferred = append(preferred, "openai2", "openai")
+	}
+
+	all := []string{"openai2", "openai", "claude", "gemini", "deepseek", "kimi"}
+	seen := make(map[string]bool, len(all))
+	result := make([]string, 0, len(all))
+	for _, transformer := range append(preferred, all...) {
+		if !seen[transformer] {
+			seen[transformer] = true
+			result = append(result, transformer)
+		}
+	}
+	return result
+}
+
+func truncateDetectError(message string) string {
+	message = strings.TrimSpace(message)
+	if len(message) > 160 {
+		return message[:160] + "..."
+	}
+	return message
+}
+
 // sendTestRequest sends a test request to an endpoint
 func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
+	result, err := h.sendTestRequestWithTransformer(endpoint, endpoint.Transformer, 30*time.Second)
+	if err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
+func (h *Handler) sendTestRequestWithTransformer(endpoint *storage.Endpoint, transformer string, timeout time.Duration) (string, error) {
 	apiKey, authErr := h.resolveEndpointAPIKey(endpoint)
 	if authErr != nil {
 		return "", authErr
@@ -76,7 +168,7 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 	var err error
 
 	normalizedURL := providercompat.NormalizeBaseURL(endpoint.APIUrl)
-	transformer := providercompat.NormalizeTransformer(endpoint.Transformer)
+	transformer = providercompat.NormalizeTransformer(transformer)
 
 	switch transformer {
 	case "claude":
@@ -172,9 +264,7 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 		req.URL.RawQuery = q.Encode()
 	}
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	client := &http.Client{Timeout: timeout}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -274,6 +364,22 @@ func (h *Handler) handleFetchModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isAutoTransformer(req.Transformer) {
+		endpoint := &storage.Endpoint{
+			APIUrl:      req.APIUrl,
+			APIKey:      req.APIKey,
+			AuthMode:    config.AuthModeAPIKey,
+			Transformer: autoTransformer,
+		}
+		detectedTransformer, err := h.detectEndpointTransformer(endpoint)
+		if err != nil {
+			logger.Error("Failed to auto-detect transformer: %v", err)
+			WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		req.Transformer = detectedTransformer
+	}
+
 	models, err := h.fetchModelsFromProvider(req.APIUrl, req.APIKey, req.Transformer)
 	if err != nil {
 		logger.Error("Failed to fetch models: %v", err)
@@ -282,7 +388,8 @@ func (h *Handler) handleFetchModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteSuccess(w, map[string]interface{}{
-		"models": models,
+		"models":      models,
+		"transformer": req.Transformer,
 	})
 }
 
