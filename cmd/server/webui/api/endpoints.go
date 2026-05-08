@@ -165,10 +165,10 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		ForceStream: forceStream,
 		Remark:      req.Remark,
 	}
-	if normalizedEndpoint.Transformer == "" {
-		normalizedEndpoint.Transformer = "claude"
+	autoDetectTransformer := isAutoTransformer(normalizedEndpoint.Transformer)
+	if !autoDetectTransformer {
+		normalizedEndpoint.Transformer = providercompat.NormalizeTransformer(normalizedEndpoint.Transformer)
 	}
-	normalizedEndpoint.Transformer = providercompat.NormalizeTransformer(normalizedEndpoint.Transformer)
 	config.ApplyEndpointAuthModeRules(&normalizedEndpoint)
 	authMode = normalizedEndpoint.AuthMode
 	req.APIUrl = normalizedEndpoint.APIUrl
@@ -188,6 +188,36 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	if config.IsTokenPoolAuthMode(authMode) {
 		req.APIKey = ""
+	}
+	if autoDetectTransformer {
+		probe := &storage.Endpoint{
+			Name:        req.Name,
+			APIUrl:      req.APIUrl,
+			APIKey:      req.APIKey,
+			AuthMode:    authMode,
+			Transformer: autoTransformer,
+			Model:       req.Model,
+			Thinking:    req.Thinking,
+			ForceStream: forceStream,
+			Remark:      req.Remark,
+		}
+		detectedTransformer, err := h.detectEndpointTransformer(probe)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		normalizedEndpoint.Transformer = detectedTransformer
+		if strings.TrimSpace(req.Model) == "" {
+			req.Model = probe.Model
+			normalizedEndpoint.Model = probe.Model
+		}
+		config.ApplyEndpointAuthModeRules(&normalizedEndpoint)
+		authMode = normalizedEndpoint.AuthMode
+		req.APIUrl = normalizedEndpoint.APIUrl
+		req.APIKey = normalizedEndpoint.APIKey
+		req.Transformer = normalizedEndpoint.Transformer
+		req.Thinking = normalizedEndpoint.Thinking
+		forceStream = normalizedEndpoint.ForceStream
 	}
 
 	// Get current endpoints to determine sort order
@@ -310,11 +340,19 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	if req.ForceStream != nil {
 		normalizedEndpoint.ForceStream = *req.ForceStream
 	}
+	if req.Model != "" {
+		normalizedEndpoint.Model = req.Model
+	}
 	if normalizedEndpoint.Transformer == "" {
 		normalizedEndpoint.Transformer = "claude"
 	}
+	autoDetectTransformer := req.Transformer != "" && isAutoTransformer(req.Transformer)
 	if req.Transformer != "" {
-		normalizedEndpoint.Transformer = providercompat.NormalizeTransformer(req.Transformer)
+		if autoDetectTransformer {
+			normalizedEndpoint.Transformer = autoTransformer
+		} else {
+			normalizedEndpoint.Transformer = providercompat.NormalizeTransformer(req.Transformer)
+		}
 	}
 	config.ApplyEndpointAuthModeRules(&normalizedEndpoint)
 	existing.APIUrl = normalizedEndpoint.APIUrl
@@ -326,6 +364,15 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	if existing.AuthMode == config.AuthModeAPIKey && existing.APIKey == "" {
 		WriteError(w, http.StatusBadRequest, "apiKey is required in api_key mode")
 		return
+	}
+	if autoDetectTransformer {
+		detectedTransformer, err := h.detectEndpointTransformer(existing)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		existing.Transformer = detectedTransformer
+		normalizedEndpoint.Transformer = detectedTransformer
 	}
 	existing.Enabled = req.Enabled
 	existing.Transformer = normalizedEndpoint.Transformer

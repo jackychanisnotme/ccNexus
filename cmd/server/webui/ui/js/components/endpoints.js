@@ -1,7 +1,13 @@
 import { api } from '../api.js';
 import { state } from '../state.js';
 import { notifications } from '../utils/notifications.js';
-import { getTransformerLabel, getStatusBadge } from '../utils/formatters.js';
+import { getTransformerLabel } from '../utils/formatters.js';
+import {
+    autoTestEndpoint,
+    autoTestEndpoints,
+    getEndpointTestStatus,
+    saveEndpointTestStatus
+} from '../utils/endpointHealth.js';
 import { t } from '../utils/i18n.js';
 
 class Endpoints {
@@ -43,7 +49,9 @@ class Endpoints {
         await this.loadEndpoints();
     }
 
-    async loadEndpoints() {
+    async loadEndpoints(options = {}) {
+        const shouldAutoTest = options.autoTest !== false;
+
         try {
             const data = await api.getEndpoints();
             this.endpoints = data.endpoints || [];
@@ -59,6 +67,9 @@ class Endpoints {
             }
 
             this.renderTable();
+            if (shouldAutoTest) {
+                this.autoTestEnabledEndpoints();
+            }
         } catch (error) {
             notifications.error(`${t('endpoints.failedToLoad')}: ${error.message}`);
         }
@@ -70,7 +81,7 @@ class Endpoints {
         if (this.endpoints.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-state-icon">🔗</div>
+                    <div class="empty-state-icon">◇</div>
                     <div class="empty-state-title">${t('endpoints.noEndpoints')}</div>
                     <div class="empty-state-message">${t('endpoints.noEndpointsMessage')}</div>
                 </div>
@@ -108,14 +119,17 @@ class Endpoints {
     renderEndpointRow(ep, index) {
         const isCurrentEndpoint = ep.name === this.currentEndpoint;
         const testStatus = this.getTestStatus(ep.name);
-        let testStatusIcon = '⚠️';
+        let testStatusIcon = '•';
+        let testStatusClass = 'pending';
         let testStatusTitle = t('endpoints.notTested');
 
         if (testStatus === true) {
-            testStatusIcon = '✅';
+            testStatusIcon = '✓';
+            testStatusClass = 'passed';
             testStatusTitle = t('endpoints.testPassed');
         } else if (testStatus === false) {
-            testStatusIcon = '❌';
+            testStatusIcon = '!';
+            testStatusClass = 'failed';
             testStatusTitle = t('endpoints.testFailed');
         }
 
@@ -124,19 +138,19 @@ class Endpoints {
                 <td style="cursor: grab; text-align: center;">⋮⋮</td>
                 <td>
                     <strong>${this.escapeHtml(ep.name)}</strong>
-                    <span title="${testStatusTitle}" style="margin-left: 5px;">${testStatusIcon}</span>
+                    <span class="endpoint-health ${testStatusClass}" title="${testStatusTitle}">${testStatusIcon}</span>
                     ${isCurrentEndpoint ? `<span class="badge badge-primary" style="margin-left: 5px;">${t('endpoints.current')}</span>` : ''}
                 </td>
                 <td>
                     <code style="font-size: 12px;">${this.escapeHtml(ep.apiUrl)}</code>
                     <button class="btn-icon copy-btn" data-copy="${this.escapeHtml(ep.apiUrl)}" title="${t('endpoints.copyUrl')}">
-                        📋
+                        ⧉
                     </button>
                 </td>
                 <td>${getTransformerLabel(ep.transformer)}</td>
                 <td>${this.escapeHtml(ep.model || '-')}</td>
                 <td>${this.renderTokenPoolSummary(this.tokenPools[ep.name])}</td>
-                <td>${getStatusBadge(ep.enabled)}</td>
+                <td>${this.renderEndpointStatus(ep, testStatus)}</td>
                 <td>
                     <div class="flex gap-2">
                         ${ep.enabled && !isCurrentEndpoint ? `
@@ -167,6 +181,19 @@ class Endpoints {
                 </td>
             </tr>
         `;
+    }
+
+    renderEndpointStatus(ep, testStatus) {
+        if (!ep.enabled) {
+            return `<span class="badge badge-danger">${t('common.disabled')}</span>`;
+        }
+        if (testStatus === true) {
+            return `<span class="badge badge-success">${t('endpoints.available')}</span>`;
+        }
+        if (testStatus === false) {
+            return `<span class="badge badge-danger">${t('endpoints.unavailable')}</span>`;
+        }
+        return `<span class="badge badge-warning">${t('endpoints.notTested')}</span>`;
     }
 
     renderTokenPoolSummary(pool) {
@@ -301,22 +328,37 @@ class Endpoints {
     }
 
     getTestStatus(endpointName) {
-        try {
-            const statusMap = JSON.parse(localStorage.getItem('ccNexus_endpointTestStatus') || '{}');
-            return statusMap[endpointName];
-        } catch {
-            return undefined;
-        }
+        return getEndpointTestStatus(endpointName);
     }
 
     saveTestStatus(endpointName, success) {
-        try {
-            const statusMap = JSON.parse(localStorage.getItem('ccNexus_endpointTestStatus') || '{}');
-            statusMap[endpointName] = success;
-            localStorage.setItem('ccNexus_endpointTestStatus', JSON.stringify(statusMap));
-        } catch (error) {
-            console.error('Failed to save test status:', error);
+        saveEndpointTestStatus(endpointName, success);
+    }
+
+    autoTestEnabledEndpoints() {
+        autoTestEndpoints(api, this.endpoints, {
+            onUpdate: () => {
+                if (state.get('currentView') === 'endpoints') {
+                    this.renderTable();
+                }
+            }
+        });
+    }
+
+    async autoTestNewEndpoint(endpointName) {
+        const endpoint = this.endpoints.find(ep => ep.name === endpointName);
+        if (!endpoint || !endpoint.enabled) {
+            return;
         }
+
+        await autoTestEndpoint(api, endpoint, {
+            force: true,
+            onUpdate: () => {
+                if (state.get('currentView') === 'endpoints') {
+                    this.renderTable();
+                }
+            }
+        });
     }
 
     showAddModal() {
@@ -369,6 +411,7 @@ class Endpoints {
                             <div class="form-group">
                                 <label class="form-label">${t('endpoints.transformer')} *</label>
                                 <select class="form-select" name="transformer" required>
+                                    <option value="auto" ${!endpoint?.transformer || endpoint?.transformer === 'auto' ? 'selected' : ''}>${t('transformers.auto')}</option>
                                     <option value="claude" ${endpoint?.transformer === 'claude' ? 'selected' : ''}>${t('transformers.claude')}</option>
                                     <option value="openai" ${endpoint?.transformer === 'openai' ? 'selected' : ''}>${t('transformers.openai')}</option>
                                     <option value="openai2" ${endpoint?.transformer === 'openai2' ? 'selected' : ''}>${t('transformers.openai2')}</option>
@@ -444,6 +487,10 @@ class Endpoints {
             fetchBtn.textContent = 'Fetching...';
 
             const result = await api.fetchModels(apiUrl, apiKey, transformer);
+            if (result.transformer && transformer === 'auto') {
+                transformerSelect.value = result.transformer;
+                notifications.info(`${t('endpoints.autoTransformerDetected')} ${getTransformerLabel(result.transformer)}`);
+            }
 
             if (result.models && result.models.length > 0) {
                 // Show model selection modal
@@ -553,7 +600,10 @@ class Endpoints {
             }
 
             this.closeModal();
-            await this.loadEndpoints();
+            await this.loadEndpoints({ autoTest: isEdit });
+            if (!isEdit) {
+                await this.autoTestNewEndpoint(data.name);
+            }
         } catch (error) {
             notifications.error(`${t('endpoints.failedToSave')}: ${error.message}`);
         }
@@ -579,16 +629,16 @@ class Endpoints {
                 this.saveTestStatus(name, true);
                 notifications.success(`${t('notifications.testSuccessful')} ${result.latency}ms`);
                 this.showTestResultModal(name, result);
-                await this.loadEndpoints(); // Refresh to show test status
+                await this.loadEndpoints({ autoTest: false }); // Refresh to show test status
             } else {
                 this.saveTestStatus(name, false);
                 notifications.error(`${t('notifications.testFailed')} ${result.error}`);
-                await this.loadEndpoints(); // Refresh to show test status
+                await this.loadEndpoints({ autoTest: false }); // Refresh to show test status
             }
         } catch (error) {
             this.saveTestStatus(name, false);
             notifications.error(`${t('endpoints.failedToTest')}: ${error.message}`);
-            await this.loadEndpoints(); // Refresh to show test status
+            await this.loadEndpoints({ autoTest: false }); // Refresh to show test status
         }
     }
 

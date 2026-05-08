@@ -22,11 +22,11 @@ function initTheme() {
     themeToggle.addEventListener('click', () => {
         const isDark = document.body.classList.toggle('dark-theme');
         localStorage.setItem('theme', isDark ? 'dark' : 'light');
-        themeToggle.querySelector('.icon').textContent = isDark ? '☀️' : '🌙';
+        themeToggle.querySelector('.icon').textContent = isDark ? '☼' : '◐';
     });
 
     // Set initial icon
-    themeToggle.querySelector('.icon').textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+    themeToggle.querySelector('.icon').textContent = savedTheme === 'dark' ? '☼' : '◐';
 }
 
 // Update sidebar translations
@@ -50,8 +50,8 @@ function updateSidebarTranslations() {
 function initLanguageToggle() {
     const langToggle = document.getElementById('lang-toggle');
     const langLabels = {
-        'zh-CN': '🇨🇳',
-        'en': '🇺🇸'
+        'zh-CN': 'CN',
+        'en': 'EN'
     };
 
     // 设置初始图标
@@ -74,7 +74,7 @@ function initLanguageToggle() {
 
 // Initialize real-time updates
 function initRealtime() {
-    const eventSource = new EventSource('/api/events');
+    const eventSource = new EventSource(new URL('/api/events', window.location.origin));
 
     eventSource.onmessage = (event) => {
         try {

@@ -49,6 +49,8 @@ export default {
         inputTokens: 'Input Tokens',
         outputTokens: 'Output Tokens',
         activeEndpoints: 'Active Endpoints',
+        api: 'API',
+        availability: 'Availability',
         recentActivity: 'Recent Activity',
         requests: 'Requests',
         noEndpoints: 'No endpoints configured',
@@ -67,6 +69,8 @@ export default {
         actions: 'Actions',
         current: 'Default',
         notTested: 'Not tested',
+        available: 'Available',
+        unavailable: 'Unavailable',
         testPassed: 'Test passed',
         testFailed: 'Test failed',
         switchToEndpoint: 'Switch to this endpoint',
@@ -119,6 +123,7 @@ export default {
         failedToCopy: 'Failed to copy to clipboard',
         urlCopied: 'URL copied',
         enterApiUrlAndKey: 'Please enter API URL and API Key first',
+        autoTransformerDetected: 'Auto-detected transformer:',
         modelSelected: 'Model selected: ',
         tokenPoolTitle: 'Token Pool: ',
         total: 'Total',
@@ -231,6 +236,7 @@ export default {
         urlCopied: 'URL copied'
     },
     transformers: {
+        auto: 'Auto detect',
         claude: 'Claude',
         openai: 'OpenAI',
         openai2: 'OpenAI Responses',

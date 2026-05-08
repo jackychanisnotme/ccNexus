@@ -49,6 +49,8 @@ export default {
         inputTokens: '输入令牌',
         outputTokens: '输出令牌',
         activeEndpoints: '活动端点',
+        api: 'API',
+        availability: '可用性',
         recentActivity: '最近活动',
         requests: '请求数',
         noEndpoints: '未配置端点',
@@ -67,6 +69,8 @@ export default {
         actions: '操作',
         current: '默认',
         notTested: '未测试',
+        available: '可用',
+        unavailable: '不可用',
         testPassed: '测试通过',
         testFailed: '测试失败',
         switchToEndpoint: '切换到此端点',
@@ -119,6 +123,7 @@ export default {
         failedToCopy: '复制到剪贴板失败',
         urlCopied: 'URL 已复制',
         enterApiUrlAndKey: '请先输入 API 地址和 API 密钥',
+        autoTransformerDetected: '已自动识别转换器：',
         modelSelected: '已选择模型：',
         tokenPoolTitle: '令牌池：',
         total: '总计',
@@ -231,6 +236,7 @@ export default {
         urlCopied: 'URL 已复制'
     },
     transformers: {
+        auto: '自动匹配',
         claude: 'Claude',
         openai: 'OpenAI',
         openai2: 'OpenAI 响应',
