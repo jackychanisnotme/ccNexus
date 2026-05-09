@@ -1,7 +1,7 @@
 <div align="center">
 
 <p align="center">
-  <img src="images/ccNexus.svg" alt="Claude Code & Codex CLI API Resource Management Hub" width="720" />
+  <img src="images/ccNexus.svg" alt="Claude Code, Codex CLI, and Hermes Agent API Resource Management Hub" width="720" />
 </p>
 
 [![Build Status](https://github.com/jackychanisnotme/ccNexus/actions/workflows/build.yml/badge.svg)](https://github.com/jackychanisnotme/ccNexus/actions)
@@ -14,16 +14,16 @@
 
 </div>
 
-ccNexus is more than a smart endpoint rotation proxy for Claude Code and Codex CLI. It is an API resource management system for AI development workflows, bringing endpoints, models, API keys, Codex Token Pools, quota snapshots, usage statistics, and backups into one local control plane.
+ccNexus is more than a smart endpoint rotation proxy for Claude Code, Codex CLI, and Hermes Agent. It is an API resource management system for AI development workflows, bringing endpoints, models, API keys, Codex Token Pools, quota snapshots, usage statistics, and backups into one local control plane.
 
 > [!IMPORTANT]
-> This fork maintains the Optimized line, with extra compatibility for Codex CLI, OpenAI Responses API, DeepSeek, and Kimi/Moonshot.
+> This fork maintains the Optimized line, with extra compatibility for Codex CLI, Claude Code, Hermes Agent, OpenAI Responses API, DeepSeek, and Kimi/Moonshot.
 >
 > Latest release: [`ccNexus Optimized`](https://github.com/jackychanisnotme/ccNexus/releases/latest)
 
 ## Features
 
-- **One Local Gateway**: Connect Claude Code, Codex CLI, OpenAI Chat/Responses-compatible clients, and model tools to one local base URL
+- **One Local Gateway**: Connect Claude Code, Codex CLI, Hermes Agent, OpenAI Chat/Responses-compatible clients, and model tools to one local base URL
 - **API Resource Management**: Manage endpoints, models, API keys, Token Pools, quota snapshots, usage statistics, and backup data in one place
 - **Endpoint Rotation and Failover**: Rotate across enabled endpoints and skip failing upstreams automatically
 - **Protocol Conversion**: Convert between Claude, OpenAI Chat, OpenAI Responses, Gemini, DeepSeek, and Kimi/Moonshot formats
@@ -35,6 +35,15 @@ ccNexus is more than a smart endpoint rotation proxy for Claude Code and Codex C
 - **Live Statistics**: Event-driven usage updates with today/yesterday/week/month views
 - **Desktop and Server Modes**: Use the Wails desktop app locally, or run `cmd/server` headlessly on a server, NAS, or Docker host
 - **Backup and Sync**: Support WebDAV, local backups, and S3-compatible storage
+
+## Client Compatibility
+
+| Client | Recommended Entry | Status |
+|--------|-------------------|--------|
+| Claude Code | Claude / Anthropic-compatible gateway | Stable |
+| Codex CLI | OpenAI Responses API, preferably with the `openai2` transformer | Stable |
+| Hermes Agent | Claude or OpenAI-compatible gateway, depending on the client protocol | Stable |
+| OpenClaw | Claude or OpenAI-compatible gateway | Experimental; robustness is limited in some streaming, tool-call, and retry scenarios |
 
 <table>
   <tr>
