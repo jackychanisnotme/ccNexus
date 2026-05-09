@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -547,6 +549,291 @@ func TestClientCanceledRequestDoesNotPersistFailureStatus(t *testing.T) {
 	_ = primaryHits
 }
 
+func TestStreamingUpstreamErrorCoolsEndpointForNextRequest(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	var fallbackHits int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "primary.example":
+			primaryHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       failingReadCloser{err: errors.New("stream error: stream ID 77; INTERNAL_ERROR; received from peer")},
+				Request:    req,
+			}, nil
+		case "fallback.example":
+			fallbackHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`)),
+				Request:    req,
+			}, nil
+		default:
+			t.Fatalf("unexpected upstream host %q", req.URL.Host)
+			return nil, nil
+		}
+	})}
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", "https://primary.example"),
+		failoverPolicyTestEndpoint("Fallback", "https://fallback.example"),
+	}, client)
+	var currentEvents []EndpointCurrentEvent
+	p.SetOnCurrentEndpointChanged(func(event EndpointCurrentEvent) {
+		currentEvents = append(currentEvents, event)
+	})
+
+	streamReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	streamReq.Header.Set("Content-Type", "application/json")
+	streamReq.Header.Set(headerCCNexusRequestID, "req-stream-error-cooldown")
+	streamRec := httptest.NewRecorder()
+	p.handleProxy(streamRec, streamReq)
+
+	if primaryHits != 1 {
+		t.Fatalf("expected first streaming request to hit Primary once, got %d", primaryHits)
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected in-flight streaming error not to replay on fallback, got fallback hits=%d", fallbackHits)
+	}
+	p.cooldownMu.RLock()
+	cooldown, cooled := p.endpointCooldowns["Primary"]
+	p.cooldownMu.RUnlock()
+	if !cooled || cooldown.Reason != "upstream_stream_error" {
+		t.Fatalf("expected Primary cooldown for upstream_stream_error, got cooled=%v cooldown=%#v", cooled, cooldown)
+	}
+	if got := p.GetCurrentEndpointName(); got != "Fallback" {
+		t.Fatalf("expected global current endpoint to auto-switch to Fallback after stream error, got %q", got)
+	}
+	if len(currentEvents) != 1 {
+		t.Fatalf("expected one current endpoint event, got %#v", currentEvents)
+	}
+	if event := currentEvents[0]; event.PreviousName != "Primary" || event.Name != "Fallback" || event.Reason != "failure" {
+		t.Fatalf("expected failure current endpoint event Primary -> Fallback, got %#v", event)
+	}
+
+	logs := joinedProxyLogs()
+	for _, want := range []string{
+		"[AUTO SWITCH] Primary",
+		"Fallback",
+		"switch_reason=upstream_stream_error",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected logs to contain %q, got logs:\n%s", want, logs)
+		}
+	}
+
+	nextReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[]}`))
+	nextReq.Header.Set("Content-Type", "application/json")
+	nextReq.Header.Set(headerCCNexusRequestID, "req-after-stream-error")
+	nextRec := httptest.NewRecorder()
+	p.handleProxy(nextRec, nextReq)
+
+	if nextRec.Code != http.StatusOK {
+		t.Fatalf("expected next request to succeed on fallback, got status=%d body=%q", nextRec.Code, nextRec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("expected cooled Primary to be skipped on next request, got primary hits=%d", primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Fatalf("expected next request to use Fallback once, got %d", fallbackHits)
+	}
+	if got := nextRec.Header().Get(headerCCNexusEndpoint); got != "Fallback" {
+		t.Fatalf("expected next request endpoint Fallback, got %q", got)
+	}
+}
+
+func TestStreamingUpstreamErrorDoesNotSwitchGlobalWhenFailedEndpointIsNotCurrent(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	var fallbackHits int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "primary.example":
+			primaryHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`)),
+				Request:    req,
+			}, nil
+		case "fallback.example":
+			fallbackHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       failingReadCloser{err: errors.New("stream error: stream ID 99; INTERNAL_ERROR; received from peer")},
+				Request:    req,
+			}, nil
+		default:
+			t.Fatalf("unexpected upstream host %q", req.URL.Host)
+			return nil, nil
+		}
+	})}
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", "https://primary.example"),
+		failoverPolicyTestEndpoint("Fallback", "https://fallback.example"),
+	}, client)
+	var currentEvents []EndpointCurrentEvent
+	p.SetOnCurrentEndpointChanged(func(event EndpointCurrentEvent) {
+		currentEvents = append(currentEvents, event)
+	})
+
+	streamReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	streamReq.Header.Set("Content-Type", "application/json")
+	streamReq.Header.Set("X-CCN-Endpoint", "Fallback")
+	streamReq.Header.Set(headerCCNexusRequestID, "req-specified-stream-error-no-global-switch")
+	streamRec := httptest.NewRecorder()
+	p.handleProxy(streamRec, streamReq)
+
+	if primaryHits != 0 {
+		t.Fatalf("expected specified failing request not to hit Primary, got %d", primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Fatalf("expected specified failing request to hit Fallback once, got %d", fallbackHits)
+	}
+	if got := p.GetCurrentEndpointName(); got != "Primary" {
+		t.Fatalf("expected global current endpoint to remain Primary, got %q", got)
+	}
+	if len(currentEvents) != 0 {
+		t.Fatalf("expected no current endpoint events, got %#v", currentEvents)
+	}
+
+	logs := joinedProxyLogs()
+	if strings.Contains(logs, "[AUTO SWITCH]") {
+		t.Fatalf("expected no auto switch log when failed endpoint is not current, got logs:\n%s", logs)
+	}
+}
+
+func TestTransientNetworkErrorRetriesOnceThenFailsOver(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	var fallbackHits int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "primary.example":
+			primaryHits++
+			return nil, errors.New("net/http: timeout awaiting response headers")
+		case "fallback.example":
+			fallbackHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`)),
+				Request:    req,
+			}, nil
+		default:
+			t.Fatalf("unexpected upstream host %q", req.URL.Host)
+			return nil, nil
+		}
+	})}
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", "https://primary.example"),
+		failoverPolicyTestEndpoint("Fallback", "https://fallback.example"),
+	}, client)
+
+	rec := issueFailoverPolicyTestRequest(p, "req-transient-failover")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected transient network failover to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != endpointFastFailoverAttempts {
+		t.Fatalf("expected Primary to be tried %d times, got %d", endpointFastFailoverAttempts, primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Fatalf("expected Fallback to be used once, got %d", fallbackHits)
+	}
+	if got := rec.Header().Get(headerCCNexusEndpoint); got != "Fallback" {
+		t.Fatalf("expected final endpoint Fallback, got %q", got)
+	}
+	if got := p.GetCurrentEndpointName(); got != "Primary" {
+		t.Fatalf("expected global current endpoint to remain Primary, got %q", got)
+	}
+
+	logs := joinedProxyLogs()
+	for _, want := range []string{
+		"cooldown_reason=transient_network_error",
+		"failover_scope=request_local",
+		"failover_reason=transient_network_error",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected logs to contain %q, got logs:\n%s", want, logs)
+		}
+	}
+}
+
+func TestTransientNetworkErrorSingleRetryCanRecoverOnSameEndpoint(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	var fallbackHits int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "primary.example":
+			primaryHits++
+			if primaryHits == 1 {
+				return nil, errors.New("net/http: timeout awaiting response headers")
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`)),
+				Request:    req,
+			}, nil
+		case "fallback.example":
+			fallbackHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`)),
+				Request:    req,
+			}, nil
+		default:
+			t.Fatalf("unexpected upstream host %q", req.URL.Host)
+			return nil, nil
+		}
+	})}
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", "https://primary.example"),
+		failoverPolicyTestEndpoint("Fallback", "https://fallback.example"),
+	}, client)
+
+	rec := issueFailoverPolicyTestRequest(p, "req-transient-recover")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected transient retry to recover on Primary, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != 2 {
+		t.Fatalf("expected Primary to be tried twice, got %d", primaryHits)
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected Fallback not to be used, got %d", fallbackHits)
+	}
+	if got := rec.Header().Get(headerCCNexusEndpoint); got != "Primary" {
+		t.Fatalf("expected final endpoint Primary, got %q", got)
+	}
+	if logs := joinedProxyLogs(); strings.Contains(logs, "failover_reason=transient_network_error") {
+		t.Fatalf("expected no transient failover after one recovered timeout, got logs:\n%s", logs)
+	}
+}
+
 func TestRateLimitedRetryUsesBackoffBeforeSameEndpointRetry(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
@@ -611,4 +898,22 @@ func disableEndpointCooldownsForTest(p *Proxy) {
 		RecoveredEndpointPolicy: config.RecoveredEndpointPolicyDeprioritize,
 		Cooldowns:               &config.FailoverCooldownConfig{},
 	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type failingReadCloser struct {
+	err error
+}
+
+func (r failingReadCloser) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+func (r failingReadCloser) Close() error {
+	return nil
 }

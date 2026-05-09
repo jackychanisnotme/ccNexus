@@ -302,6 +302,50 @@ func (p *Proxy) rotateEndpoint() config.Endpoint {
 	return newEndpoint
 }
 
+func (p *Proxy) switchCurrentEndpointAfterFailure(failedEndpoint config.Endpoint, reason string, obs requestObservability, attemptNumber int) config.Endpoint {
+	failedName := strings.TrimSpace(failedEndpoint.Name)
+	if failedName == "" {
+		return config.Endpoint{}
+	}
+
+	p.mu.Lock()
+	endpoints := p.getEnabledEndpoints()
+	if len(endpoints) <= 1 {
+		p.mu.Unlock()
+		return config.Endpoint{}
+	}
+
+	currentIndex := p.currentIndex % len(endpoints)
+	currentEndpoint := endpoints[currentIndex]
+	if currentEndpoint.Name != failedName {
+		p.mu.Unlock()
+		return config.Endpoint{}
+	}
+
+	requestEndpoints := p.getRequestPlanEndpoints(endpoints, obs)
+	requestPlan := newRequestEndpointPlanForCurrentWithSkip(requestEndpoints, endpoints, failedName, true)
+	nextEndpoint := requestPlan.Current()
+	nextIndex := indexEndpointByName(endpoints, nextEndpoint.Name)
+	if nextIndex < 0 || nextEndpoint.Name == "" || nextEndpoint.Name == currentEndpoint.Name {
+		p.mu.Unlock()
+		return config.Endpoint{}
+	}
+
+	p.currentIndex = nextIndex
+	p.mu.Unlock()
+
+	cleanReason := sanitizeLogField(reason)
+	logger.Debug("[AUTO SWITCH] %s → %s (#%d) %s switch_reason=%s",
+		currentEndpoint.Name,
+		nextEndpoint.Name,
+		nextIndex+1,
+		requestLogFields(obs, currentEndpoint.Name, attemptNumber, 0, cleanReason),
+		cleanReason,
+	)
+	p.emitCurrentEndpointChanged(currentEndpoint.Name, nextEndpoint.Name, "failure")
+	return nextEndpoint
+}
+
 // GetCurrentEndpointName returns the current endpoint name (thread-safe)
 func (p *Proxy) GetCurrentEndpointName() string {
 	endpoint := p.getCurrentEndpoint()
@@ -640,12 +684,15 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 			logRequestAttemptError(obs, endpoint.Name, attemptNumber, 0, retryReason, "Request failed: %v", err)
 			if isTransientNetworkError(err) {
-				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, 0, retryReason, "Transient network error, retrying same endpoint: %v", err)
 				status := p.recordEndpointFailure(endpoint.Name, retryReason)
 				p.emitEndpointRuntimeEvent(endpoint.Name, "failure", status)
 				p.markRequestInactive(endpoint.Name)
-				time.Sleep(300 * time.Millisecond)
-				endpointAttempts = 0
+				if endpointAttempts >= endpointFastFailoverAttempts {
+					advanceForFailure(endpoint, retryReason, attemptNumber, nil)
+				} else {
+					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, 0, retryReason, "Transient network error, retrying same endpoint: %v", err)
+					p.sleepBeforeRetry(300 * time.Millisecond)
+				}
 				continue
 			}
 			p.markCredentialFailure(credentialID, 0, err.Error())
@@ -734,7 +781,9 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				p.markCredentialFailure(credentialID, 0, streamResult.Err.Error())
 				p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
 				p.recordEndpointError(endpoint.Name, retryReason)
+				p.markEndpointCooldownForReason(endpoint.Name, retryReason, resp.Header, obs, attemptNumber)
 				p.markRequestInactive(endpoint.Name)
+				p.switchCurrentEndpointAfterFailure(endpoint, retryReason, obs, attemptNumber)
 				return
 			}
 

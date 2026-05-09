@@ -40,8 +40,8 @@ func (p *Proxy) clearEndpointCooldown(endpointName string) {
 	if endpointName == "" {
 		return
 	}
-	p.cooldownMu.RLock()
-	defer p.cooldownMu.RUnlock()
+	p.cooldownMu.Lock()
+	defer p.cooldownMu.Unlock()
 	delete(p.endpointCooldowns, endpointName)
 }
 
@@ -198,7 +198,7 @@ func (p *Proxy) cooldownDurationForReason(reason string, headers http.Header) ti
 			return retryAfter
 		}
 		return secondsToDuration(cooldowns.RateLimitedSec)
-	case "upstream_5xx", "retryable_status":
+	case "upstream_5xx", "retryable_status", "upstream_stream_error", "streaming_failed":
 		return secondsToDuration(cooldowns.UpstreamErrorSec)
 	case "send_request_failed", "transient_network_error":
 		return secondsToDuration(cooldowns.NetworkErrorSec)
