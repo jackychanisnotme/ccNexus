@@ -9,8 +9,8 @@ import (
 // CompareVersions compares two semantic versions
 // Returns: 1 if v1 > v2, -1 if v1 < v2, 0 if equal
 func CompareVersions(v1, v2 string) (int, error) {
-	v1 = strings.TrimPrefix(v1, "v")
-	v2 = strings.TrimPrefix(v2, "v")
+	v1 = normalizeSemanticVersion(v1)
+	v2 = normalizeSemanticVersion(v2)
 
 	parts1 := strings.Split(v1, ".")
 	parts2 := strings.Split(v2, ".")
@@ -43,7 +43,21 @@ func CompareVersions(v1, v2 string) (int, error) {
 func IsNewerVersion(currentVersion, newVersion string) (bool, error) {
 	result, err := CompareVersions(newVersion, currentVersion)
 	if err != nil {
-		return false, err
+		return !sameVersionIdentifier(currentVersion, newVersion), nil
 	}
 	return result > 0, nil
+}
+
+func normalizeSemanticVersion(version string) string {
+	version = strings.TrimSpace(version)
+	version = strings.TrimPrefix(version, "v")
+	version = strings.TrimPrefix(version, "V")
+	if index := strings.IndexAny(version, "-+"); index >= 0 {
+		version = version[:index]
+	}
+	return version
+}
+
+func sameVersionIdentifier(v1, v2 string) bool {
+	return strings.TrimSpace(v1) == strings.TrimSpace(v2)
 }
