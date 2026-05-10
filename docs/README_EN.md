@@ -1,7 +1,7 @@
 <div align="center">
 
 <p align="center">
-  <img src="images/ccNexus.svg" alt="Claude Code, Codex CLI, and Hermes Agent API Resource Management Hub" width="720" />
+  <img src="images/ccNexus.svg" alt="Claude Code, Codex CLI, Hermes Agent, and OpenClaw API Provider Switching Hub" width="720" />
 </p>
 
 [![Build Status](https://github.com/jackychanisnotme/ccNexus/actions/workflows/build.yml/badge.svg)](https://github.com/jackychanisnotme/ccNexus/actions)
@@ -14,16 +14,17 @@
 
 </div>
 
-ccNexus is more than a smart endpoint rotation proxy for Claude Code, Codex CLI, and Hermes Agent. It is an API resource management system for AI development workflows, bringing endpoints, models, API keys, Codex Token Pools, quota snapshots, usage statistics, and backups into one local control plane.
+ccNexus is more than a smart endpoint rotation proxy for Claude Code, Codex CLI, Hermes Agent, and OpenClaw. It is an API resource management system for AI development workflows, bringing endpoints, models, API keys, Codex Token Pools, quota snapshots, usage statistics, and backups into one local control plane. It also works as a stable local API provider: point Hermes, OpenClaw, Codex, Claude Code, and compatible clients at ccNexus once, then hot-switch between upstream providers, accounts, and models without repeatedly editing every tool's config.
 
 > [!IMPORTANT]
-> This fork maintains the Optimized line, with extra compatibility for Codex CLI, Claude Code, Hermes Agent, OpenAI Responses API, DeepSeek, and Kimi/Moonshot.
+> This fork maintains the Optimized line, with extra compatibility for Codex CLI, Claude Code, Hermes Agent, OpenClaw, OpenAI Responses API, DeepSeek, and Kimi/Moonshot.
 >
 > Latest release: [`ccNexus Optimized`](https://github.com/jackychanisnotme/ccNexus/releases/latest)
 
 ## Features
 
-- **One Local Gateway**: Connect Claude Code, Codex CLI, Hermes Agent, OpenAI Chat/Responses-compatible clients, and model tools to one local base URL
+- **One Local API Provider**: Connect Claude Code, Codex CLI, Hermes Agent, OpenClaw, OpenAI Chat/Responses-compatible clients, and model tools to one local base URL
+- **Hot Switching Across Clients**: Point Hermes, OpenClaw, Codex, and Claude Code provider/base URLs at ccNexus, then switch the current endpoint, enable or disable endpoints, or adjust priority in ccNexus to move clients to a new upstream, account, or model without changing each client again
 - **API Resource Management**: Manage endpoints, models, API keys, Token Pools, quota snapshots, usage statistics, and backup data in one place
 - **Endpoint Rotation and Failover**: Rotate across enabled endpoints and skip failing upstreams automatically
 - **Protocol Conversion**: Convert between Claude, OpenAI Chat, OpenAI Responses, Gemini, DeepSeek, and Kimi/Moonshot formats
@@ -48,7 +49,7 @@ The Optimized line keeps the original [lich0821/ccNexus](https://github.com/lich
 | Streaming reliability | Compact traditional proxy behavior | SSE heartbeat, forced upstream streaming, streaming error classification, and semantic empty-output detection |
 | Operations visibility | Basic logs and stats | Request IDs, attempt headers, retry reasons, endpoint runtime state, and per-credential usage/quota snapshots |
 
-For a lightweight local rotation proxy, the original version remains refreshingly simple. For running Claude Code, Codex CLI, Hermes Agent, Token Pools, and multiple third-party upstreams together for long sessions, the Optimized line provides stronger isolation, recovery, and visibility.
+For a lightweight local rotation proxy, the original version remains refreshingly simple. For running Claude Code, Codex CLI, Hermes Agent, OpenClaw, Token Pools, and multiple third-party upstreams together for long sessions while sharing one hot-switchable API provider across clients, the Optimized line provides stronger isolation, recovery, and visibility.
 
 ## Client Compatibility
 

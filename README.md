@@ -1,7 +1,7 @@
 <div align="center">
 
 <p align="center">
-  <img src="docs/images/ccNexus.svg" alt="Claude Code、Codex CLI 与 Hermes Agent API 资源管理中枢" width="720" />
+  <img src="docs/images/ccNexus.svg" alt="Claude Code、Codex CLI、Hermes Agent 与 OpenClaw API Provider 热切换中枢" width="720" />
 </p>
 
 [![构建状态](https://github.com/jackychanisnotme/ccNexus/actions/workflows/build.yml/badge.svg)](https://github.com/jackychanisnotme/ccNexus/actions)
@@ -14,16 +14,17 @@
 
 </div>
 
-ccNexus 不只是 Claude Code、Codex CLI 与 Hermes Agent 的智能端点轮换代理，也是一套面向 AI 开发工作流的 API 资源管理系统。它把端点、模型、密钥、Codex Token Pool、额度、统计和备份统一管理起来，再对外提供一个稳定的本地 API 入口。
+ccNexus 不只是 Claude Code、Codex CLI、Hermes Agent 与 OpenClaw 的智能端点轮换代理，也是一套面向 AI 开发工作流的 API 资源管理系统。它把端点、模型、密钥、Codex Token Pool、额度、统计和备份统一管理起来，并对外提供一个稳定的本地 API Provider：Hermes、OpenClaw、Codex、Claude Code 等客户端只需指向 ccNexus，就可以在不同上游、账号、模型之间热切换，无需反复修改每个工具的配置。
 
 > [!IMPORTANT]
-> 当前仓库维护 Optimized 版本，重点增强 Codex CLI、Claude Code、Hermes Agent、OpenAI Responses API、DeepSeek、Kimi 等兼容场景。
+> 当前仓库维护 Optimized 版本，重点增强 Codex CLI、Claude Code、Hermes Agent、OpenClaw、OpenAI Responses API、DeepSeek、Kimi 等兼容场景。
 >
 > 最新发布：[`ccNexus Optimized`](https://github.com/jackychanisnotme/ccNexus/releases/latest)
 
 ## 功能特性
 
-- **统一代理入口**：Claude Code、Codex CLI、Hermes Agent、OpenAI Chat/Responses 兼容客户端都可以接入同一个本地地址
+- **统一 API Provider**：Claude Code、Codex CLI、Hermes Agent、OpenClaw、OpenAI Chat/Responses 兼容客户端都可以接入同一个本地地址
+- **多客户端热切换**：把 Hermes、OpenClaw、Codex、Claude Code 的 provider/base URL 都指向 ccNexus 后，在 ccNexus 中切换当前端点、启停端点或调整优先级，客户端即可无感切到新的上游、账号或模型
 - **API 资源管理**：集中管理端点、模型、API Key、Token Pool、额度快照、用量统计和备份数据
 - **多端点轮换与故障转移**：按顺序轮换可用端点，失败自动跳过并切换，降低单个上游异常对工作流的影响
 - **多协议格式转换**：支持 Claude、OpenAI Chat、OpenAI Responses、Gemini、DeepSeek、Kimi/Moonshot 等格式互转
@@ -48,7 +49,7 @@ Optimized 版本延续了 [lich0821/ccNexus](https://github.com/lich0821/ccNexus
 | 流式稳定性 | 实现简洁，接近传统 HTTP 代理行为 | 支持 SSE heartbeat、上游强制流式、流式错误分类和 200 但空输出的语义检测 |
 | 运维可见性 | 基础日志和统计 | Request ID、重试次数、失败原因、端点运行态与凭证级用量/额度快照 |
 
-如果只需要一个简单的本地轮换代理，初代设计非常清爽；如果要把 Claude Code、Codex CLI、Hermes Agent、Token Pool 和多个第三方上游长期放在一起跑，Optimized 版本提供了更细的隔离、恢复和观测能力。
+如果只需要一个简单的本地轮换代理，初代设计非常清爽；如果要把 Claude Code、Codex CLI、Hermes Agent、OpenClaw、Token Pool 和多个第三方上游长期放在一起跑，并在这些客户端之间共享同一个可热切换的 API Provider，Optimized 版本提供了更细的隔离、恢复和观测能力。
 
 ## 客户端兼容状态
 
