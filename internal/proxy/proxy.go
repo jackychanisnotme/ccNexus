@@ -777,9 +777,10 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 					semanticErr.OutputTokens,
 					semanticErr.OutputTextLen,
 				)
-				p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr)
+				semanticEmptyExhausted := endpointAttempts >= endpointSlowFailoverAttempts
+				p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr, semanticEmptyExhausted)
 				p.markRequestInactive(endpoint.Name)
-				if endpointAttempts >= endpointSlowFailoverAttempts {
+				if semanticEmptyExhausted {
 					advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
 				}
 				continue
@@ -827,19 +828,21 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 						attemptNumber,
 						http.StatusOK,
 						retryReasonSemanticEmptyResponse,
-						"Semantic empty streaming response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d wrote_data=%t",
+						"Semantic empty streaming response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d wrote_data=%t wrote_semantic_data=%t",
 						semanticErr.Kind,
 						credentialID,
 						semanticErr.OutputTokens,
 						semanticErr.OutputTextLen,
 						streamResult.WroteData,
+						streamResult.WroteSemanticData,
 					)
-					p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr)
+					semanticEmptyExhausted := endpointAttempts >= endpointSlowFailoverAttempts
+					p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr, semanticEmptyExhausted)
 					p.markRequestInactive(endpoint.Name)
-					if streamResult.WroteData {
+					if streamResult.WroteSemanticData {
 						return
 					}
-					if endpointAttempts >= endpointSlowFailoverAttempts {
+					if semanticEmptyExhausted {
 						advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
 					}
 					continue
@@ -898,9 +901,10 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 					semanticErr.OutputTokens,
 					semanticErr.OutputTextLen,
 				)
-				p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr)
+				semanticEmptyExhausted := endpointAttempts >= endpointSlowFailoverAttempts
+				p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr, semanticEmptyExhausted)
 				p.markRequestInactive(endpoint.Name)
-				if endpointAttempts >= endpointSlowFailoverAttempts {
+				if semanticEmptyExhausted {
 					advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
 				}
 				continue
@@ -1185,7 +1189,7 @@ func (p *Proxy) semanticEmptyCredentialCooldown() time.Duration {
 	return duration
 }
 
-func (p *Proxy) recordSemanticEmptyResponseFailure(endpointName string, credentialID int64, err *semanticEmptyResponseError) {
+func (p *Proxy) recordSemanticEmptyResponseFailure(endpointName string, credentialID int64, err *semanticEmptyResponseError, recordEndpointFailure bool) {
 	if err == nil {
 		err = newSemanticEmptyResponseError("", 0, 0)
 	}
@@ -1193,7 +1197,9 @@ func (p *Proxy) recordSemanticEmptyResponseFailure(endpointName string, credenti
 		p.markCredentialCooldown(credentialID, p.semanticEmptyCredentialCooldown(), err.Error())
 	}
 	p.recordCredentialUsage(credentialID, endpointName, 0, 1, 0, 0)
-	p.recordEndpointError(endpointName, retryReasonSemanticEmptyResponse)
+	if recordEndpointFailure {
+		p.recordEndpointError(endpointName, retryReasonSemanticEmptyResponse)
+	}
 }
 
 func (p *Proxy) computeMaxRetries(endpoints []config.Endpoint) int {

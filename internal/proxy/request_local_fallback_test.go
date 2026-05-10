@@ -872,6 +872,79 @@ func TestStreamingResponseHeaderTimeoutKeepsDownstreamOpenAndFallsBack(t *testin
 	}
 }
 
+func TestStreamingResponseHeaderTimeoutDisabledByDefault(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	var fallbackHits int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "primary.example":
+			primaryHits++
+			select {
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			case <-time.After(20 * time.Millisecond):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+					Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+						`data: {"type":"response.output_text.delta","delta":"ok"}`,
+						"",
+						`data: {"type":"response.completed","response":{"id":"resp-primary","object":"response","status":"completed","usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}}`,
+						"",
+						"data: [DONE]",
+						"",
+					}, "\n"))),
+					Request: req,
+				}, nil
+			}
+		case "fallback.example":
+			fallbackHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
+				Request:    req,
+			}, nil
+		default:
+			t.Fatalf("unexpected upstream host %q", req.URL.Host)
+			return nil, nil
+		}
+	})}
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", "https://primary.example"),
+		failoverPolicyTestEndpoint("Fallback", "https://fallback.example"),
+	}, client)
+	p.streamHeartbeatInterval = time.Hour
+	if timeout := p.streamHeaderTimeoutOrDefault(); timeout != 0 {
+		t.Fatalf("expected default streaming response-header timeout to be disabled, got %s", timeout)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCCNexusRequestID, "req-stream-header-timeout-default-off")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected primary stream to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("expected primary to be used once, got %d", primaryHits)
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected fallback not to be used when default header timeout is disabled, got %d", fallbackHits)
+	}
+	if strings.Contains(joinedProxyLogs(), "retry_reason=transient_network_error") {
+		t.Fatalf("did not expect transient retry logs when default header timeout is disabled, logs:\n%s", joinedProxyLogs())
+	}
+}
+
 func TestTransportProtocolErrorDoesNotPenalizeTokenPoolCredential(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)

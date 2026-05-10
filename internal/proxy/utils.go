@@ -34,7 +34,8 @@ const (
 	endpointFastFailoverAttempts = 2
 	endpointSlowFailoverAttempts = 3
 
-	defaultStreamHeaderTimeout     = 30 * time.Second
+	// Disabled by default; the HTTP transport still enforces its 90s ResponseHeaderTimeout.
+	defaultStreamHeaderTimeout     = 0 * time.Second
 	defaultStreamHeartbeatInterval = 10 * time.Second
 	retryReasonEndpointAuthFailed  = "endpoint_auth_failed"
 	retryReasonTransportProtocol   = "transport_protocol_error"
