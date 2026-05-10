@@ -478,3 +478,28 @@ func (s *SQLiteStorage) MarkCredentialFailure(id int64, statusCode int, errMsg s
 		return err
 	}
 }
+
+func (s *SQLiteStorage) MarkCredentialCooldown(id int64, cooldown time.Duration, errMsg string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if cooldown <= 0 {
+		cooldown = defaultCooldown
+	}
+	if len(errMsg) > 500 {
+		errMsg = errMsg[:500]
+	}
+	cooldownUntil := now.UTC().Add(cooldown)
+	_, err := s.db.Exec(`
+		UPDATE endpoint_credentials
+		SET
+			status=?,
+			failure_count=failure_count+1,
+			cooldown_until=?,
+			last_error=?,
+			last_checked_at=?,
+			updated_at=CURRENT_TIMESTAMP
+		WHERE id=?
+	`, credentialStatusCooldown, cooldownUntil, errMsg, now.UTC(), id)
+	return err
+}

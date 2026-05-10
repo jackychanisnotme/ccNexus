@@ -749,6 +749,26 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				logRequestAttemptResult(obs, endpoint.Name, attemptNumber, http.StatusOK, "", "Requested tokens=%d/%d latency=%s cred_id=%d", inputTokens, outputTokens, totalElapsed, credentialID)
 				return
 			}
+			if semanticErr, ok := asSemanticEmptyResponseError(err); ok {
+				logRequestAttemptWarn(
+					obs,
+					endpoint.Name,
+					attemptNumber,
+					http.StatusOK,
+					retryReasonSemanticEmptyResponse,
+					"Semantic empty response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d",
+					semanticErr.Kind,
+					credentialID,
+					semanticErr.OutputTokens,
+					semanticErr.OutputTextLen,
+				)
+				p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr)
+				p.markRequestInactive(endpoint.Name)
+				if endpointAttempts >= endpointSlowFailoverAttempts {
+					advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
+				}
+				continue
+			}
 			if isClientCanceled(ctx, err) {
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, "client_canceled", "Client canceled while aggregating streaming response as non-stream: %v", err)
 				p.markRequestInactive(endpoint.Name)
@@ -784,6 +804,30 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, "client_canceled", "Client canceled streaming response: %v", streamResult.Err)
 					p.markRequestInactive(endpoint.Name)
 					return
+				}
+				if semanticErr, ok := asSemanticEmptyResponseError(streamResult.Err); ok {
+					logRequestAttemptWarn(
+						obs,
+						endpoint.Name,
+						attemptNumber,
+						http.StatusOK,
+						retryReasonSemanticEmptyResponse,
+						"Semantic empty streaming response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d wrote_data=%t",
+						semanticErr.Kind,
+						credentialID,
+						semanticErr.OutputTokens,
+						semanticErr.OutputTextLen,
+						streamResult.WroteData,
+					)
+					p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr)
+					p.markRequestInactive(endpoint.Name)
+					if streamResult.WroteData {
+						return
+					}
+					if endpointAttempts >= endpointSlowFailoverAttempts {
+						advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
+					}
+					continue
 				}
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, retryReason, "Streaming response failed: %v", streamResult.Err)
 				p.markCredentialFailure(credentialID, 0, streamResult.Err.Error())
@@ -825,6 +869,26 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, "client_canceled", "Client canceled non-streaming response: %v", err)
 				p.markRequestInactive(endpoint.Name)
 				return
+			}
+			if semanticErr, ok := asSemanticEmptyResponseError(err); ok {
+				logRequestAttemptWarn(
+					obs,
+					endpoint.Name,
+					attemptNumber,
+					http.StatusOK,
+					retryReasonSemanticEmptyResponse,
+					"Semantic empty non-streaming response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d",
+					semanticErr.Kind,
+					credentialID,
+					semanticErr.OutputTokens,
+					semanticErr.OutputTextLen,
+				)
+				p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr)
+				p.markRequestInactive(endpoint.Name)
+				if endpointAttempts >= endpointSlowFailoverAttempts {
+					advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
+				}
+				continue
 			}
 			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, "non_stream_response_failed", "Failed to handle non-streaming response: %v", err)
 			p.markCredentialFailure(credentialID, 0, err.Error())
@@ -1023,6 +1087,34 @@ func (p *Proxy) markCredentialFailure(credentialID int64, statusCode int, errMsg
 	if err := p.storage.MarkCredentialFailure(credentialID, statusCode, errMsg, time.Now().UTC()); err != nil {
 		logger.Warn("Failed to mark credential failure (id=%d): %v", credentialID, err)
 	}
+}
+
+func (p *Proxy) markCredentialCooldown(credentialID int64, duration time.Duration, errMsg string) {
+	if credentialID <= 0 || p.storage == nil {
+		return
+	}
+	if err := p.storage.MarkCredentialCooldown(credentialID, duration, errMsg, time.Now().UTC()); err != nil {
+		logger.Warn("Failed to mark credential cooldown (id=%d): %v", credentialID, err)
+	}
+}
+
+func (p *Proxy) semanticEmptyCredentialCooldown() time.Duration {
+	duration := p.cooldownDurationForReason(retryReasonSemanticEmptyResponse, nil)
+	if duration <= 0 {
+		duration = 60 * time.Second
+	}
+	return duration
+}
+
+func (p *Proxy) recordSemanticEmptyResponseFailure(endpointName string, credentialID int64, err *semanticEmptyResponseError) {
+	if err == nil {
+		err = newSemanticEmptyResponseError("", 0, 0)
+	}
+	if credentialID > 0 {
+		p.markCredentialCooldown(credentialID, p.semanticEmptyCredentialCooldown(), err.Error())
+	}
+	p.recordCredentialUsage(credentialID, endpointName, 0, 1, 0, 0)
+	p.recordEndpointError(endpointName, retryReasonSemanticEmptyResponse)
 }
 
 func (p *Proxy) computeMaxRetries(endpoints []config.Endpoint) int {

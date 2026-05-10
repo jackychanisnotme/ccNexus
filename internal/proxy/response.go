@@ -50,6 +50,11 @@ func (p *Proxy) handleNonStreamingResponse(w http.ResponseWriter, resp *http.Res
 		// extract usage directly from raw event payload.
 		p.extractTokensFromEvent(bodyBytes, &inputTokens, &outputTokens)
 	}
+	outputText := extractResponseOutputText(transformedResp)
+	if semanticErr := semanticEmptyErrorForResponse(transformedResp, outputTokens); semanticErr != nil {
+		semanticErr.OutputTextLen = len(outputText)
+		return 0, 0, semanticErr
+	}
 
 	// Copy response headers
 	for key, values := range resp.Header {

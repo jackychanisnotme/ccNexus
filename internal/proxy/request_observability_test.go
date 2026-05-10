@@ -20,7 +20,7 @@ func TestHandleProxyAddsRequestObservabilityHeadersAndLogs(t *testing.T) {
 			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp-test","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`))
+		_, _ = w.Write([]byte(`{"id":"resp-test","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer upstream.Close()
 

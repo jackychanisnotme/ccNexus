@@ -27,32 +27,19 @@ const (
 )
 
 type streamResponseResult struct {
-	InputTokens  int
-	OutputTokens int
-	OutputText   string
-	Completed    bool
-	WroteData    bool
-	Reason       string
-	Err          error
+	InputTokens       int
+	OutputTokens      int
+	OutputText        string
+	Completed         bool
+	WroteData         bool
+	WroteSemanticData bool
+	Reason            string
+	Err               error
 }
 
 // handleStreamingResponse processes streaming SSE responses
 func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, endpoint config.Endpoint, trans transformer.Transformer, transformerName string, thinkingEnabled bool, modelName string, bodyBytes []byte, credentialID int64) streamResponseResult {
 	result := streamResponseResult{}
-
-	// Copy response headers except Content-Length and Content-Encoding
-	for key, values := range resp.Header {
-		if key == "Content-Length" || key == "Content-Encoding" {
-			continue
-		}
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
-	if strings.TrimSpace(w.Header().Get("Content-Type")) == "" {
-		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	}
-	w.WriteHeader(resp.StatusCode)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -61,6 +48,26 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 		result.Reason = streamFinishDownstreamWriteFailed
 		result.Err = fmt.Errorf("response writer does not support flushing")
 		return result
+	}
+
+	headersCommitted := false
+	commitHeaders := func() {
+		if headersCommitted {
+			return
+		}
+		for key, values := range resp.Header {
+			if key == "Content-Length" || key == "Content-Encoding" {
+				continue
+			}
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		if strings.TrimSpace(w.Header().Get("Content-Type")) == "" {
+			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		}
+		w.WriteHeader(resp.StatusCode)
+		headersCommitted = true
 	}
 
 	// Handle gzip-encoded response body
@@ -100,9 +107,42 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 	var inputTokens, outputTokens int
 	var buffer bytes.Buffer
+	var pendingWrites bytes.Buffer
 	var outputText strings.Builder
 	eventCount := 0
 	streamDone := false
+	semanticDataSeen := false
+	emptyKind := ""
+
+	writeTransformedEvent := func(data []byte, semantic bool) error {
+		if len(data) == 0 {
+			return nil
+		}
+		if !semanticDataSeen {
+			pendingWrites.Write(data)
+			if !semantic {
+				return nil
+			}
+			commitHeaders()
+			if _, writeErr := w.Write(pendingWrites.Bytes()); writeErr != nil {
+				return writeErr
+			}
+			pendingWrites.Reset()
+			semanticDataSeen = true
+			result.WroteSemanticData = true
+			result.WroteData = true
+			flusher.Flush()
+			return nil
+		}
+
+		commitHeaders()
+		if _, writeErr := w.Write(data); writeErr != nil {
+			return writeErr
+		}
+		result.WroteData = true
+		flusher.Flush()
+		return nil
+	}
 
 	for scanner.Scan() && !streamDone {
 		line := scanner.Text()
@@ -124,10 +164,7 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 				// Inject message_delta event with usage
 				deltaEvent := fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":%d}}\n\n", outputTokens)
-				if _, writeErr := w.Write([]byte(deltaEvent)); writeErr == nil {
-					result.WroteData = true
-					flusher.Flush()
-				} else {
+				if writeErr := writeTransformedEvent([]byte(deltaEvent), false); writeErr != nil {
 					result.Completed = false
 					result.Reason = streamFinishDownstreamWriteFailed
 					result.Err = writeErr
@@ -142,14 +179,16 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 			transformedEvent, err := p.transformStreamEvent(eventData, trans, transformerName, streamCtx)
 			if err == nil && len(transformedEvent) > 0 {
 				logger.DebugLog("[%s] SSE Event #%d (Transformed): %s", endpoint.Name, eventCount+1, string(transformedEvent))
-				if _, writeErr := w.Write(transformedEvent); writeErr != nil {
+				streamInspection := inspectSemanticStreamEvent(transformedEvent)
+				if streamInspection.EmptyKind != "" {
+					emptyKind = streamInspection.EmptyKind
+				}
+				if writeErr := writeTransformedEvent(transformedEvent, streamInspection.HasOutput); writeErr != nil {
 					result.Completed = false
 					result.Reason = streamFinishDownstreamWriteFailed
 					result.Err = writeErr
 					break
 				}
-				result.WroteData = true
-				flusher.Flush()
 			} else if err != nil {
 				result.Completed = false
 				result.Reason = streamFinishTransformFailed
@@ -184,10 +223,7 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 				// Inject message_delta event with usage before message_stop
 				deltaEvent := fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":%d}}\n\n", outputTokens)
-				if _, writeErr := w.Write([]byte(deltaEvent)); writeErr == nil {
-					result.WroteData = true
-					flusher.Flush()
-				} else {
+				if writeErr := writeTransformedEvent([]byte(deltaEvent), false); writeErr != nil {
 					result.Reason = streamFinishDownstreamWriteFailed
 					result.Err = writeErr
 					streamDone = true
@@ -206,8 +242,13 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 				p.extractTokensFromEvent(transformedEvent, &inputTokens, &outputTokens)
 				p.extractTextFromEvent(transformedEvent, &outputText)
+				streamInspection := inspectSemanticStreamEvent(transformedEvent)
+				semanticEvent := streamInspection.HasOutput
+				if streamInspection.EmptyKind != "" {
+					emptyKind = streamInspection.EmptyKind
+				}
 
-				if _, writeErr := w.Write(transformedEvent); writeErr != nil {
+				if writeErr := writeTransformedEvent(transformedEvent, semanticEvent); writeErr != nil {
 					// Client disconnected (broken pipe) is normal for cancelled requests
 					if strings.Contains(writeErr.Error(), "broken pipe") || strings.Contains(writeErr.Error(), "connection reset") {
 						logger.Debug("[%s] Client disconnected: %v", endpoint.Name, writeErr)
@@ -220,8 +261,6 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 					streamDone = true
 					break
 				}
-				result.WroteData = true
-				flusher.Flush()
 			}
 			buffer.Reset()
 		}
@@ -261,6 +300,11 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 	result.InputTokens = inputTokens
 	result.OutputTokens = outputTokens
 	result.OutputText = outputText.String()
+	if result.Err == nil && result.Completed && !result.WroteSemanticData {
+		result.Reason = retryReasonSemanticEmptyResponse
+		result.Completed = false
+		result.Err = newSemanticEmptyResponseError(emptyKind, outputTokens, outputText.Len())
+	}
 	return result
 }
 
@@ -346,18 +390,6 @@ func (p *Proxy) handleStreamingAsNonStreaming(w http.ResponseWriter, resp *http.
 		return 0, 0, "", err
 	}
 
-	for key, values := range resp.Header {
-		if key == "Content-Length" || key == "Content-Encoding" || key == "Content-Type" {
-			continue
-		}
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	w.Write(transformedResp)
-
 	inputTokens, outputTokens := extractTokenUsage(transformedResp)
 	transformedInputTokens, transformedOutputTokens := inputTokens, outputTokens
 	upstreamInputTokens, upstreamOutputTokens := extractTokenUsage(completedPayload)
@@ -376,6 +408,23 @@ func (p *Proxy) handleStreamingAsNonStreaming(w http.ResponseWriter, resp *http.
 		upstreamInputTokens, upstreamOutputTokens,
 		len(outputText),
 	)
+
+	if semanticErr := semanticEmptyErrorForResponse(transformedResp, outputTokens); semanticErr != nil {
+		semanticErr.OutputTextLen = len(outputText)
+		return 0, 0, "", semanticErr
+	}
+
+	for key, values := range resp.Header {
+		if key == "Content-Length" || key == "Content-Encoding" || key == "Content-Type" {
+			continue
+		}
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(transformedResp)
 
 	return inputTokens, outputTokens, outputText, nil
 }

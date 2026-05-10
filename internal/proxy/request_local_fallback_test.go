@@ -34,7 +34,7 @@ func TestHTTPFailureFallbackIsRequestLocalAndDoesNotSwitchGlobalEndpoint(t *test
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fallbackHits++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`))
+		_, _ = w.Write([]byte(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer fallback.Close()
 
@@ -147,7 +147,7 @@ func TestRequestLocalFallbackDoesNotAffectNextRequest(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"message":"Too Many Requests"}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`))
+		_, _ = w.Write([]byte(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer primary.Close()
 
@@ -155,7 +155,7 @@ func TestRequestLocalFallbackDoesNotAffectNextRequest(t *testing.T) {
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fallbackHits++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`))
+		_, _ = w.Write([]byte(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer fallback.Close()
 
@@ -327,7 +327,7 @@ func TestRequestLocalFallbackStreamingEndpointCanCompleteWhenNotGlobalCurrent(t 
 		fallbackHits++
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(strings.Join([]string{
-			`data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7},"output":[]}}`,
+			`data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}}`,
 			"",
 			"data: [DONE]",
 			"",
@@ -373,7 +373,7 @@ func TestClientCanceledRequestDoesNotFailoverOrRecordFailureEvent(t *testing.T) 
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		primaryHits++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`))
+		_, _ = w.Write([]byte(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer primary.Close()
 
@@ -381,7 +381,7 @@ func TestClientCanceledRequestDoesNotFailoverOrRecordFailureEvent(t *testing.T) 
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fallbackHits++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`))
+		_, _ = w.Write([]byte(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer fallback.Close()
 
@@ -451,7 +451,7 @@ func TestForceStreamAggregationClientCancelStopsWithoutFailover(t *testing.T) {
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fallbackHits++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`))
+		_, _ = w.Write([]byte(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer fallback.Close()
 
@@ -519,7 +519,7 @@ func TestClientCanceledRequestDoesNotPersistFailureStatus(t *testing.T) {
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		primaryHits++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`))
+		_, _ = w.Write([]byte(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer primary.Close()
 
@@ -527,7 +527,7 @@ func TestClientCanceledRequestDoesNotPersistFailureStatus(t *testing.T) {
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fallbackHits++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`))
+		_, _ = w.Write([]byte(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer fallback.Close()
 
@@ -597,7 +597,7 @@ func TestStreamingUpstreamErrorCoolsEndpointForNextRequest(t *testing.T) {
 				StatusCode: http.StatusOK,
 				Status:     "200 OK",
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)),
 				Request:    req,
 			}, nil
 		default:
@@ -688,7 +688,7 @@ func TestStreamingUpstreamErrorDoesNotSwitchGlobalWhenFailedEndpointIsNotCurrent
 				StatusCode: http.StatusOK,
 				Status:     "200 OK",
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)),
 				Request:    req,
 			}, nil
 		case "fallback.example":
@@ -758,7 +758,7 @@ func TestTransientNetworkErrorRetriesOnceThenFailsOver(t *testing.T) {
 				StatusCode: http.StatusOK,
 				Status:     "200 OK",
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)),
 				Request:    req,
 			}, nil
 		default:
@@ -818,7 +818,7 @@ func TestTransientNetworkErrorSingleRetryCanRecoverOnSameEndpoint(t *testing.T) 
 				StatusCode: http.StatusOK,
 				Status:     "200 OK",
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)),
 				Request:    req,
 			}, nil
 		case "fallback.example":
@@ -827,7 +827,7 @@ func TestTransientNetworkErrorSingleRetryCanRecoverOnSameEndpoint(t *testing.T) 
 				StatusCode: http.StatusOK,
 				Status:     "200 OK",
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)),
 				Request:    req,
 			}, nil
 		default:
@@ -872,7 +872,7 @@ func TestRateLimitedRetryUsesBackoffBeforeSameEndpointRetry(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"message":"Too Many Requests"}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[]}`))
+		_, _ = w.Write([]byte(`{"id":"resp-primary","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer primary.Close()
 
