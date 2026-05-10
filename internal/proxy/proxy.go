@@ -55,6 +55,8 @@ type Proxy struct {
 	retrySleep               func(time.Duration)         // injectable sleep hook for retry backoff tests
 	endpointCooldowns        map[string]endpointCooldown // temporary request-plan skips for deterministic endpoint failures
 	cooldownMu               sync.RWMutex                // protects endpointCooldowns
+	streamHeaderTimeout      time.Duration               // injectable response-header timeout for upstream streaming requests
+	streamHeartbeatInterval  time.Duration               // injectable downstream SSE heartbeat interval
 }
 
 // New creates a new Proxy instance
@@ -66,6 +68,7 @@ func New(cfg *config.Config, statsStorage StatsStorage, sqliteStorage *storage.S
 	httpClient := &http.Client{
 		Timeout: 300 * time.Second,
 		Transport: &http.Transport{
+			ForceAttemptHTTP2:      true,
 			MaxIdleConns:           100,
 			MaxIdleConnsPerHost:    10,
 			IdleConnTimeout:        90 * time.Second,
@@ -496,6 +499,17 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		logger.Debug("[Resolver] 使用指定端点: %s", specifiedEndpoint.Name)
 	}
 
+	var streamSession *downstreamStreamSession
+	if streamReq.Stream {
+		streamSession = newDownstreamStreamSession(w, p.streamHeartbeatIntervalOrDefault())
+		if err := streamSession.Start(); err != nil {
+			logger.Error("Failed to start downstream stream: %v %s", err, requestLogFields(obs, "", 0, http.StatusInternalServerError, "downstream_stream_start_failed"))
+			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		defer streamSession.Close()
+	}
+
 	requestEndpoints := endpoints
 	currentEndpointName := p.GetCurrentEndpointName()
 	if !useSpecificEndpoint {
@@ -509,7 +523,6 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	forceStreamRetryEndpoints := make(map[string]bool)
 	endpointAttempts := 0
-	streamResponseStarted := false
 	advanceForFailure := func(current config.Endpoint, reason string, attemptNumber int, headers http.Header) {
 		p.markEndpointCooldownForReason(current.Name, reason, headers, obs, attemptNumber)
 		if !useSpecificEndpoint {
@@ -650,6 +663,16 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			logger.Debug("[%s] Model mapping: client_model=%s upstream_model=%s", endpoint.Name, clientModelName, upstreamModelName)
 		}
 
+		var thinkingEnabled bool
+		if strings.Contains(transformerName, "openai") {
+			var openaiReq map[string]interface{}
+			if err := json.Unmarshal(transformedBody, &openaiReq); err == nil {
+				if enable, ok := openaiReq["enable_thinking"].(bool); ok {
+					thinkingEnabled = enable
+				}
+			}
+		}
+
 		proxyReq, err := buildProxyRequest(r, endpoint, apiKey, transformedBody, transformerName, selectedCredential)
 		if err != nil {
 			logRequestAttemptError(obs, endpoint.Name, attemptNumber, 0, "build_request_failed", "Failed to create request: %v", err)
@@ -671,8 +694,8 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 		ctx := r.Context()
 		responseHeaderTimeout := time.Duration(0)
-		if streamReq.Stream {
-			responseHeaderTimeout = streamResponseHeaderTimeout
+		if streamReq.Stream || shouldAggregateStreamingAsNonStreaming(endpoint, transformerName) {
+			responseHeaderTimeout = p.streamHeaderTimeoutOrDefault()
 		}
 		resp, err := sendRequestWithResponseHeaderTimeout(ctx, proxyReq, p.httpClient, p.config, responseHeaderTimeout)
 		if err != nil {
@@ -681,19 +704,16 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				p.markRequestInactive(endpoint.Name)
 				return
 			}
-			retryReason := "send_request_failed"
-			if isTransientNetworkError(err) {
-				retryReason = "transient_network_error"
-			}
+			retryReason := retryReasonForRequestError(err)
 			logRequestAttemptError(obs, endpoint.Name, attemptNumber, 0, retryReason, "Request failed: %v", err)
-			if isTransientNetworkError(err) {
+			if isRetryableRequestErrorReason(retryReason) {
 				status := p.recordEndpointFailure(endpoint.Name, retryReason)
 				p.emitEndpointRuntimeEvent(endpoint.Name, "failure", status)
 				p.markRequestInactive(endpoint.Name)
 				if endpointAttempts >= endpointFastFailoverAttempts {
 					advanceForFailure(endpoint, retryReason, attemptNumber, nil)
 				} else {
-					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, 0, retryReason, "Transient network error, retrying same endpoint: %v", err)
+					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, 0, retryReason, "Retryable transport error, retrying same endpoint: %v", err)
 					p.sleepBeforeRetry(300 * time.Millisecond)
 				}
 				continue
@@ -781,10 +801,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if resp.StatusCode == http.StatusOK && isStreaming {
-			streamResult := p.handleStreamingResponse(ctx, w, resp, endpoint, trans, transformerName, modelName, bodyBytes, credentialID, streamResponseStarted)
-			if streamResult.WroteData {
-				streamResponseStarted = true
-			}
+			streamResult := p.handleStreamingResponse(ctx, w, resp, endpoint, trans, transformerName, thinkingEnabled, modelName, bodyBytes, credentialID, streamSession)
 			inputTokens := streamResult.InputTokens
 			outputTokens := streamResult.OutputTokens
 			outputText := streamResult.OutputText
@@ -810,17 +827,16 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 						attemptNumber,
 						http.StatusOK,
 						retryReasonSemanticEmptyResponse,
-						"Semantic empty streaming response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d wrote_data=%t wrote_semantic_data=%t",
+						"Semantic empty streaming response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d wrote_data=%t",
 						semanticErr.Kind,
 						credentialID,
 						semanticErr.OutputTokens,
 						semanticErr.OutputTextLen,
 						streamResult.WroteData,
-						streamResult.WroteSemanticData,
 					)
 					p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr)
 					p.markRequestInactive(endpoint.Name)
-					if streamResult.WroteSemanticData {
+					if streamResult.WroteData {
 						return
 					}
 					if endpointAttempts >= endpointSlowFailoverAttempts {
@@ -924,6 +940,10 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			if isUpstreamInvalidRequestHTTPFailure(resp.StatusCode, errMsg) {
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "upstream_invalid_request", "Upstream returned invalid request error, not retrying endpoint: %s", logMsg)
 				p.markRequestInactive(endpoint.Name)
+				if streamSession != nil && streamSession.Started() {
+					_ = streamSession.WriteError(fmt.Sprintf("Upstream returned invalid request: %s", logMsg))
+					return
+				}
 				for key, values := range resp.Header {
 					if key == "Content-Encoding" || key == "Content-Length" {
 						continue
@@ -1037,6 +1057,10 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "non_retryable_status", "Response %d: %s", resp.StatusCode, respLogMsg)
 			logger.DebugLog("[%s] Response %d: %s", endpoint.Name, resp.StatusCode, respLogMsg)
 		}
+		if streamSession != nil && streamSession.Started() {
+			_ = streamSession.WriteError(fmt.Sprintf("Upstream returned status %d: %s", resp.StatusCode, respLogMsg))
+			return
+		}
 		// Remove Content-Encoding header since we've decompressed
 		for key, values := range resp.Header {
 			if key == "Content-Encoding" || key == "Content-Length" {
@@ -1051,17 +1075,8 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if streamResponseStarted {
-		if flusher, ok := w.(http.Flusher); ok {
-			errorPayload, _ := json.Marshal(map[string]interface{}{
-				"error": map[string]interface{}{
-					"type":    "service_unavailable",
-					"message": "All endpoints failed",
-				},
-			})
-			_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", errorPayload)
-			flusher.Flush()
-		}
+	if streamSession != nil && streamSession.Started() {
+		_ = streamSession.WriteError("All endpoints failed")
 		return
 	}
 

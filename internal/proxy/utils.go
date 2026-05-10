@@ -33,8 +33,25 @@ func cloneEndpoints(endpoints []config.Endpoint) []config.Endpoint {
 const (
 	endpointFastFailoverAttempts = 2
 	endpointSlowFailoverAttempts = 3
-	streamResponseHeaderTimeout  = 25 * time.Second
+
+	defaultStreamHeaderTimeout     = 30 * time.Second
+	defaultStreamHeartbeatInterval = 10 * time.Second
+	retryReasonTransportProtocol   = "transport_protocol_error"
 )
+
+func (p *Proxy) streamHeaderTimeoutOrDefault() time.Duration {
+	if p != nil && p.streamHeaderTimeout > 0 {
+		return p.streamHeaderTimeout
+	}
+	return defaultStreamHeaderTimeout
+}
+
+func (p *Proxy) streamHeartbeatIntervalOrDefault() time.Duration {
+	if p != nil && p.streamHeartbeatInterval > 0 {
+		return p.streamHeartbeatInterval
+	}
+	return defaultStreamHeartbeatInterval
+}
 
 // shouldRetry determines if a response should trigger a retry
 func shouldRetry(statusCode int) bool {
@@ -50,8 +67,49 @@ func isClientCanceled(ctx context.Context, err error) bool {
 	if err == nil {
 		return false
 	}
+	if isResponseHeaderTimeoutError(err) {
+		return false
+	}
 	return errors.Is(err, context.Canceled) ||
 		strings.Contains(strings.ToLower(err.Error()), "context canceled")
+}
+
+func isResponseHeaderTimeoutError(err error) bool {
+	var target responseHeaderTimeoutError
+	return errors.As(err, &target)
+}
+
+func retryReasonForRequestError(err error) string {
+	if isTransportProtocolError(err) {
+		return retryReasonTransportProtocol
+	}
+	if isTransientNetworkError(err) {
+		return "transient_network_error"
+	}
+	return "send_request_failed"
+}
+
+func isRetryableRequestErrorReason(reason string) bool {
+	switch sanitizeLogField(reason) {
+	case "transient_network_error", retryReasonTransportProtocol:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTransportProtocolError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	if !strings.Contains(message, "malformed http response") {
+		return false
+	}
+	return strings.Contains(message, "\\x00") ||
+		strings.Contains(message, "\x00") ||
+		strings.Contains(message, "\\x04") ||
+		strings.Contains(message, "\\x08")
 }
 
 // retryReasonForHTTPStatus classifies upstream HTTP retry failures for logs and

@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
@@ -26,6 +28,152 @@ const (
 	streamFinishTransformFailed       = "transform_failed"
 )
 
+type downstreamStreamSession struct {
+	w                 http.ResponseWriter
+	flusher           http.Flusher
+	heartbeatInterval time.Duration
+	done              chan struct{}
+	mu                sync.Mutex
+	closeOnce         sync.Once
+	heartbeatOnce     sync.Once
+	started           bool
+	closed            bool
+}
+
+func newDownstreamStreamSession(w http.ResponseWriter, heartbeatInterval time.Duration) *downstreamStreamSession {
+	flusher, _ := w.(http.Flusher)
+	return &downstreamStreamSession{
+		w:                 w,
+		flusher:           flusher,
+		heartbeatInterval: heartbeatInterval,
+		done:              make(chan struct{}),
+	}
+}
+
+func (s *downstreamStreamSession) Start() error {
+	if s == nil {
+		return nil
+	}
+	if s.flusher == nil {
+		return fmt.Errorf("response writer does not support flushing")
+	}
+
+	shouldStartHeartbeat := false
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("downstream stream is closed")
+	}
+	if !s.started {
+		header := s.w.Header()
+		header.Set("Content-Type", "text/event-stream; charset=utf-8")
+		header.Set("Cache-Control", "no-cache")
+		header.Set("X-Accel-Buffering", "no")
+		s.w.WriteHeader(http.StatusOK)
+		if _, err := s.w.Write([]byte(": ccnexus waiting for upstream\n\n")); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		s.flusher.Flush()
+		s.started = true
+		shouldStartHeartbeat = s.heartbeatInterval > 0
+	}
+	s.mu.Unlock()
+
+	if shouldStartHeartbeat {
+		s.heartbeatOnce.Do(func() {
+			go s.heartbeatLoop()
+		})
+	}
+	return nil
+}
+
+func (s *downstreamStreamSession) Started() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.started
+}
+
+func (s *downstreamStreamSession) Write(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if err := s.Start(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("downstream stream is closed")
+	}
+	if _, err := s.w.Write(data); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
+
+func (s *downstreamStreamSession) WriteError(message string) error {
+	if strings.TrimSpace(message) == "" {
+		message = "stream failed"
+	}
+	payload, err := json.Marshal(map[string]interface{}{
+		"error": map[string]interface{}{
+			"type":    "service_unavailable",
+			"message": message,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return s.Write([]byte(fmt.Sprintf("event: error\ndata: %s\n\n", payload)))
+}
+
+func (s *downstreamStreamSession) Close() {
+	if s == nil {
+		return
+	}
+	s.closeOnce.Do(func() {
+		close(s.done)
+		s.mu.Lock()
+		s.closed = true
+		s.mu.Unlock()
+	})
+}
+
+func (s *downstreamStreamSession) heartbeatLoop() {
+	ticker := time.NewTicker(s.heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			_ = s.writeComment("ccnexus waiting for upstream")
+		case <-s.done:
+			return
+		}
+	}
+}
+
+func (s *downstreamStreamSession) writeComment(message string) error {
+	if err := s.Start(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("downstream stream is closed")
+	}
+	if _, err := fmt.Fprintf(s.w, ": %s\n\n", message); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
+
 type streamResponseResult struct {
 	InputTokens       int
 	OutputTokens      int
@@ -38,11 +186,11 @@ type streamResponseResult struct {
 }
 
 // handleStreamingResponse processes streaming SSE responses
-func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, endpoint config.Endpoint, trans transformer.Transformer, transformerName string, modelName string, bodyBytes []byte, credentialID int64, downstreamStarted bool) streamResponseResult {
+func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, endpoint config.Endpoint, trans transformer.Transformer, transformerName string, thinkingEnabled bool, modelName string, bodyBytes []byte, credentialID int64, streamSession *downstreamStreamSession) streamResponseResult {
 	result := streamResponseResult{}
 
 	flusher, ok := w.(http.Flusher)
-	if !ok {
+	if streamSession == nil && !ok {
 		logger.Error("[%s] ResponseWriter does not support flushing", endpoint.Name)
 		resp.Body.Close()
 		result.Reason = streamFinishDownstreamWriteFailed
@@ -50,8 +198,12 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 		return result
 	}
 
-	headersCommitted := downstreamStarted
+	headersCommitted := false
 	commitHeaders := func() {
+		if streamSession != nil {
+			headersCommitted = true
+			return
+		}
 		if headersCommitted {
 			return
 		}
@@ -69,12 +221,14 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 		w.WriteHeader(resp.StatusCode)
 		headersCommitted = true
 	}
-	writeKeepalive := func() error {
-		commitHeaders()
-		if _, err := w.Write([]byte(": ccnexus stream open\n\n")); err != nil {
-			return err
+	writeData := func(data []byte) error {
+		if streamSession != nil {
+			return streamSession.Write(data)
 		}
-		result.WroteData = true
+		commitHeaders()
+		if _, writeErr := w.Write(data); writeErr != nil {
+			return writeErr
+		}
 		flusher.Flush()
 		return nil
 	}
@@ -92,13 +246,6 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 		}
 		defer gzipReader.Close()
 		reader = gzipReader
-	}
-
-	if err := writeKeepalive(); err != nil {
-		resp.Body.Close()
-		result.Reason = streamFinishDownstreamWriteFailed
-		result.Err = err
-		return result
 	}
 
 	// Create stream context for all transformers except pure passthrough
@@ -140,23 +287,20 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 				return nil
 			}
 			commitHeaders()
-			if _, writeErr := w.Write(pendingWrites.Bytes()); writeErr != nil {
+			if writeErr := writeData(pendingWrites.Bytes()); writeErr != nil {
 				return writeErr
 			}
 			pendingWrites.Reset()
 			semanticDataSeen = true
 			result.WroteSemanticData = true
 			result.WroteData = true
-			flusher.Flush()
 			return nil
 		}
 
-		commitHeaders()
-		if _, writeErr := w.Write(data); writeErr != nil {
+		if writeErr := writeData(data); writeErr != nil {
 			return writeErr
 		}
 		result.WroteData = true
-		flusher.Flush()
 		return nil
 	}
 

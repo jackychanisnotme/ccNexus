@@ -198,7 +198,7 @@ func TestForceStreamAggregationSemanticEmptyRetriesBeforeWriting(t *testing.T) {
 	}
 }
 
-func TestStreamingSemanticEmptyRetriesAfterKeepalive(t *testing.T) {
+func TestStreamingSemanticEmptyRetriesAfterDownstreamHeartbeat(t *testing.T) {
 	var hits int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
@@ -238,13 +238,14 @@ func TestStreamingSemanticEmptyRetriesAfterKeepalive(t *testing.T) {
 		t.Fatalf("expected streaming retry to keep response open and succeed, got status=%d body=%q", rec.Code, rec.Body.String())
 	}
 	if hits != 2 {
-		t.Fatalf("expected streaming empty response to be retried once, got hits=%d", hits)
+		t.Fatalf("expected empty stream to be retried once, got hits=%d", hits)
 	}
-	if !strings.Contains(rec.Body.String(), ": ccnexus stream open") || !strings.Contains(rec.Body.String(), "response.output_text.delta") {
-		t.Fatalf("expected keepalive and final semantic event, got %q", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, ": ccnexus waiting for upstream") || !strings.Contains(body, "response.output_text.delta") {
+		t.Fatalf("expected downstream heartbeat and final semantic event, got %q", body)
 	}
-	if strings.Contains(rec.Body.String(), "resp-empty") {
-		t.Fatalf("did not expect empty completed event to be forwarded, got %q", rec.Body.String())
+	if strings.Contains(body, "resp-empty") {
+		t.Fatalf("did not expect first empty stream events to be forwarded, got %q", body)
 	}
 }
 

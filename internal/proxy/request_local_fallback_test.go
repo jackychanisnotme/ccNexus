@@ -801,6 +801,129 @@ func TestTransientNetworkErrorRetriesOnceThenFailsOver(t *testing.T) {
 	}
 }
 
+func TestStreamingResponseHeaderTimeoutKeepsDownstreamOpenAndFallsBack(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	var fallbackHits int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "primary.example":
+			primaryHits++
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		case "fallback.example":
+			fallbackHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+					`data: {"type":"response.output_text.delta","delta":"ok"}`,
+					"",
+					`data: {"type":"response.completed","response":{"id":"resp-fallback","object":"response","status":"completed","usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}}`,
+					"",
+					"data: [DONE]",
+					"",
+				}, "\n"))),
+				Request: req,
+			}, nil
+		default:
+			t.Fatalf("unexpected upstream host %q", req.URL.Host)
+			return nil, nil
+		}
+	})}
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", "https://primary.example"),
+		failoverPolicyTestEndpoint("Fallback", "https://fallback.example"),
+	}, client)
+	p.streamHeaderTimeout = 10 * time.Millisecond
+	p.streamHeartbeatInterval = time.Hour
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCCNexusRequestID, "req-stream-header-timeout")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected downstream SSE to remain open and succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != endpointFastFailoverAttempts {
+		t.Fatalf("expected Primary to time out %d times before fallback, got %d", endpointFastFailoverAttempts, primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Fatalf("expected fallback to be used once, got %d", fallbackHits)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, ": ccnexus waiting for upstream") || !strings.Contains(body, "response.output_text.delta") {
+		t.Fatalf("expected heartbeat plus fallback stream output, got %q", body)
+	}
+	if strings.Contains(body, "event: error") {
+		t.Fatalf("did not expect final SSE error after fallback success, got %q", body)
+	}
+
+	logs := joinedProxyLogs()
+	if !strings.Contains(logs, "retry_reason=transient_network_error") ||
+		!strings.Contains(logs, "failover_reason=transient_network_error") {
+		t.Fatalf("expected transient timeout retry/fallback logs, got logs:\n%s", logs)
+	}
+}
+
+func TestTransportProtocolErrorDoesNotPenalizeTokenPoolCredential(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("net/http: HTTP/1.x transport connection broken: malformed HTTP response \"\\x00\\x00\\x12\\x04\"")
+	})}
+
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+
+	cred := storage.EndpointCredential{EndpointName: "Primary", ProviderType: "openai", AccessToken: "token-a", Enabled: true}
+	if err := store.SaveEndpointCredential(&cred); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	endpoint := failoverPolicyTestEndpoint("Primary", "https://primary.example")
+	endpoint.AuthMode = config.AuthModeTokenPool
+	endpoint.APIKey = ""
+	cfg.UpdateEndpoints([]config.Endpoint{endpoint})
+	p := New(cfg, &noopStatsStorage{}, store, "test-device")
+	p.httpClient = client
+	p.retrySleep = func(time.Duration) {}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCCNexusRequestID, "req-protocol-error-token")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected request to fail after retryable protocol errors, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	updated, err := store.GetCredentialByID(cred.ID)
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected credential to exist")
+	}
+	if updated.FailureCount != 0 || strings.TrimSpace(updated.LastError) != "" || updated.Status != "active" {
+		t.Fatalf("expected transport protocol error not to penalize credential, got %#v", updated)
+	}
+	if logs := joinedProxyLogs(); !strings.Contains(logs, "retry_reason=transport_protocol_error") {
+		t.Fatalf("expected transport protocol retry logs, got logs:\n%s", logs)
+	}
+}
+
 func TestTransientNetworkErrorSingleRetryCanRecoverOnSameEndpoint(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)

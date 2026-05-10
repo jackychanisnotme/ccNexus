@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -523,10 +526,6 @@ func extractModelFromPayload(payload []byte) string {
 
 // sendRequest sends the HTTP request and returns the response
 func sendRequest(ctx context.Context, proxyReq *http.Request, httpClient *http.Client, cfg *config.Config) (*http.Response, error) {
-	return sendRequestWithResponseHeaderTimeout(ctx, proxyReq, httpClient, cfg, 0)
-}
-
-func sendRequestWithResponseHeaderTimeout(ctx context.Context, proxyReq *http.Request, httpClient *http.Client, cfg *config.Config, responseHeaderTimeout time.Duration) (*http.Response, error) {
 	proxyReq = proxyReq.WithContext(ctx)
 
 	proxyURL := resolveProxyURLForRequest(cfg, proxyReq.URL)
@@ -537,10 +536,10 @@ func sendRequestWithResponseHeaderTimeout(ctx context.Context, proxyReq *http.Re
 			Timeout: httpClient.Timeout,
 		}
 
-		transport, err := createProxyTransportWithResponseHeaderTimeout(proxyURL, responseHeaderTimeout)
+		transport, err := CreateProxyTransport(proxyURL)
 		if err != nil {
 			logger.Warn("Failed to create proxy transport: %v, using direct connection", err)
-			clientWithProxy.Transport = transportWithResponseHeaderTimeout(httpClient.Transport, responseHeaderTimeout)
+			clientWithProxy.Transport = httpClient.Transport
 		} else {
 			clientWithProxy.Transport = transport
 		}
@@ -548,26 +547,73 @@ func sendRequestWithResponseHeaderTimeout(ctx context.Context, proxyReq *http.Re
 		return clientWithProxy.Do(proxyReq)
 	}
 
-	if responseHeaderTimeout <= 0 {
-		return httpClient.Do(proxyReq)
-	}
-	clientWithHeaderTimeout := &http.Client{
-		Timeout:   httpClient.Timeout,
-		Transport: transportWithResponseHeaderTimeout(httpClient.Transport, responseHeaderTimeout),
-	}
-	return clientWithHeaderTimeout.Do(proxyReq)
+	return httpClient.Do(proxyReq)
 }
 
-func transportWithResponseHeaderTimeout(base http.RoundTripper, responseHeaderTimeout time.Duration) http.RoundTripper {
-	if responseHeaderTimeout <= 0 || base == nil {
-		return base
+func sendRequestWithResponseHeaderTimeout(ctx context.Context, proxyReq *http.Request, httpClient *http.Client, cfg *config.Config, responseHeaderTimeout time.Duration) (*http.Response, error) {
+	if responseHeaderTimeout <= 0 {
+		return sendRequest(ctx, proxyReq, httpClient, cfg)
 	}
-	if transport, ok := base.(*http.Transport); ok {
-		cloned := transport.Clone()
-		cloned.ResponseHeaderTimeout = responseHeaderTimeout
-		return cloned
+
+	requestCtx, cancel := context.WithCancel(ctx)
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(responseHeaderTimeout, func() {
+		timedOut.Store(true)
+		cancel()
+	})
+
+	resp, err := sendRequest(requestCtx, proxyReq, httpClient, cfg)
+	if err != nil {
+		timer.Stop()
+		cancel()
+		if timedOut.Load() {
+			return nil, responseHeaderTimeoutError{timeout: responseHeaderTimeout, err: err}
+		}
+		return nil, err
 	}
-	return base
+
+	timer.Stop()
+	if resp != nil && resp.Body != nil {
+		resp.Body = &cancelOnCloseReadCloser{
+			ReadCloser: resp.Body,
+			cancel:     cancel,
+		}
+	} else {
+		cancel()
+	}
+	return resp, nil
+}
+
+type responseHeaderTimeoutError struct {
+	timeout time.Duration
+	err     error
+}
+
+func (e responseHeaderTimeoutError) Error() string {
+	if e.err == nil {
+		return fmt.Sprintf("timeout awaiting response headers after %s", e.timeout)
+	}
+	return fmt.Sprintf("timeout awaiting response headers after %s: %v", e.timeout, e.err)
+}
+
+func (e responseHeaderTimeoutError) Unwrap() error {
+	return e.err
+}
+
+type cancelOnCloseReadCloser struct {
+	io.ReadCloser
+	cancel func()
+	once   sync.Once
+}
+
+func (r *cancelOnCloseReadCloser) Close() error {
+	err := r.ReadCloser.Close()
+	r.once.Do(func() {
+		if r.cancel != nil {
+			r.cancel()
+		}
+	})
+	return err
 }
 
 func resolveProxyURLForRequest(cfg *config.Config, targetURL *url.URL) string {
@@ -599,25 +645,19 @@ func isCodexRequestURL(targetURL *url.URL) bool {
 
 // CreateProxyTransport creates an http.Transport with proxy support
 func CreateProxyTransport(proxyURL string) (*http.Transport, error) {
-	return createProxyTransportWithResponseHeaderTimeout(proxyURL, 0)
-}
-
-func createProxyTransportWithResponseHeaderTimeout(proxyURL string, responseHeaderTimeout time.Duration) (*http.Transport, error) {
 	parsed, err := url.Parse(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid proxy URL: %w", err)
 	}
-	if responseHeaderTimeout <= 0 {
-		responseHeaderTimeout = 90 * time.Second
-	}
 
 	transport := &http.Transport{
+		ForceAttemptHTTP2:      true,
 		MaxIdleConns:           100,
 		MaxIdleConnsPerHost:    10,
 		IdleConnTimeout:        90 * time.Second,
 		TLSHandshakeTimeout:    10 * time.Second,
 		ExpectContinueTimeout:  1 * time.Second,
-		ResponseHeaderTimeout:  responseHeaderTimeout,
+		ResponseHeaderTimeout:  90 * time.Second,
 		WriteBufferSize:        128 * 1024, // 128KB write buffer for large SSE streams
 		ReadBufferSize:         128 * 1024, // 128KB read buffer for large SSE streams
 		MaxResponseHeaderBytes: 64 * 1024,  // 64KB max response headers
