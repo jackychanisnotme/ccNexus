@@ -68,6 +68,27 @@ func retryReasonForHTTPStatus(statusCode int, body string) string {
 	return "retryable_status"
 }
 
+func shouldRetryWithForcedStream(statusCode int, body string, clientRequestedStream bool, transformerName string) bool {
+	if statusCode < http.StatusBadRequest || clientRequestedStream {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(strings.TrimSpace(transformerName)), "openai2") {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(body))
+	return strings.Contains(lower, "stream must be set to true")
+}
+
+func isUpstreamInvalidRequestHTTPFailure(statusCode int, body string) bool {
+	if statusCode < http.StatusInternalServerError {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(body))
+	return strings.Contains(lower, `"code":"invalid_request"`) ||
+		strings.Contains(lower, `"type":"invalid_request_error"`) ||
+		strings.Contains(lower, "invalid_request")
+}
+
 func shouldRotateEndpointAfterHTTPFailure(endpointAttempts int, statusCode int, body string) bool {
 	return endpointAttempts >= failoverAttemptsForHTTPFailure(statusCode, body)
 }

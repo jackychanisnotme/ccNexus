@@ -371,7 +371,7 @@ func OpenAI2ReqToOpenAI(openai2Req []byte, model string) ([]byte, error) {
 		return nil, err
 	}
 
-	var messages []transformer.OpenAIMessage
+	messages := make([]transformer.OpenAIMessage, 0)
 	var pendingReasoningContent string
 
 	if req.Instructions != "" {

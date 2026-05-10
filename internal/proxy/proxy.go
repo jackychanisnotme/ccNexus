@@ -435,17 +435,21 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			len(bodyBytes),
 			requestLogFields(obs, "", 0, http.StatusBadRequest, "invalid_request_body"),
 		)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		errorResp := map[string]interface{}{
-			"error": map[string]interface{}{
-				"type":    "invalid_request_error",
-				"message": err.Error(),
-			},
-		}
-		if jsonBytes, err := json.Marshal(errorResp); err == nil {
-			w.Write(jsonBytes)
-		}
+		writeInvalidRequestError(w, err)
+		return
+	}
+
+	if err := validateClientRequestForFormat(bodyBytes, clientFormat); err != nil {
+		logger.Warn(
+			"Invalid request shape: %v method=%s path=%s content_type=%q content_length=%d %s",
+			err,
+			sanitizeLogField(r.Method),
+			sanitizeLogField(r.URL.Path),
+			r.Header.Get("Content-Type"),
+			len(bodyBytes),
+			requestLogFields(obs, "", 0, http.StatusBadRequest, "invalid_request_shape"),
+		)
+		writeInvalidRequestError(w, err)
 		return
 	}
 
@@ -503,6 +507,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if useSpecificEndpoint {
 		maxRetries = endpointSlowFailoverAttempts
 	}
+	forceStreamRetryEndpoints := make(map[string]bool)
 	endpointAttempts := 0
 	advanceForFailure := func(current config.Endpoint, reason string, attemptNumber int, headers http.Header) {
 		p.markEndpointCooldownForReason(current.Name, reason, headers, obs, attemptNumber)
@@ -521,6 +526,9 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// 使用请求级端点计划；失败 fallback 不修改全局 currentIndex
 			endpoint = requestPlan.Current()
+		}
+		if !streamReq.Stream && forceStreamRetryEndpoints[endpoint.Name] {
+			endpoint.ForceStream = true
 		}
 
 		if endpoint.Name == "" {
@@ -838,12 +846,37 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 			resp.Body.Close()
 			errMsg := string(errBody)
-			if len(errMsg) > 200 {
-				errMsg = errMsg[:200] + "..."
+			logMsg := errMsg
+			if len(logMsg) > 200 {
+				logMsg = logMsg[:200] + "..."
+			}
+			if shouldRetryWithForcedStream(resp.StatusCode, errMsg, streamReq.Stream, transformerName) &&
+				!forceStreamRetryEndpoints[endpoint.Name] {
+				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "force_stream_required", "Upstream requires stream=true, retrying same endpoint with forced streaming: %s", logMsg)
+				p.markRequestInactive(endpoint.Name)
+				forceStreamRetryEndpoints[endpoint.Name] = true
+				endpointAttempts = 0
+				continue
+			}
+			if isUpstreamInvalidRequestHTTPFailure(resp.StatusCode, errMsg) {
+				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "upstream_invalid_request", "Upstream returned invalid request error, not retrying endpoint: %s", logMsg)
+				p.markRequestInactive(endpoint.Name)
+				for key, values := range resp.Header {
+					if key == "Content-Encoding" || key == "Content-Length" {
+						continue
+					}
+					for _, value := range values {
+						w.Header().Add(key, value)
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write(errBody)
+				return
 			}
 			retryReason := retryReasonForHTTPStatus(resp.StatusCode, errMsg)
-			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, retryReason, "Request failed %d: %s", resp.StatusCode, errMsg)
-			logger.DebugLog("[%s] Request failed %d: %s", endpoint.Name, resp.StatusCode, errMsg)
+			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, retryReason, "Request failed %d: %s", resp.StatusCode, logMsg)
+			logger.DebugLog("[%s] Request failed %d: %s", endpoint.Name, resp.StatusCode, logMsg)
 			p.markCredentialFailure(credentialID, resp.StatusCode, errMsg)
 			p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
 			p.recordEndpointError(endpoint.Name, retryReason)
@@ -868,14 +901,24 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Body.Close()
 		skipCredentialPenalty := false
+		respMsg := string(respBody)
+		respLogMsg := respMsg
+		if len(respLogMsg) > 500 {
+			respLogMsg = respLogMsg[:500] + "..."
+		}
+
+		if shouldRetryWithForcedStream(resp.StatusCode, respMsg, streamReq.Stream, transformerName) &&
+			!forceStreamRetryEndpoints[endpoint.Name] {
+			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "force_stream_required", "Upstream requires stream=true, retrying same endpoint with forced streaming: %s", respLogMsg)
+			p.markRequestInactive(endpoint.Name)
+			forceStreamRetryEndpoints[endpoint.Name] = true
+			endpointAttempts = 0
+			continue
+		}
 
 		// Token pool mode: on 401/403, invalidate current credential and retry within the same endpoint.
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && credentialID > 0 {
-			errMsg := string(respBody)
-			if len(errMsg) > 500 {
-				errMsg = errMsg[:500] + "..."
-			}
-			if !shouldTreatCredentialAuthFailure(resp.StatusCode, errMsg) {
+			if !shouldTreatCredentialAuthFailure(resp.StatusCode, respLogMsg) {
 				skipCredentialPenalty = true
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "route_gateway_denial", "Upstream %d looks like route/gateway denial, skipping credential invalidation", resp.StatusCode)
 			}
@@ -900,7 +943,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 					}
 					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "credential_refresh_failed", "Credential refresh failed after %d (id=%d): %v", resp.StatusCode, credentialID, refreshErr)
 				}
-				p.markCredentialFailure(credentialID, resp.StatusCode, errMsg)
+				p.markCredentialFailure(credentialID, resp.StatusCode, respLogMsg)
 				p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
 				p.recordEndpointError(endpoint.Name, "credential_auth_failed")
 				p.markRequestInactive(endpoint.Name)
@@ -913,27 +956,23 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		p.markRequestInactive(endpoint.Name)
 		// Log non-200 responses for debugging
 		if resp.StatusCode != http.StatusOK {
-			errMsg := string(respBody)
-			if len(errMsg) > 500 {
-				errMsg = errMsg[:500] + "..."
-			}
 			if resp.StatusCode == http.StatusBadRequest &&
-				strings.Contains(errMsg, "api.responses.write") &&
+				strings.Contains(respLogMsg, "api.responses.write") &&
 				strings.Contains(transformerName, "openai2") {
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "responses_scope_rejected", "Upstream rejected /v1/responses scope (api.responses.write). Try transformer=openai (chat/completions) for this token.")
 			}
 			if skipCredentialPenalty {
-				p.markCredentialFailure(credentialID, 0, errMsg)
+				p.markCredentialFailure(credentialID, 0, respLogMsg)
 				p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
 			} else {
-				p.markCredentialFailure(credentialID, resp.StatusCode, errMsg)
+				p.markCredentialFailure(credentialID, resp.StatusCode, respLogMsg)
 				p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
 			}
 			if !skipCredentialPenalty {
 				p.recordEndpointError(endpoint.Name, "non_retryable_status")
 			}
-			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "non_retryable_status", "Response %d: %s", resp.StatusCode, errMsg)
-			logger.DebugLog("[%s] Response %d: %s", endpoint.Name, resp.StatusCode, errMsg)
+			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "non_retryable_status", "Response %d: %s", resp.StatusCode, respLogMsg)
+			logger.DebugLog("[%s] Response %d: %s", endpoint.Name, resp.StatusCode, respLogMsg)
 		}
 		// Remove Content-Encoding header since we've decompressed
 		for key, values := range resp.Header {

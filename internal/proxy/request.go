@@ -358,6 +358,42 @@ func validateClientJSONRequestBody(payload []byte) error {
 	return nil
 }
 
+func validateClientRequestForFormat(payload []byte, clientFormat ClientFormat) error {
+	var body map[string]interface{}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return nil
+	}
+	switch clientFormat {
+	case ClientFormatOpenAIResponses:
+		if value, ok := body["input"]; !ok || value == nil {
+			return fmt.Errorf("field input is required for /v1/responses requests")
+		}
+	case ClientFormatOpenAIChat:
+		if value, ok := body["messages"]; !ok || value == nil {
+			return fmt.Errorf("field messages is required for /v1/chat/completions requests")
+		}
+	case ClientFormatClaude:
+		if value, ok := body["messages"]; !ok || value == nil {
+			return fmt.Errorf("field messages is required for /v1/messages requests")
+		}
+	}
+	return nil
+}
+
+func writeInvalidRequestError(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	errorResp := map[string]interface{}{
+		"error": map[string]interface{}{
+			"type":    "invalid_request_error",
+			"message": err.Error(),
+		},
+	}
+	if jsonBytes, marshalErr := json.Marshal(errorResp); marshalErr == nil {
+		w.Write(jsonBytes)
+	}
+}
+
 func forceStreamInPayload(payload []byte) []byte {
 	trimmed := strings.TrimSpace(string(payload))
 	if trimmed == "" || strings.HasPrefix(trimmed, "[") {
