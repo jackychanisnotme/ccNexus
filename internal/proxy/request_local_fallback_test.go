@@ -674,6 +674,97 @@ func TestStreamingUpstreamErrorCoolsEndpointForNextRequest(t *testing.T) {
 	}
 }
 
+func TestStreamingUpstreamErrorAfterSemanticDataWritesErrorAndSwitches(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	var fallbackHits int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "primary.example":
+			primaryHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body: partialFailingReadCloser{
+					reader: strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"),
+					err:    context.DeadlineExceeded,
+				},
+				Request: req,
+			}, nil
+		case "fallback.example":
+			fallbackHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp-fallback","usage":{"input_tokens":1,"output_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)),
+				Request:    req,
+			}, nil
+		default:
+			t.Fatalf("unexpected upstream host %q", req.URL.Host)
+			return nil, nil
+		}
+	})}
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", "https://primary.example"),
+		failoverPolicyTestEndpoint("Fallback", "https://fallback.example"),
+	}, client)
+	var currentEvents []EndpointCurrentEvent
+	p.SetOnCurrentEndpointChanged(func(event EndpointCurrentEvent) {
+		currentEvents = append(currentEvents, event)
+	})
+
+	streamReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	streamReq.Header.Set("Content-Type", "application/json")
+	streamReq.Header.Set(headerCCNexusRequestID, "req-stream-error-after-data")
+	streamRec := httptest.NewRecorder()
+	p.handleProxy(streamRec, streamReq)
+
+	if primaryHits != 1 {
+		t.Fatalf("expected first streaming request to hit Primary once, got %d", primaryHits)
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected in-flight streaming error not to replay on fallback, got fallback hits=%d", fallbackHits)
+	}
+	body := streamRec.Body.String()
+	for _, want := range []string{
+		"response.output_text.delta",
+		"hello",
+		"event: error",
+		`"type":"upstream_stream_error"`,
+		"Upstream stream interrupted",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected downstream body to contain %q, got %q", want, body)
+		}
+	}
+	if got := p.GetCurrentEndpointName(); got != "Fallback" {
+		t.Fatalf("expected global current endpoint to auto-switch to Fallback after stream error, got %q", got)
+	}
+	if len(currentEvents) != 1 {
+		t.Fatalf("expected one current endpoint event, got %#v", currentEvents)
+	}
+	if event := currentEvents[0]; event.PreviousName != "Primary" || event.Name != "Fallback" || event.Reason != "failure" {
+		t.Fatalf("expected failure current endpoint event Primary -> Fallback, got %#v", event)
+	}
+
+	logs := joinedProxyLogs()
+	for _, want := range []string{
+		"Streaming response failed",
+		"retry_reason=upstream_stream_error",
+		"[AUTO SWITCH] Primary",
+		"switch_reason=upstream_stream_error",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected logs to contain %q, got logs:\n%s", want, logs)
+		}
+	}
+}
+
 func TestStreamingUpstreamErrorDoesNotSwitchGlobalWhenFailedEndpointIsNotCurrent(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
@@ -1136,5 +1227,21 @@ func (r failingReadCloser) Read([]byte) (int, error) {
 }
 
 func (r failingReadCloser) Close() error {
+	return nil
+}
+
+type partialFailingReadCloser struct {
+	reader *strings.Reader
+	err    error
+}
+
+func (r partialFailingReadCloser) Read(p []byte) (int, error) {
+	if r.reader != nil && r.reader.Len() > 0 {
+		return r.reader.Read(p)
+	}
+	return 0, r.err
+}
+
+func (r partialFailingReadCloser) Close() error {
 	return nil
 }

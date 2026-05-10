@@ -118,12 +118,19 @@ func (s *downstreamStreamSession) Write(data []byte) error {
 }
 
 func (s *downstreamStreamSession) WriteError(message string) error {
+	return s.WriteTypedError("service_unavailable", message)
+}
+
+func (s *downstreamStreamSession) WriteTypedError(errorType string, message string) error {
+	if strings.TrimSpace(errorType) == "" {
+		errorType = "service_unavailable"
+	}
 	if strings.TrimSpace(message) == "" {
 		message = "stream failed"
 	}
 	payload, err := json.Marshal(map[string]interface{}{
 		"error": map[string]interface{}{
-			"type":    "service_unavailable",
+			"type":    errorType,
 			"message": message,
 		},
 	})

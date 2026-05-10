@@ -848,6 +848,13 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, retryReason, "Streaming response failed: %v", streamResult.Err)
+				if retryReason == streamFinishUpstreamStreamError && streamResult.WroteSemanticData && streamSession != nil && streamSession.Started() {
+					message := fmt.Sprintf("Upstream stream interrupted: %v", streamResult.Err)
+					if writeErr := streamSession.WriteTypedError(streamFinishUpstreamStreamError, message); writeErr != nil {
+						logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishDownstreamWriteFailed, "Failed to write upstream stream error to downstream: %v", writeErr)
+					}
+					streamSession.Close()
+				}
 				p.markCredentialFailure(credentialID, 0, streamResult.Err.Error())
 				p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
 				p.recordEndpointError(endpoint.Name, retryReason)
