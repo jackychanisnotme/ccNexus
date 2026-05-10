@@ -957,6 +957,37 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				w.Write(errBody)
 				return
 			}
+			if shouldTreatAPIKeyEndpointAuthFailure(authMode, resp.StatusCode, errMsg) {
+				p.recordEndpointError(endpoint.Name, retryReasonEndpointAuthFailed, resp.StatusCode)
+				if !useSpecificEndpoint && requestPlan.Len() > 1 {
+					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, retryReasonEndpointAuthFailed, "API key auth failed, trying next endpoint: %s", logMsg)
+					p.markRequestInactive(endpoint.Name)
+					advanceForFailure(endpoint, retryReasonEndpointAuthFailed, attemptNumber, resp.Header)
+					continue
+				}
+				p.markEndpointCooldownForReason(endpoint.Name, retryReasonEndpointAuthFailed, resp.Header, obs, attemptNumber)
+				p.markRequestInactive(endpoint.Name)
+				if useSpecificEndpoint {
+					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, retryReasonEndpointAuthFailed, "API key auth failed on specified endpoint, not failing over: %s", logMsg)
+				} else {
+					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, retryReasonEndpointAuthFailed, "API key auth failed and no alternate endpoint is available: %s", logMsg)
+				}
+				if streamSession != nil && streamSession.Started() {
+					_ = streamSession.WriteError(fmt.Sprintf("Upstream returned status %d: %s", resp.StatusCode, logMsg))
+					return
+				}
+				for key, values := range resp.Header {
+					if key == "Content-Encoding" || key == "Content-Length" {
+						continue
+					}
+					for _, value := range values {
+						w.Header().Add(key, value)
+					}
+				}
+				w.WriteHeader(resp.StatusCode)
+				w.Write(errBody)
+				return
+			}
 			retryReason := retryReasonForHTTPStatus(resp.StatusCode, errMsg)
 			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, retryReason, "Request failed %d: %s", resp.StatusCode, logMsg)
 			logger.DebugLog("[%s] Request failed %d: %s", endpoint.Name, resp.StatusCode, logMsg)
@@ -989,6 +1020,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if len(respLogMsg) > 500 {
 			respLogMsg = respLogMsg[:500] + "..."
 		}
+		endpointAuthFailureHandled := false
 
 		if shouldRetryWithForcedStream(resp.StatusCode, respMsg, streamReq.Stream, transformerName) &&
 			!forceStreamRetryEndpoints[endpoint.Name] {
@@ -1036,6 +1068,23 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if shouldTreatAPIKeyEndpointAuthFailure(authMode, resp.StatusCode, respMsg) {
+			endpointAuthFailureHandled = true
+			p.recordEndpointError(endpoint.Name, retryReasonEndpointAuthFailed, resp.StatusCode)
+			if !useSpecificEndpoint && requestPlan.Len() > 1 {
+				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, retryReasonEndpointAuthFailed, "API key auth failed, trying next endpoint: %s", respLogMsg)
+				p.markRequestInactive(endpoint.Name)
+				advanceForFailure(endpoint, retryReasonEndpointAuthFailed, attemptNumber, resp.Header)
+				continue
+			}
+			p.markEndpointCooldownForReason(endpoint.Name, retryReasonEndpointAuthFailed, resp.Header, obs, attemptNumber)
+			if useSpecificEndpoint {
+				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, retryReasonEndpointAuthFailed, "API key auth failed on specified endpoint, not failing over: %s", respLogMsg)
+			} else {
+				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, retryReasonEndpointAuthFailed, "API key auth failed and no alternate endpoint is available: %s", respLogMsg)
+			}
+		}
+
 		p.markRequestInactive(endpoint.Name)
 		// Log non-200 responses for debugging
 		if resp.StatusCode != http.StatusOK {
@@ -1051,10 +1100,12 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				p.markCredentialFailure(credentialID, resp.StatusCode, respLogMsg)
 				p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
 			}
-			if !skipCredentialPenalty {
+			if !skipCredentialPenalty && !endpointAuthFailureHandled {
 				p.recordEndpointError(endpoint.Name, "non_retryable_status", resp.StatusCode)
 			}
-			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "non_retryable_status", "Response %d: %s", resp.StatusCode, respLogMsg)
+			if !endpointAuthFailureHandled {
+				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "non_retryable_status", "Response %d: %s", resp.StatusCode, respLogMsg)
+			}
 			logger.DebugLog("[%s] Response %d: %s", endpoint.Name, resp.StatusCode, respLogMsg)
 		}
 		if streamSession != nil && streamSession.Started() {

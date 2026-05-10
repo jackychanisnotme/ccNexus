@@ -202,7 +202,7 @@ func (p *Proxy) cooldownDurationForReason(reason string, headers http.Header) ti
 		return secondsToDuration(cooldowns.UpstreamErrorSec)
 	case "send_request_failed", "transient_network_error", retryReasonTransportProtocol:
 		return secondsToDuration(cooldowns.NetworkErrorSec)
-	case "credential_select_failed", "no_usable_token", "credential_refresh_failed":
+	case "credential_select_failed", "no_usable_token", "credential_refresh_failed", retryReasonEndpointAuthFailed:
 		return secondsToDuration(cooldowns.TokenUnavailableSec)
 	case "empty_api_key", "prepare_transformer_failed", "build_request_failed":
 		return secondsToDuration(cooldowns.ConfigErrorSec)

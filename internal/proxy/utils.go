@@ -36,6 +36,7 @@ const (
 
 	defaultStreamHeaderTimeout     = 30 * time.Second
 	defaultStreamHeartbeatInterval = 10 * time.Second
+	retryReasonEndpointAuthFailed  = "endpoint_auth_failed"
 	retryReasonTransportProtocol   = "transport_protocol_error"
 )
 
@@ -192,6 +193,50 @@ func isRateLimitedHTTPFailure(statusCode int, body string) bool {
 		strings.Contains(lower, "rate limit") ||
 		strings.Contains(lower, "rate_limit") ||
 		strings.Contains(lower, "429")
+}
+
+func shouldTreatAPIKeyEndpointAuthFailure(authMode string, statusCode int, body string) bool {
+	if config.NormalizeAuthMode(authMode) != config.AuthModeAPIKey {
+		return false
+	}
+	if statusCode == http.StatusUnauthorized {
+		return true
+	}
+	if statusCode != http.StatusForbidden {
+		return false
+	}
+
+	lower := strings.ToLower(strings.TrimSpace(body))
+	if lower == "" {
+		return false
+	}
+	authMarkers := []string{
+		"invalid token",
+		"invalid_token",
+		"invalid api key",
+		"invalid_api_key",
+		"invalid apikey",
+		"invalid authentication",
+		"invalid auth",
+		"invalid credential",
+		"unauthorized",
+		"unauthenticated",
+		"authentication failed",
+		"authorization failed",
+		"api key",
+		"api_key",
+		"apikey",
+		"access token",
+		"bearer token",
+		"token expired",
+		"expired token",
+	}
+	for _, marker := range authMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // cleanIncompleteToolCalls removes incomplete tool_use blocks from request

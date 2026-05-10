@@ -6,12 +6,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/storage"
 )
 
 func TestHTTPRetryableStatusUsesSlowEndpointFailover(t *testing.T) {
@@ -143,6 +145,244 @@ func TestQuotaExhaustedUsesImmediateRequestLocalFailoverWithoutBackoff(t *testin
 	}
 	if strings.Contains(logs, "[SWITCH]") {
 		t.Fatalf("expected no global switch log during quota failover, got logs:\n%s", logs)
+	}
+}
+
+func TestAPIKeyUnauthorizedUsesImmediateRequestLocalFailover(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"Invalid token","type":"new_api_error","code":""}}`))
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(validResponsesBody("resp-fallback", "ok")))
+	}))
+	defer fallback.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", primary.URL),
+		failoverPolicyTestEndpoint("Fallback", fallback.URL),
+	}, primary.Client())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCCNexusRequestID, "req-api-key-auth-failover")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected API key auth failure to fail over and succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("expected primary to be tried once for endpoint auth failure, got %d", primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Fatalf("expected fallback endpoint to be used once, got %d", fallbackHits)
+	}
+	if got := rec.Header().Get(headerCCNexusEndpoint); got != "Fallback" {
+		t.Fatalf("expected final endpoint header Fallback, got %q", got)
+	}
+	if got := rec.Header().Get(headerCCNexusAttempt); got != "2" {
+		t.Fatalf("expected auth failure fallback on second overall attempt, got attempt header %q", got)
+	}
+	if got := p.GetCurrentEndpointName(); got != "Primary" {
+		t.Fatalf("expected request-local failover to keep global current endpoint Primary, got %q", got)
+	}
+	p.cooldownMu.RLock()
+	cooldown, cooled := p.endpointCooldowns["Primary"]
+	p.cooldownMu.RUnlock()
+	if !cooled || cooldown.Reason != retryReasonEndpointAuthFailed {
+		t.Fatalf("expected Primary cooldown for endpoint auth failure, got cooled=%v cooldown=%#v", cooled, cooldown)
+	}
+
+	logs := joinedProxyLogs()
+	for _, want := range []string{
+		"request_id=req-api-key-auth-failover",
+		"retry_reason=endpoint_auth_failed",
+		"failover_scope=request_local",
+		"failover_reason=endpoint_auth_failed",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected logs to contain %q, got logs:\n%s", want, logs)
+		}
+	}
+}
+
+func TestAPIKeyForbiddenAuthFailureUsesRequestLocalFailover(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key","type":"authentication_error"}}`))
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(validResponsesBody("resp-fallback", "ok")))
+	}))
+	defer fallback.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", primary.URL),
+		failoverPolicyTestEndpoint("Fallback", fallback.URL),
+	}, primary.Client())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCCNexusRequestID, "req-api-key-forbidden-auth-failover")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 403 API key auth failure to fail over and succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != 1 || fallbackHits != 1 {
+		t.Fatalf("expected one primary hit and one fallback hit, got primary=%d fallback=%d", primaryHits, fallbackHits)
+	}
+	if logs := joinedProxyLogs(); !strings.Contains(logs, "retry_reason=endpoint_auth_failed") || !strings.Contains(logs, "failover_scope=request_local") {
+		t.Fatalf("expected endpoint auth failover logs, got logs:\n%s", logs)
+	}
+}
+
+func TestAPIKeyUnauthorizedPinnedEndpointDoesNotFailover(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"Invalid token"}}`))
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(validResponsesBody("resp-fallback", "ok")))
+	}))
+	defer fallback.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", primary.URL),
+		failoverPolicyTestEndpoint("Fallback", fallback.URL),
+	}, primary.Client())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CCN-Endpoint", "Primary")
+	req.Header.Set(headerCCNexusRequestID, "req-api-key-auth-pinned")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected pinned endpoint auth failure to return 401, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("expected pinned primary to be tried once, got %d", primaryHits)
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected pinned endpoint not to fail over, got fallback hits=%d", fallbackHits)
+	}
+	logs := joinedProxyLogs()
+	if !strings.Contains(logs, "retry_reason=endpoint_auth_failed") {
+		t.Fatalf("expected endpoint auth failure log, got logs:\n%s", logs)
+	}
+	if strings.Contains(logs, "failover_scope=request_local") {
+		t.Fatalf("did not expect request-local failover for pinned endpoint, got logs:\n%s", logs)
+	}
+}
+
+func TestTokenPoolUnauthorizedStillRetriesNextToken(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var tokens []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		tokens = append(tokens, token)
+		w.Header().Set("Content-Type", "application/json")
+		if token == "token-a" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"Invalid token","type":"new_api_error","code":""}}`))
+			return
+		}
+		_, _ = w.Write([]byte(validResponsesBody("resp-ok", "ok")))
+	}))
+	defer upstream.Close()
+
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+
+	credA := storage.EndpointCredential{EndpointName: "Primary", ProviderType: "openai", AccessToken: "token-a", Enabled: true}
+	credB := storage.EndpointCredential{EndpointName: "Primary", ProviderType: "openai", AccessToken: "token-b", Enabled: true}
+	if err := store.SaveEndpointCredential(&credA); err != nil {
+		t.Fatalf("save cred A: %v", err)
+	}
+	if err := store.SaveEndpointCredential(&credB); err != nil {
+		t.Fatalf("save cred B: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	endpoint := failoverPolicyTestEndpoint("Primary", upstream.URL)
+	endpoint.AuthMode = config.AuthModeTokenPool
+	endpoint.APIKey = ""
+	cfg.UpdateEndpoints([]config.Endpoint{endpoint})
+	p := New(cfg, &noopStatsStorage{}, store, "test-device")
+	p.httpClient = upstream.Client()
+	p.retrySleep = func(time.Duration) {}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCCNexusRequestID, "req-token-pool-401-next-token")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected token pool auth failure to retry next token and succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if strings.Join(tokens, ",") != "token-a,token-b" {
+		t.Fatalf("expected retry to move from token-a to token-b, got tokens=%v", tokens)
+	}
+	updatedA, err := store.GetCredentialByID(credA.ID)
+	if err != nil {
+		t.Fatalf("load cred A: %v", err)
+	}
+	if updatedA == nil || updatedA.Status != "invalid" {
+		t.Fatalf("expected first token to be invalidated, got %#v", updatedA)
+	}
+	logs := joinedProxyLogs()
+	if !strings.Contains(logs, "retry_reason=credential_auth_failed") {
+		t.Fatalf("expected token-pool credential auth failure logs, got logs:\n%s", logs)
+	}
+	if strings.Contains(logs, "retry_reason=endpoint_auth_failed") {
+		t.Fatalf("did not expect API-key endpoint auth failure branch for token pool, got logs:\n%s", logs)
 	}
 }
 
