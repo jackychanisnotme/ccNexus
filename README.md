@@ -43,7 +43,7 @@ ccNexus 不只是 Claude Code、Codex CLI 与 Hermes Agent 的智能端点轮换
 | Claude Code | Claude / Anthropic 兼容入口 | 稳定支持 |
 | Codex CLI | OpenAI Responses API，推荐 `openai2` 转换器 | 稳定支持 |
 | Hermes Agent | 按其客户端协议选择 Claude 或 OpenAI 兼容入口 | 稳定支持 |
-| OpenClaw | 可尝试 Claude 或 OpenAI 兼容入口 | 实验性支持，部分流式、工具调用和异常重试场景鲁棒性一般 |
+| OpenClaw | Claude 或 OpenAI 兼容入口 | 稳定支持 |
 
 <table>
   <tr>

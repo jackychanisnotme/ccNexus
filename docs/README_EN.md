@@ -43,7 +43,7 @@ ccNexus is more than a smart endpoint rotation proxy for Claude Code, Codex CLI,
 | Claude Code | Claude / Anthropic-compatible gateway | Stable |
 | Codex CLI | OpenAI Responses API, preferably with the `openai2` transformer | Stable |
 | Hermes Agent | Claude or OpenAI-compatible gateway, depending on the client protocol | Stable |
-| OpenClaw | Claude or OpenAI-compatible gateway | Experimental; robustness is limited in some streaming, tool-call, and retry scenarios |
+| OpenClaw | Claude or OpenAI-compatible gateway | Stable |
 
 <table>
   <tr>
