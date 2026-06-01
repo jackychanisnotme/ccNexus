@@ -164,6 +164,14 @@ func shellEscape(s string) string {
 	return "'" + escaped + "'"
 }
 
+// escapeAppleScriptString escapes a string for safe embedding inside an
+// AppleScript double-quoted literal (backslash and double-quote).
+func escapeAppleScriptString(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return s
+}
+
 // getShellInitCommand returns the command to source shell config files
 // This is necessary because shell -c runs in non-interactive mode
 // which doesn't load .bashrc/.zshrc where PATH is often configured (e.g., nvm, fnm)
@@ -326,15 +334,17 @@ func buildGitBashCommand(termInfo TerminalInfo, dir, claudeCmd string) *exec.Cmd
 func buildMacTerminalCommand(dir, claudeCmd string) *exec.Cmd {
 	// Use AppleScript for Terminal.app
 	escapedDir := strings.ReplaceAll(dir, "'", "'\\''")
+	inner := escapeAppleScriptString(fmt.Sprintf("cd '%s' && %s", escapedDir, claudeCmd))
 	script1 := `tell application "Terminal" to activate`
-	script2 := fmt.Sprintf(`tell application "Terminal" to do script "cd '%s' && %s"`, escapedDir, claudeCmd)
+	script2 := fmt.Sprintf(`tell application "Terminal" to do script "%s"`, inner)
 	return exec.Command("osascript", "-e", script1, "-e", script2)
 }
 
 func buildITerm2Command(dir, claudeCmd string) *exec.Cmd {
 	// Use AppleScript for iTerm2
 	escapedDir := strings.ReplaceAll(dir, "'", "'\\''")
-	script := fmt.Sprintf(`tell application "iTerm" to create window with default profile command "cd '%s' && %s"`, escapedDir, claudeCmd)
+	inner := escapeAppleScriptString(fmt.Sprintf("cd '%s' && %s", escapedDir, claudeCmd))
+	script := fmt.Sprintf(`tell application "iTerm" to create window with default profile command "%s"`, inner)
 	return exec.Command("osascript", "-e", script)
 }
 

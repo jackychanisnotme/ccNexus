@@ -5,10 +5,13 @@ import (
 	"strings"
 
 	"github.com/lich0821/ccNexus/internal/config"
-	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/providercompat"
 )
 
+// prioritizeRequestEndpointsForClientFormat orders fallback candidates so endpoints
+// whose transformer natively matches the client format are preferred when failing
+// over. The manually-selected default endpoint (currentName) always remains the
+// request's starting point and is never demoted for format reasons.
 func prioritizeRequestEndpointsForClientFormat(endpoints []config.Endpoint, clientFormat ClientFormat, currentName string, obs requestObservability) ([]config.Endpoint, string) {
 	if len(endpoints) <= 1 {
 		return endpoints, currentName
@@ -17,41 +20,12 @@ func prioritizeRequestEndpointsForClientFormat(endpoints []config.Endpoint, clie
 	prioritized := make([]config.Endpoint, len(endpoints))
 	copy(prioritized, endpoints)
 
-	bestTier := int(^uint(0) >> 1)
-	tiersByName := make(map[string]int, len(prioritized))
-	for _, endpoint := range prioritized {
-		tier := endpointClientFormatPreferenceTier(clientFormat, endpoint)
-		tiersByName[endpoint.Name] = tier
-		if tier < bestTier {
-			bestTier = tier
-		}
-	}
-
 	sort.SliceStable(prioritized, func(i, j int) bool {
 		return endpointClientFormatPreferenceTier(clientFormat, prioritized[i]) <
 			endpointClientFormatPreferenceTier(clientFormat, prioritized[j])
 	})
 
-	planCurrentName := strings.TrimSpace(currentName)
-	if planCurrentName == "" {
-		return prioritized, planCurrentName
-	}
-
-	currentTier, ok := tiersByName[planCurrentName]
-	if !ok || currentTier <= bestTier {
-		return prioritized, planCurrentName
-	}
-
-	currentEndpoint := findEndpointByName(prioritized, planCurrentName)
-	logger.Info("[FORMAT_PREF] demoting %s endpoint %s for %s current_tier=%d preferred_tier=%d %s",
-		endpointTransformerDisplayName(currentEndpoint.Transformer),
-		planCurrentName,
-		clientFormatPathLabel(clientFormat),
-		currentTier,
-		bestTier,
-		requestLogFields(obs, planCurrentName, 0, 0, "format_preference"),
-	)
-	return prioritized, ""
+	return prioritized, strings.TrimSpace(currentName)
 }
 
 func endpointClientFormatPreferenceTier(clientFormat ClientFormat, endpoint config.Endpoint) int {

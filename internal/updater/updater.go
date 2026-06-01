@@ -350,10 +350,13 @@ func (u *Updater) CleanupOldDownloads(maxAge time.Duration) error {
 // SendNotification sends a system notification
 func SendNotification(title, message string) error {
 	if runtime.GOOS == "darwin" {
-		script := fmt.Sprintf(`display notification "%s" with title "%s" sound name "default"`, message, title)
+		esc := func(s string) string {
+			s = strings.ReplaceAll(s, "\\", "\\\\")
+			return strings.ReplaceAll(s, `"`, `\"`)
+		}
+		script := fmt.Sprintf(`display notification "%s" with title "%s" sound name "default"`, esc(message), esc(title))
 		cmd := exec.Command("osascript", "-e", script)
 		return cmd.Run()
 	}
 	return beeep.Notify(title, message, "")
 }
-

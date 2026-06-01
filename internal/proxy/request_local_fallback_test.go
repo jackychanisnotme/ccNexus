@@ -85,7 +85,7 @@ func TestHTTPFailureFallbackIsRequestLocalAndDoesNotSwitchGlobalEndpoint(t *test
 	}
 }
 
-func TestResponsesRequestPrefersOpenAI2OverCurrentClaudeEndpoint(t *testing.T) {
+func TestResponsesRequestUsesManualClaudeDefaultThenFailsOverToGPT(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
 
@@ -113,6 +113,7 @@ func TestResponsesRequestPrefersOpenAI2OverCurrentClaudeEndpoint(t *testing.T) {
 	currentClaude.Model = "claude-opus-4-7"
 	nativeGPT := failoverPolicyTestEndpoint("Native GPT", gptEndpoint.URL)
 
+	// Claude is listed first, so it is the manually-selected default (currentIndex 0).
 	p := newFailoverPolicyTestProxy([]config.Endpoint{
 		currentClaude,
 		nativeGPT,
@@ -120,27 +121,85 @@ func TestResponsesRequestPrefersOpenAI2OverCurrentClaudeEndpoint(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":"hi"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(headerCCNexusRequestID, "req-prefer-native-responses")
+	req.Header.Set(headerCCNexusRequestID, "req-claude-default-failover")
 	rec := httptest.NewRecorder()
 
 	p.handleProxy(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected response request to use native GPT endpoint, got status=%d body=%q", rec.Code, rec.Body.String())
+		t.Fatalf("expected failover to GPT to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
 	}
-	if claudeHits != 0 {
-		t.Fatalf("expected current Claude endpoint to be deprioritized, hits=%d", claudeHits)
+	// Default Claude must be attempted first (proves the manual default wins over format).
+	if claudeHits == 0 {
+		t.Fatalf("expected manual Claude default to be tried first, hits=%d", claudeHits)
 	}
+	// And the request must still succeed by failing over to the GPT endpoint.
 	if gptHits != 1 {
-		t.Fatalf("expected native GPT endpoint to be hit once, got %d", gptHits)
+		t.Fatalf("expected failover to native GPT endpoint once, got %d", gptHits)
 	}
 	if got := rec.Header().Get(headerCCNexusEndpoint); got != "Native GPT" {
-		t.Fatalf("expected response endpoint Native GPT, got %q", got)
+		t.Fatalf("expected final response endpoint Native GPT, got %q", got)
 	}
-	logs := joinedProxyLogs()
-	if !strings.Contains(logs, "[FORMAT_PREF] demoting Claude endpoint Current Claude for /v1/responses") ||
-		!strings.Contains(logs, "retry_reason=format_preference") {
-		t.Fatalf("expected format preference log, got logs:\n%s", joinedProxyLogs())
+	if !strings.Contains(joinedProxyLogs(), "failover_scope=request_local") {
+		t.Fatalf("expected request-local failover log, got logs:\n%s", joinedProxyLogs())
+	}
+}
+
+func TestResponsesRequestUsesManualGPTDefaultThenFailsOverToClaude(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var gptHits int
+	gptEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gptHits++
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"message":"gpt unavailable"}}`))
+	}))
+	defer gptEndpoint.Close()
+
+	var claudeHits int
+	claudeEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claudeHits++
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("expected Claude endpoint to receive /v1/messages, got %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg-claude","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"claude-opus-4-7","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`))
+	}))
+	defer claudeEndpoint.Close()
+
+	currentGPT := failoverPolicyTestEndpoint("Current GPT", gptEndpoint.URL)
+	fallbackClaude := failoverPolicyTestEndpoint("Fallback Claude", claudeEndpoint.URL)
+	fallbackClaude.Transformer = "claude"
+	fallbackClaude.Model = "claude-opus-4-7"
+
+	// GPT is listed first, so it is the manually-selected default (currentIndex 0).
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		currentGPT,
+		fallbackClaude,
+	}, gptEndpoint.Client())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCCNexusRequestID, "req-gpt-default-failover")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected failover to Claude to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if gptHits == 0 {
+		t.Fatalf("expected manual GPT default to be tried first, hits=%d", gptHits)
+	}
+	if claudeHits != 1 {
+		t.Fatalf("expected failover to Claude endpoint once, got %d", claudeHits)
+	}
+	if got := rec.Header().Get(headerCCNexusEndpoint); got != "Fallback Claude" {
+		t.Fatalf("expected final response endpoint Fallback Claude, got %q", got)
+	}
+	if !strings.Contains(joinedProxyLogs(), "failover_scope=request_local") {
+		t.Fatalf("expected request-local failover log, got logs:\n%s", joinedProxyLogs())
 	}
 }
 

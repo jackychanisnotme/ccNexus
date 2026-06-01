@@ -255,7 +255,7 @@ func GeminiRespToClaude(geminiResp []byte) ([]byte, error) {
 
 	if len(resp.Candidates) > 0 {
 		candidate := resp.Candidates[0]
-		for _, part := range candidate.Content.Parts {
+		for partIdx, part := range candidate.Content.Parts {
 			if part.Thought && part.Text != "" {
 				// Convert Gemini thought to Claude thinking format
 				thinkingBlock := map[string]interface{}{
@@ -272,7 +272,7 @@ func GeminiRespToClaude(geminiResp []byte) ([]byte, error) {
 			if part.FunctionCall != nil {
 				content = append(content, map[string]interface{}{
 					"type":  "tool_use",
-					"id":    fmt.Sprintf("call_%s", part.FunctionCall.Name),
+					"id":    fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, partIdx),
 					"name":  part.FunctionCall.Name,
 					"input": part.FunctionCall.Args,
 				})
@@ -413,7 +413,7 @@ func GeminiStreamToClaude(event []byte, ctx *transformer.StreamContext) ([]byte,
 			result = append(result, buildClaudeEvent("content_block_start", map[string]interface{}{
 				"index": ctx.ContentIndex,
 				"content_block": map[string]interface{}{
-					"type": "tool_use", "id": fmt.Sprintf("call_%s", part.FunctionCall.Name), "name": part.FunctionCall.Name,
+					"type": "tool_use", "id": fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, ctx.ContentIndex), "name": part.FunctionCall.Name,
 				},
 			})...)
 			args, _ := json.Marshal(part.FunctionCall.Args)

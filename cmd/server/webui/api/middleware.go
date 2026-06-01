@@ -4,7 +4,9 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/lich0821/ccNexus/internal/logger"
@@ -44,10 +46,15 @@ func WriteSuccess(w http.ResponseWriter, data interface{}) {
 	})
 }
 
-// CORSMiddleware adds CORS headers to responses
+// CORSMiddleware adds CORS headers, reflecting only loopback origins so a
+// remote website cannot make cross-origin requests to this local admin API.
 func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if isLoopbackOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -58,6 +65,23 @@ func CORSMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isLoopbackOrigin reports whether an Origin header points at a loopback host.
+func isLoopbackOrigin(origin string) bool {
+	if strings.TrimSpace(origin) == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // RecoveryMiddleware recovers from panics and returns 500 error

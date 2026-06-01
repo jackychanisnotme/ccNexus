@@ -18,9 +18,10 @@ const (
 )
 
 const (
-	expiringThreshold    = 24 * time.Hour
-	needRefreshThreshold = 30 * time.Minute
-	defaultCooldown      = 5 * time.Minute
+	expiringThreshold      = 24 * time.Hour
+	needRefreshThreshold   = 30 * time.Minute
+	defaultCooldown        = 5 * time.Minute
+	maxConsecutiveFailures = 5
 )
 
 func toNullString(s string) sql.NullString {
@@ -465,16 +466,20 @@ func (s *SQLiteStorage) MarkCredentialFailure(id int64, statusCode int, errMsg s
 		`, credentialStatusCooldown, cooldownUntil, errMsg, now.UTC(), id)
 		return err
 	default:
+		// After too many consecutive failures, cool the credential down so it stops
+		// being selected first; otherwise keep it active.
+		cooldownUntil := now.UTC().Add(defaultCooldown)
 		_, err := s.db.Exec(`
 			UPDATE endpoint_credentials
 			SET
-				status=?,
 				failure_count=failure_count+1,
+				status=CASE WHEN failure_count+1 >= ? THEN ? ELSE ? END,
+				cooldown_until=CASE WHEN failure_count+1 >= ? THEN ? ELSE cooldown_until END,
 				last_error=?,
 				last_checked_at=?,
 				updated_at=CURRENT_TIMESTAMP
 			WHERE id=?
-		`, credentialStatusActive, errMsg, now.UTC(), id)
+		`, maxConsecutiveFailures, credentialStatusCooldown, credentialStatusActive, maxConsecutiveFailures, cooldownUntil, errMsg, now.UTC(), id)
 		return err
 	}
 }

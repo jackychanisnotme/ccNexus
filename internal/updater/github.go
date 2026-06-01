@@ -106,6 +106,9 @@ func getPlatformPattern() string {
 		}
 		return "darwin-amd64.zip"
 	case "linux":
+		if goarch == "arm64" {
+			return "linux-arm64.tar.gz"
+		}
 		return "linux-amd64.tar.gz"
 	default:
 		return fmt.Sprintf("%s-%s", goos, goarch)

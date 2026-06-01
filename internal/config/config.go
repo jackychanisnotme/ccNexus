@@ -247,6 +247,42 @@ type Config struct {
 	mu                        sync.RWMutex
 }
 
+// ReplaceWith copies all configuration fields from src into c under c's lock,
+// leaving c's mutex intact, avoiding a copy of the embedded sync.RWMutex.
+func (c *Config) ReplaceWith(src *Config) {
+	if c == nil || src == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Port = src.Port
+	c.PortLocked = src.PortLocked
+	c.BasicAuthEnabled = src.BasicAuthEnabled
+	c.BasicAuthUsername = src.BasicAuthUsername
+	c.BasicAuthPassword = src.BasicAuthPassword
+	c.Endpoints = src.Endpoints
+	c.LogLevel = src.LogLevel
+	c.Language = src.Language
+	c.Theme = src.Theme
+	c.ThemeAuto = src.ThemeAuto
+	c.AutoLightTheme = src.AutoLightTheme
+	c.AutoDarkTheme = src.AutoDarkTheme
+	c.WindowWidth = src.WindowWidth
+	c.WindowHeight = src.WindowHeight
+	c.CloseWindowBehavior = src.CloseWindowBehavior
+	c.ClaudeNotificationEnabled = src.ClaudeNotificationEnabled
+	c.ClaudeNotificationType = src.ClaudeNotificationType
+	c.ModelsCacheTTL = src.ModelsCacheTTL
+	c.ModelsCacheRefreshEnabled = src.ModelsCacheRefreshEnabled
+	c.WebDAV = src.WebDAV
+	c.Backup = src.Backup
+	c.Update = src.Update
+	c.Terminal = src.Terminal
+	c.Proxy = src.Proxy
+	c.CodexProxy = src.CodexProxy
+	c.Failover = src.Failover
+}
+
 // DefaultFailoverConfig returns the default request fallback behavior.
 func DefaultFailoverConfig() *FailoverConfig {
 	return &FailoverConfig{

@@ -340,6 +340,13 @@ func (h *Handler) updateEndpointCredential(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			cred.Status = status
+			if status == "active" {
+				// Manual reactivation must clear cooldown/failure state, otherwise
+				// deriveCredentialStatus keeps reporting cooldown until it expires.
+				cred.CooldownUntil = nil
+				cred.FailureCount = 0
+				cred.LastError = ""
+			}
 		}
 	}
 

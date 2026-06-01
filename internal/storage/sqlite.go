@@ -16,6 +16,17 @@ func escapeSQLString(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }
 
+// validateDBPath rejects file paths that contain characters which could break
+// out of a single-quoted SQL string literal in ATTACH/VACUUM statements
+// (SQLite does not support bind parameters for these). Quote-doubling handles
+// apostrophes, but NUL and newlines are rejected outright.
+func validateDBPath(p string) error {
+	if strings.ContainsAny(p, "\x00\n\r") {
+		return fmt.Errorf("invalid database path")
+	}
+	return nil
+}
+
 // safeConfigKeys 定义可以安全跨设备和跨平台备份/恢复的 app_config 配置项。
 // 这些配置是平台无关的，不包含设备特定或路径相关的值。
 // 不在此列表中的配置项（如 device_id、terminal_*、backup_local_dir、proxy_url 等）
@@ -821,6 +832,9 @@ func (s *SQLiteStorage) CreateBackupCopy(backupPath string) error {
 	defer s.mu.Unlock()
 
 	// 使用 VACUUM INTO 创建数据库副本，转义路径中的单引号
+	if err := validateDBPath(backupPath); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(fmt.Sprintf("VACUUM INTO '%s'", escapeSQLString(backupPath)))
 	if err != nil {
 		return fmt.Errorf("failed to create backup: %w", err)
@@ -864,6 +878,9 @@ func (s *SQLiteStorage) DetectEndpointConflicts(remoteDBPath string) ([]MergeCon
 	defer s.mu.Unlock()
 
 	// Attach remote database, escape path to prevent SQL injection
+	if err := validateDBPath(remoteDBPath); err != nil {
+		return nil, err
+	}
 	_, err := s.db.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS remote", escapeSQLString(remoteDBPath)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to attach remote database: %w", err)
@@ -1043,6 +1060,9 @@ func (s *SQLiteStorage) MergeFromBackup(backupDBPath string, strategy MergeStrat
 	defer s.mu.Unlock()
 
 	// 挂载备份数据库，转义路径防止 SQL 注入
+	if err := validateDBPath(backupDBPath); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS backup", escapeSQLString(backupDBPath)))
 	if err != nil {
 		return fmt.Errorf("failed to attach backup database: %w", err)

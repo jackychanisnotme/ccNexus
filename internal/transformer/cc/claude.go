@@ -53,6 +53,7 @@ func (t *ClaudeTransformer) TransformResponseWithContext(resp []byte, isStreamin
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(resp))
+	scanner.Buffer(make([]byte, 0, 128*1024), 2*1024*1024)
 	var result bytes.Buffer
 
 	for scanner.Scan() {
@@ -105,5 +106,8 @@ func (t *ClaudeTransformer) TransformResponseWithContext(resp []byte, isStreamin
 		result.WriteString("\n")
 	}
 
+	if err := scanner.Err(); err != nil {
+		return resp, nil
+	}
 	return result.Bytes(), nil
 }

@@ -291,7 +291,9 @@ func ClaudeRespToOpenAI(claudeResp []byte, model string) ([]byte, error) {
 		}
 		switch blockMap["type"] {
 		case "text":
-			textContent += blockMap["text"].(string)
+			if text, ok := blockMap["text"].(string); ok {
+				textContent += text
+			}
 		case "thinking":
 			// Skip thinking blocks in response
 			continue
@@ -422,7 +424,9 @@ func ClaudeStreamToOpenAI(event []byte, ctx *transformer.StreamContext, model st
 			text, _ := delta["text"].(string)
 			return buildOpenAIChunk(ctx.MessageID, model, text, nil, "")
 		case "input_json_delta":
-			ctx.ToolArguments += delta["partial_json"].(string)
+			if partial, ok := delta["partial_json"].(string); ok {
+				ctx.ToolArguments += partial
+			}
 		}
 		return nil, nil
 
@@ -666,19 +670,23 @@ func convertClaudeContentToOpenAI(content []interface{}) (interface{}, []transfo
 		}
 		switch m["type"] {
 		case "text":
-			textParts = append(textParts, m["text"].(string))
+			if text, ok := m["text"].(string); ok {
+				textParts = append(textParts, text)
+			}
 		case "thinking":
 			// Skip thinking blocks
 			continue
 		case "tool_use":
+			id, _ := m["id"].(string)
+			name, _ := m["name"].(string)
 			args, _ := json.Marshal(m["input"])
 			toolCalls = append(toolCalls, transformer.OpenAIToolCall{
-				ID:   m["id"].(string),
+				ID:   id,
 				Type: "function",
 				Function: struct {
 					Name      string `json:"name"`
 					Arguments string `json:"arguments"`
-				}{Name: m["name"].(string), Arguments: string(args)},
+				}{Name: name, Arguments: string(args)},
 			})
 		}
 	}

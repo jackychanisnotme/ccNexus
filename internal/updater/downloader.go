@@ -27,6 +27,7 @@ type Downloader struct {
 	progress   DownloadProgress
 	mu         sync.RWMutex
 	cancelChan chan struct{}
+	cancelOnce *sync.Once
 	proxyURL   string
 }
 
@@ -52,6 +53,7 @@ func (d *Downloader) Download(url, destPath string) error {
 		FilePath: destPath,
 	}
 	d.cancelChan = make(chan struct{})
+	d.cancelOnce = &sync.Once{}
 	proxyURL := d.proxyURL
 	d.mu.Unlock()
 
@@ -192,9 +194,10 @@ func (d *Downloader) setError(errMsg string) {
 
 // Cancel cancels the current download
 func (d *Downloader) Cancel() {
-	d.mu.RLock()
-	if d.cancelChan != nil && d.progress.Status == "downloading" {
-		close(d.cancelChan)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.cancelChan != nil && d.cancelOnce != nil && d.progress.Status == "downloading" {
+		ch := d.cancelChan
+		d.cancelOnce.Do(func() { close(ch) })
 	}
-	d.mu.RUnlock()
 }

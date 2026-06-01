@@ -33,10 +33,10 @@ func cleanSchemaForGemini(schema interface{}) interface{} {
 func parseSSE(data []byte) (eventType, jsonData string) {
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "event: ") {
-			eventType = strings.TrimPrefix(line, "event: ")
-		} else if strings.HasPrefix(line, "data: ") {
-			jsonData = strings.TrimPrefix(line, "data: ")
+		if strings.HasPrefix(line, "event:") {
+			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		} else if strings.HasPrefix(line, "data:") {
+			jsonData = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		}
 	}
 	return

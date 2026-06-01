@@ -1,5 +1,6 @@
 import './style.css'
 import './effects/festival-effects.css'
+import './themes/apple.css'
 import '../wailsjs/runtime/runtime.js'
 import { setLanguage } from './i18n/index.js'
 import { initUI, changeLanguage } from './modules/ui.js'
