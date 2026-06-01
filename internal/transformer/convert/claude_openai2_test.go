@@ -435,3 +435,96 @@ func TestClaudeReqToOpenAI2DefaultsToolChoiceAutoAfterToolResult(t *testing.T) {
 		t.Fatalf("expected tool_choice=auto after tool_result, got %#v", req["tool_choice"])
 	}
 }
+
+func TestClaudeStreamToOpenAI2ForwardsThinkingAsReasoning(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	events := []string{
+		`event: message_start` + "\n" + `data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":5}}}`,
+		`event: content_block_start` + "\n" + `data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+		`event: content_block_delta` + "\n" + `data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"let me think"}}`,
+		`event: content_block_stop` + "\n" + `data: {"type":"content_block_stop","index":0}`,
+		`event: content_block_start` + "\n" + `data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+		`event: content_block_delta` + "\n" + `data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hi"}}`,
+		`event: content_block_stop` + "\n" + `data: {"type":"content_block_stop","index":1}`,
+		`event: message_stop` + "\n" + `data: {"type":"message_stop"}`,
+	}
+
+	var out strings.Builder
+	for _, ev := range events {
+		res, err := ClaudeStreamToOpenAI2([]byte(ev+"\n\n"), ctx)
+		if err != nil {
+			t.Fatalf("convert error: %v", err)
+		}
+		out.Write(res)
+	}
+	got := out.String()
+
+	for _, want := range []string{
+		`"type":"response.output_item.added"`,
+		`"type":"reasoning"`,
+		`"type":"response.reasoning_text.delta"`,
+		`"delta":"let me think"`,
+		`"type":"response.reasoning_text.done"`,
+		`"type":"response.output_text.delta"`,
+		`"delta":"hi"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, got)
+		}
+	}
+
+	// Reasoning must occupy output_index 0 and the message text output_index 1.
+	if !strings.Contains(got, `"delta":"let me think","item_id":"msg_msg_1_0","output_index":0`) {
+		t.Fatalf("expected reasoning at output_index 0, got:\n%s", got)
+	}
+	if !strings.Contains(got, `"delta":"hi","item_id":"msg_msg_1_1","logprobs":[],"output_index":1`) {
+		t.Fatalf("expected text at output_index 1, got:\n%s", got)
+	}
+}
+
+func TestOpenAI2ReqToClaudeEnablesThinking(t *testing.T) {
+	temp := 0.7
+	req := transformer.OpenAI2Request{
+		Model:       "gpt-5.5",
+		Input:       "hi",
+		Stream:      true,
+		Temperature: &temp,
+		Reasoning:   map[string]interface{}{"effort": "high"},
+	}
+	raw, _ := json.Marshal(req)
+	out, err := OpenAI2ReqToClaude(raw, "claude-opus-4")
+	if err != nil {
+		t.Fatalf("convert error: %v", err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	thinking, ok := got["thinking"].(map[string]interface{})
+	if !ok || thinking["type"] != "enabled" {
+		t.Fatalf("expected thinking enabled, got %v", got["thinking"])
+	}
+	budget, _ := thinking["budget_tokens"].(float64)
+	maxTokens, _ := got["max_tokens"].(float64)
+	if budget <= 0 || maxTokens <= budget {
+		t.Fatalf("expected max_tokens(%v) > budget_tokens(%v)", maxTokens, budget)
+	}
+	if _, hasTemp := got["temperature"]; hasTemp {
+		t.Fatalf("expected temperature removed when thinking enabled, got %v", got["temperature"])
+	}
+}
+
+func TestOpenAI2ReqToClaudeThinkingOffDisabled(t *testing.T) {
+	req := transformer.OpenAI2Request{
+		Model:     "gpt-5.5",
+		Input:     "hi",
+		Reasoning: map[string]interface{}{"effort": "off"},
+	}
+	raw, _ := json.Marshal(req)
+	out, _ := OpenAI2ReqToClaude(raw, "claude-opus-4")
+	var got map[string]interface{}
+	_ = json.Unmarshal(out, &got)
+	if _, ok := got["thinking"]; ok {
+		t.Fatalf("expected no thinking when effort=off, got %v", got["thinking"])
+	}
+}

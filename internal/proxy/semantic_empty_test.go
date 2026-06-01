@@ -589,3 +589,159 @@ func TestTokenPoolSemanticEmptySoftCoolsCredentialAndRetriesNextToken(t *testing
 func validResponsesBody(id, text string) string {
 	return `{"id":"` + id + `","object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + text + `"}]}]}`
 }
+
+func TestStreamingClaudeKeepAliveUsesPingEvent(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		// Non-semantic events first; ccNexus buffers these and must keep the
+		// client alive with its own ping heartbeat until a semantic event lands.
+		_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		time.Sleep(60 * time.Millisecond)
+		_, _ = w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n"))
+		_, _ = w.Write([]byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n"))
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	endpoint := failoverPolicyTestEndpoint("Primary", upstream.URL)
+	endpoint.Transformer = "claude"
+	p := newFailoverPolicyTestProxy([]config.Endpoint{endpoint}, upstream.Client())
+	p.streamHeartbeatInterval = 10 * time.Millisecond
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-test","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected Claude stream to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: ping") || !strings.Contains(body, "\"type\": \"ping\"") {
+		t.Fatalf("expected Anthropic ping keep-alive in Claude stream, got %q", body)
+	}
+	if strings.Contains(body, ": ccnexus waiting for upstream\n\n: ccnexus waiting for upstream") {
+		t.Fatalf("did not expect repeated comment heartbeat on Claude stream, got %q", body)
+	}
+	if !strings.Contains(body, "ok") {
+		t.Fatalf("expected eventual semantic text to reach client, got %q", body)
+	}
+}
+
+func TestStreamingClaudeReasoningFlushedBeforeText(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`event: message_start`,
+			`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":5}}}`,
+			"",
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+			"",
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"pondering"}}`,
+			"",
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":0}`,
+			"",
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+			"",
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}`,
+			"",
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":1}`,
+			"",
+			`event: message_delta`,
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}`,
+			"",
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	endpoint := failoverPolicyTestEndpoint("Primary", upstream.URL)
+	endpoint.Transformer = "claude"
+	p := newFailoverPolicyTestProxy([]config.Endpoint{endpoint}, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected reasoning+text stream to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	reasoningAt := strings.Index(body, "response.reasoning_text.delta")
+	textAt := strings.Index(body, "response.output_text.delta")
+	if reasoningAt < 0 || textAt < 0 {
+		t.Fatalf("expected both reasoning and text events, got %q", body)
+	}
+	if reasoningAt > textAt {
+		t.Fatalf("expected reasoning to be emitted before text, got %q", body)
+	}
+	if !strings.Contains(body, `"delta":"pondering"`) || !strings.Contains(body, `"delta":"answer"`) {
+		t.Fatalf("expected reasoning and text deltas in body, got %q", body)
+	}
+}
+
+func TestStreamingClaudeReasoningOnlyEmptyClosesWithoutRetry(t *testing.T) {
+	var hits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`event: message_start`,
+			`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":5}}}`,
+			"",
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+			"",
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"only thinking"}}`,
+			"",
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":0}`,
+			"",
+			`event: message_delta`,
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}`,
+			"",
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	endpoint := failoverPolicyTestEndpoint("Primary", upstream.URL)
+	endpoint.Transformer = "claude"
+	p := newFailoverPolicyTestProxy([]config.Endpoint{endpoint}, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if hits != 1 {
+		t.Fatalf("expected no silent retry after reasoning was streamed, got hits=%d", hits)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "response.reasoning_text.delta") {
+		t.Fatalf("expected reasoning to be streamed to client, got %q", body)
+	}
+	if !strings.Contains(body, "event: error") {
+		t.Fatalf("expected stream to close with an error event, got %q", body)
+	}
+}

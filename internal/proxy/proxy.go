@@ -504,7 +504,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	var streamSession *downstreamStreamSession
 	if streamReq.Stream {
-		streamSession = newDownstreamStreamSession(w, p.streamHeartbeatIntervalOrDefault())
+		streamSession = newDownstreamStreamSession(w, p.streamHeartbeatIntervalOrDefault(), clientFormat)
 		if err := streamSession.Start(); err != nil {
 			logger.Error("Failed to start downstream stream: %v %s", err, requestLogFields(obs, "", 0, http.StatusInternalServerError, "downstream_stream_start_failed"))
 			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
@@ -846,6 +846,14 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 					p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, semanticErr, semanticEmptyExhausted)
 					p.markRequestInactive(endpoint.Name)
 					if streamResult.WroteSemanticData {
+						return
+					}
+					// Reasoning/progress already streamed to the client; cannot silently
+					// retry on another endpoint, so close the open stream with an error.
+					if streamResult.WroteData {
+						if streamSession != nil && streamSession.Started() {
+							_ = streamSession.WriteTypedError(retryReasonSemanticEmptyResponse, "Upstream returned an empty response after reasoning")
+						}
 						return
 					}
 					if semanticEmptyExhausted {

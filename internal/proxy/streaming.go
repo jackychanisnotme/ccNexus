@@ -32,6 +32,7 @@ type downstreamStreamSession struct {
 	w                 http.ResponseWriter
 	flusher           http.Flusher
 	heartbeatInterval time.Duration
+	clientFormat      ClientFormat
 	done              chan struct{}
 	mu                sync.Mutex
 	closeOnce         sync.Once
@@ -40,12 +41,13 @@ type downstreamStreamSession struct {
 	closed            bool
 }
 
-func newDownstreamStreamSession(w http.ResponseWriter, heartbeatInterval time.Duration) *downstreamStreamSession {
+func newDownstreamStreamSession(w http.ResponseWriter, heartbeatInterval time.Duration, clientFormat ClientFormat) *downstreamStreamSession {
 	flusher, _ := w.(http.Flusher)
 	return &downstreamStreamSession{
 		w:                 w,
 		flusher:           flusher,
 		heartbeatInterval: heartbeatInterval,
+		clientFormat:      clientFormat,
 		done:              make(chan struct{}),
 	}
 }
@@ -158,11 +160,22 @@ func (s *downstreamStreamSession) heartbeatLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			_ = s.writeComment("ccnexus waiting for upstream")
+			_ = s.writeHeartbeat()
 		case <-s.done:
 			return
 		}
 	}
+}
+
+// writeHeartbeat emits a protocol-valid keep-alive for the client format. Claude
+// SSE clients (e.g. Codex Desktop on /v1/messages) do not treat a bare SSE
+// comment as progress, so send an Anthropic ping event instead; OpenAI-format
+// clients accept the comment keep-alive.
+func (s *downstreamStreamSession) writeHeartbeat() error {
+	if s != nil && s.clientFormat == ClientFormatClaude {
+		return s.Write([]byte("event: ping\ndata: {\"type\": \"ping\"}\n\n"))
+	}
+	return s.writeComment("ccnexus waiting for upstream")
 }
 
 func (s *downstreamStreamSession) writeComment(message string) error {
@@ -282,15 +295,29 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 	eventCount := 0
 	streamDone := false
 	semanticDataSeen := false
+	progressFlushed := false
 	emptyKind := ""
 
-	writeTransformedEvent := func(data []byte, semantic bool) error {
+	writeTransformedEvent := func(data []byte, semantic bool, progress bool) error {
 		if len(data) == 0 {
 			return nil
 		}
 		if !semanticDataSeen {
 			pendingWrites.Write(data)
 			if !semantic {
+				// Reasoning/thinking progress is flushed live to keep the client
+				// alive, but does not mark the stream semantic, so empty-response
+				// detection still applies. Silent cross-endpoint retry is given up
+				// once any bytes have reached the client.
+				if progress || progressFlushed {
+					commitHeaders()
+					if writeErr := writeData(pendingWrites.Bytes()); writeErr != nil {
+						return writeErr
+					}
+					pendingWrites.Reset()
+					progressFlushed = true
+					result.WroteData = true
+				}
 				return nil
 			}
 			commitHeaders()
@@ -331,7 +358,7 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 				// Inject message_delta event with usage
 				deltaEvent := fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":%d}}\n\n", outputTokens)
-				if writeErr := writeTransformedEvent([]byte(deltaEvent), false); writeErr != nil {
+				if writeErr := writeTransformedEvent([]byte(deltaEvent), false, false); writeErr != nil {
 					result.Completed = false
 					result.Reason = streamFinishDownstreamWriteFailed
 					result.Err = writeErr
@@ -350,7 +377,7 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 				if streamInspection.EmptyKind != "" {
 					emptyKind = streamInspection.EmptyKind
 				}
-				if writeErr := writeTransformedEvent(transformedEvent, streamInspection.HasOutput); writeErr != nil {
+				if writeErr := writeTransformedEvent(transformedEvent, streamInspection.HasOutput, streamInspection.HasProgress); writeErr != nil {
 					result.Completed = false
 					result.Reason = streamFinishDownstreamWriteFailed
 					result.Err = writeErr
@@ -390,7 +417,7 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 				// Inject message_delta event with usage before message_stop
 				deltaEvent := fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":%d}}\n\n", outputTokens)
-				if writeErr := writeTransformedEvent([]byte(deltaEvent), false); writeErr != nil {
+				if writeErr := writeTransformedEvent([]byte(deltaEvent), false, false); writeErr != nil {
 					result.Reason = streamFinishDownstreamWriteFailed
 					result.Err = writeErr
 					streamDone = true
@@ -411,11 +438,12 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 				p.extractTextFromEvent(transformedEvent, &outputText)
 				streamInspection := inspectSemanticStreamEvent(transformedEvent)
 				semanticEvent := streamInspection.HasOutput
+				progressEvent := streamInspection.HasProgress
 				if streamInspection.EmptyKind != "" {
 					emptyKind = streamInspection.EmptyKind
 				}
 
-				if writeErr := writeTransformedEvent(transformedEvent, semanticEvent); writeErr != nil {
+				if writeErr := writeTransformedEvent(transformedEvent, semanticEvent, progressEvent); writeErr != nil {
 					// Client disconnected (broken pipe) is normal for cancelled requests
 					if strings.Contains(writeErr.Error(), "broken pipe") || strings.Contains(writeErr.Error(), "connection reset") {
 						logger.Debug("[%s] Client disconnected: %v", endpoint.Name, writeErr)

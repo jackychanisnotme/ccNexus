@@ -62,9 +62,10 @@ type semanticResponseInspection struct {
 }
 
 type semanticStreamInspection struct {
-	HasOutput bool
-	Completed bool
-	EmptyKind string
+	HasOutput   bool
+	HasProgress bool
+	Completed   bool
+	EmptyKind   string
 }
 
 func inspectSemanticResponse(body []byte) semanticResponseInspection {
@@ -135,6 +136,18 @@ func inspectSemanticStreamJSON(event map[string]interface{}) semanticStreamInspe
 	}
 
 	eventType, _ := event["type"].(string)
+	// Reasoning/thinking is real progress for keep-alive but is not semantic
+	// output, so empty-response detection and silent retry stay unchanged.
+	switch eventType {
+	case "response.reasoning_text.delta", "response.reasoning_text.done",
+		"response.reasoning_summary_text.delta", "response.reasoning_summary_text.done":
+		result.HasProgress = true
+	}
+	if item, ok := event["item"].(map[string]interface{}); ok {
+		if itemType, _ := item["type"].(string); itemType == "reasoning" {
+			result.HasProgress = true
+		}
+	}
 	switch eventType {
 	case "response.output_text.delta":
 		if hasNonEmptyString(event["delta"]) || hasNonEmptyString(event["text"]) {
@@ -207,6 +220,9 @@ func inspectSemanticStreamJSON(event map[string]interface{}) semanticStreamInspe
 func mergeStreamInspection(dst *semanticStreamInspection, src semanticStreamInspection) {
 	if src.HasOutput {
 		dst.HasOutput = true
+	}
+	if src.HasProgress {
+		dst.HasProgress = true
 	}
 	if src.Completed {
 		dst.Completed = true

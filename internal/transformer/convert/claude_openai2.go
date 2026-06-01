@@ -149,6 +149,27 @@ func hasClaudeToolResult(messages []transformer.ClaudeMessage) bool {
 }
 
 // OpenAI2ReqToClaude converts OpenAI Responses API request to Claude request
+// claudeThinkingBudget maps the Responses reasoning effort to a Claude extended
+// thinking budget. Defaults to a medium budget when effort is unset.
+func claudeThinkingBudget(reasoning map[string]interface{}) int {
+	effort := ""
+	if reasoning != nil {
+		effort, _ = reasoning["effort"].(string)
+	}
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "none", "off":
+		return 0
+	case "low", "minimal":
+		return 2048
+	case "high":
+		return 16384
+	case "xhigh":
+		return 24576
+	default:
+		return 8192
+	}
+}
+
 func OpenAI2ReqToClaude(openai2Req []byte, model string) ([]byte, error) {
 	var req transformer.OpenAI2Request
 	if err := json.Unmarshal(openai2Req, &req); err != nil {
@@ -169,6 +190,20 @@ func OpenAI2ReqToClaude(openai2Req []byte, model string) ([]byte, error) {
 	}
 	if req.Temperature != nil {
 		claudeReq["temperature"] = *req.Temperature
+	}
+
+	// Enable Claude extended thinking so Opus streams thinking deltas during long
+	// pre-answer reasoning; without it the upstream stays silent until the final
+	// text and Codex cancels the stream for lack of progress. Anthropic requires
+	// max_tokens > budget_tokens and forbids a custom temperature when thinking is on.
+	if budget := claudeThinkingBudget(req.Reasoning); budget > 0 {
+		claudeReq["thinking"] = map[string]interface{}{"type": "enabled", "budget_tokens": budget}
+		delete(claudeReq, "temperature")
+		maxTokens := budget + 4096
+		if existing, ok := claudeReq["max_tokens"].(int); ok && existing > maxTokens {
+			maxTokens = existing
+		}
+		claudeReq["max_tokens"] = maxTokens
 	}
 
 	// Convert input to messages
@@ -344,6 +379,26 @@ func ClaudeStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 	writeEvent := func(evt map[string]interface{}) {
 		writeOpenAI2StreamEvent(ctx, &result, evt)
 	}
+	// closeReasoning emits the Responses reasoning close events once, when a
+	// non-thinking block begins or the message ends.
+	closeReasoning := func() {
+		if !ctx.ReasoningOutputStarted || ctx.ReasoningOutputDone {
+			return
+		}
+		writeEvent(map[string]interface{}{
+			"type":          "response.reasoning_text.done",
+			"output_index":  ctx.ReasoningOutputIndex,
+			"content_index": 0,
+			"item_id":       openAI2OutputItemID(ctx, ctx.ReasoningOutputIndex),
+			"text":          ctx.ResponseReasoningByIndex[ctx.ReasoningOutputIndex],
+		})
+		writeEvent(map[string]interface{}{
+			"type":         "response.output_item.done",
+			"output_index": ctx.ReasoningOutputIndex,
+			"item":         openAI2ReasoningItem(ctx, ctx.ReasoningOutputIndex, "completed"),
+		})
+		ctx.ReasoningOutputDone = true
+	}
 
 	switch eventType {
 	case "message_start":
@@ -366,17 +421,30 @@ func ClaudeStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 		blockIdx := int(idx)
 
 		switch block["type"] {
+		case "thinking":
+			if !ctx.ReasoningOutputStarted {
+				ctx.ReasoningOutputStarted = true
+				ctx.ReasoningOutputIndex = 0
+				writeEvent(map[string]interface{}{
+					"type":         "response.output_item.added",
+					"output_index": ctx.ReasoningOutputIndex,
+					"item":         openAI2ReasoningItem(ctx, ctx.ReasoningOutputIndex, "in_progress"),
+				})
+			}
 		case "text":
+			closeReasoning()
 			ctx.ContentBlockStarted = true
-			ctx.ContentIndex = blockIdx
+			outputIndex := responseMessageOutputIndex(ctx)
+			ctx.ContentIndex = outputIndex
 			// output_item.added
 			writeEvent(map[string]interface{}{
-				"type": "response.output_item.added", "output_index": blockIdx,
-				"item": openAI2MessageItem(ctx, blockIdx, "in_progress"),
+				"type": "response.output_item.added", "output_index": outputIndex,
+				"item": openAI2MessageItem(ctx, outputIndex, "in_progress"),
 			})
 			// content_part.added
-			writeEvent(openAI2ContentPartAddedEvent(ctx, blockIdx))
+			writeEvent(openAI2ContentPartAddedEvent(ctx, outputIndex))
 		case "tool_use":
+			closeReasoning()
 			ctx.ToolBlockStarted = true
 			ctx.ToolIndex = blockIdx
 			ctx.CurrentToolID, _ = block["id"].(string)
@@ -395,6 +463,18 @@ func ClaudeStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 			return nil, nil
 		}
 		switch delta["type"] {
+		case "thinking_delta":
+			thinking, _ := delta["thinking"].(string)
+			if thinking != "" && ctx.ReasoningOutputStarted {
+				recordOpenAI2Reasoning(ctx, ctx.ReasoningOutputIndex, thinking)
+				writeEvent(map[string]interface{}{
+					"type":          "response.reasoning_text.delta",
+					"output_index":  ctx.ReasoningOutputIndex,
+					"content_index": 0,
+					"item_id":       openAI2OutputItemID(ctx, ctx.ReasoningOutputIndex),
+					"delta":         thinking,
+				})
+			}
 		case "text_delta":
 			text, _ := delta["text"].(string)
 			writeEvent(openAI2TextDeltaEvent(ctx, ctx.ContentIndex, text))
@@ -443,6 +523,8 @@ func ClaudeStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 				"item":         openAI2MessageItem(ctx, blockIdx, "completed"),
 			})
 			ctx.ContentBlockStarted = false
+		} else if ctx.ReasoningOutputStarted && !ctx.ReasoningOutputDone && blockIdx == ctx.ReasoningOutputIndex {
+			closeReasoning()
 		}
 
 	case "message_delta":
@@ -453,6 +535,7 @@ func ClaudeStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 		}
 
 	case "message_stop":
+		closeReasoning()
 		writeEvent(openAI2CompletedEvent(ctx, 0))
 		result.WriteString("data: [DONE]\n\n")
 	}
