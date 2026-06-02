@@ -6,7 +6,7 @@
 
 [![Build Status](https://github.com/jackychanisnotme/ccNexus/actions/workflows/build.yml/badge.svg)](https://github.com/jackychanisnotme/ccNexus/actions)
 [![Latest Release](https://img.shields.io/github/v/release/jackychanisnotme/ccNexus?label=release)](https://github.com/jackychanisnotme/ccNexus/releases/latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Non-Commercial Source Available](https://img.shields.io/badge/License-Non--Commercial%20Source%20Available-orange.svg)](../LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
 [![Wails](https://img.shields.io/badge/Wails-v2-blue)](https://wails.io/)
 
@@ -20,6 +20,8 @@ ccNexus is more than a smart endpoint rotation proxy for Claude Code, Codex CLI,
 > This fork maintains the Optimized line, with extra compatibility for Codex CLI, Claude Code, Hermes Agent, OpenClaw, OpenAI Responses API, DeepSeek, and Kimi/Moonshot.
 >
 > Latest release: [`ccNexus Optimized`](https://github.com/jackychanisnotme/ccNexus/releases/latest)
+>
+> Licensing: the original upstream code from `lich0821/ccNexus` remains under the MIT License. Additions and modifications made in this fork, including ccNexus Optimized source changes, builds, documentation, UI, and branding assets, are licensed under a non-commercial source-available license. Release binaries are free for personal, non-commercial use. Commercial use requires a separate written license.
 
 ## Features
 
@@ -148,6 +150,13 @@ Server mode supports `CCNEXUS_PORT`, `CCNEXUS_LOG_LEVEL`, `CCNEXUS_DB_PATH`, `CC
 - [Development Guide](development_en.md)
 - [FAQ](FAQ_en.md)
 
-## License
+## Licensing and Commercial Use
 
-[MIT](LICENSE)
+This repository uses mixed licensing:
+
+- Original upstream code from `lich0821/ccNexus`: remains under the MIT License. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+- Additions and modifications made in this fork: licensed under the [ccNexus Optimized Non-Commercial Source Available License](../LICENSE).
+- Release binaries: free for personal, non-commercial use.
+- Commercial use, internal business use, SaaS/hosted service use, resale, bundling, redistribution, or white-label use: requires a separate commercial license. See [COMMERCIAL_LICENSE.md](../COMMERCIAL_LICENSE.md).
+
+The `ccNexus` and `ccNexus Optimized` names, logos, icons, and related branding assets are reserved and may not be used for commercial promotion, confusing attribution, or implied endorsement without permission.
