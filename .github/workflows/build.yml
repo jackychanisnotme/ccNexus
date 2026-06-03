@@ -42,7 +42,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24.3'
           cache: true
 
       - name: Setup Node.js
@@ -61,7 +61,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/go/bin/wails
-          key: ${{ runner.os }}-wails-v2.10.2
+          key: ${{ runner.os }}-wails-v2.11.0
 
       - name: Get version
         id: get_version
@@ -88,7 +88,7 @@ jobs:
           # Verify the symlink was created
           pkg-config --exists webkit2gtk-4.0 && echo "✓ webkit2gtk-4.0 found" || echo "✗ webkit2gtk-4.0 NOT found"
           pkg-config --modversion webkit2gtk-4.0 || true
-          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
 
       - name: Install Linux dependencies (cached)
         if: matrix.platform == 'linux' && steps.cache-wails.outputs.cache-hit == 'true'
@@ -107,12 +107,12 @@ jobs:
       - name: Install Wails (macOS)
         if: matrix.platform == 'darwin' && steps.cache-wails.outputs.cache-hit != 'true'
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
 
       - name: Install Wails (Windows)
         if: matrix.platform == 'windows' && steps.cache-wails.outputs.cache-hit != 'true'
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
         shell: pwsh
 
       - name: Build application (Linux/macOS)
@@ -157,7 +157,8 @@ jobs:
         run: |
           cd cmd/desktop/build/bin
           if [ -d "ccNexus.app" ]; then
-            zip -r ccNexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip "ccNexus.app"
+            codesign --force --deep --sign - "ccNexus.app"
+            ditto -c -k --sequesterRsrc --keepParent "ccNexus.app" ccNexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
           else
             tar -czf ccNexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ccNexus
           fi
