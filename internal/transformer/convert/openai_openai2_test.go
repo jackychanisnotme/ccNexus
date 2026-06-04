@@ -171,6 +171,32 @@ func TestOpenAI2ReqToOpenAIPreservesReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestOpenAI2ReqToOpenAIMapsDeveloperRoleToSystem(t *testing.T) {
+	openai2Req := `{
+		"model":"gpt-5.5",
+		"stream":false,
+		"input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"follow policy"}]}]
+	}`
+
+	reqBytes, err := OpenAI2ReqToOpenAI([]byte(openai2Req), "gpt-5.5")
+	if err != nil {
+		t.Fatalf("OpenAI2ReqToOpenAI failed: %v", err)
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(reqBytes, &req); err != nil {
+		t.Fatalf("unmarshal transformed req failed: %v", err)
+	}
+	messages := req["messages"].([]interface{})
+	message := messages[0].(map[string]interface{})
+	if message["role"] != "system" {
+		t.Fatalf("expected developer role to map to system, got %#v", message["role"])
+	}
+	if message["content"] != "follow policy" {
+		t.Fatalf("expected content to be preserved, got %#v", message["content"])
+	}
+}
+
 func TestOpenAI2ReqToOpenAIPreservesReasoningInput(t *testing.T) {
 	openai2Req := `{
 		"model":"deepseek-v4-pro",

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"github.com/lich0821/ccNexus/internal/transformer"
+	"github.com/lich0821/ccNexus/internal/transformer/convert"
 )
 
 // OpenAITransformer is a passthrough transformer for Codex Chat → OpenAI Chat
@@ -19,7 +20,7 @@ func (t *OpenAITransformer) Name() string {
 }
 
 func (t *OpenAITransformer) TransformRequest(req []byte) ([]byte, error) {
-	return req, nil
+	return convert.NormalizeOpenAIChatRequestForUpstream(req)
 }
 
 func (t *OpenAITransformer) TransformResponse(resp []byte, isStreaming bool) ([]byte, error) {

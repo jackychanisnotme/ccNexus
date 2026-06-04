@@ -402,6 +402,9 @@ func OpenAI2ReqToOpenAI(openai2Req []byte, model string) ([]byte, error) {
 					pendingToolCalls = nil
 				}
 				role, _ := itemMap["role"].(string)
+				if role == "developer" {
+					role = "system"
+				}
 				text := extractOpenAI2Text(itemMap["content"])
 				msg := transformer.OpenAIMessage{Role: role, Content: text}
 				if role == "assistant" && pendingReasoningContent != "" {
