@@ -339,10 +339,37 @@ func applyDeepSeekThinking(body map[string]interface{}, endpointThinking, reques
 
 	effort = normalizeDeepSeekThinkingEffort(effort)
 	if effort != "" {
+		if deepSeekChatHistoryLacksReasoningContent(body) {
+			delete(body, "reasoning_effort")
+			body["thinking"] = map[string]interface{}{"type": "disabled"}
+			return
+		}
 		body["reasoning_effort"] = effort
 		body["thinking"] = map[string]interface{}{"type": "enabled"}
 		return
 	}
+}
+
+func deepSeekChatHistoryLacksReasoningContent(body map[string]interface{}) bool {
+	messages, ok := body["messages"].([]interface{})
+	if !ok {
+		return false
+	}
+
+	for _, rawMessage := range messages {
+		message, ok := rawMessage.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(stringFromMap(message, "role")))
+		if role != "assistant" {
+			continue
+		}
+		if strings.TrimSpace(stringFromMap(message, "reasoning_content")) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func cleanAPIPath(raw string) string {

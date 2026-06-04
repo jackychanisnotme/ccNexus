@@ -55,6 +55,30 @@ func TestEnsureCodexResponsesPayloadOverridesStoreAndStream(t *testing.T) {
 	}
 }
 
+func TestEnsureCodexResponsesPayloadConvertsFunctionCallArgumentsToObject(t *testing.T) {
+	raw := []byte(`{
+		"model":"gpt-5.5",
+		"input":[
+			{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"symbol\":\"002714\"}"}
+		]
+	}`)
+	out := ensureCodexResponsesPayload(raw)
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	input := payload["input"].([]interface{})
+	functionCall := input[0].(map[string]interface{})
+	args, ok := functionCall["arguments"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected function_call arguments object, got %#v", functionCall["arguments"])
+	}
+	if args["symbol"] != "002714" {
+		t.Fatalf("expected symbol argument to be preserved, got %#v", args["symbol"])
+	}
+}
+
 func TestNormalizeTargetPathForBaseURLOnCodexBackend(t *testing.T) {
 	got := normalizeTargetPathForBaseURL("https://chatgpt.com/backend-api/codex", "/v1/responses")
 	if got != "/responses" {

@@ -133,6 +133,56 @@ func TestAdaptOpenAIChatPayloadForDeepSeekThinkingOff(t *testing.T) {
 	}
 }
 
+func TestAdaptOpenAIChatPayloadForDeepSeekDisablesThinkingWhenHistoryLacksReasoningContent(t *testing.T) {
+	raw := []byte(`{
+		"model":"deepseek-chat",
+		"reasoning":{"effort":"medium"},
+		"messages":[
+			{"role":"user","content":"first"},
+			{"role":"assistant","content":"answer without reasoning"},
+			{"role":"user","content":"next"}
+		]
+	}`)
+	out := AdaptOpenAIChatPayload(raw, "deepseek", "https://api.deepseek.com", "")
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if _, ok := payload["reasoning_effort"]; ok {
+		t.Fatalf("did not expect reasoning_effort when assistant history lacks reasoning_content, got %#v", payload["reasoning_effort"])
+	}
+	thinking, ok := payload["thinking"].(map[string]interface{})
+	if !ok || thinking["type"] != "disabled" {
+		t.Fatalf("expected thinking.type=disabled, got %#v", payload["thinking"])
+	}
+}
+
+func TestAdaptOpenAIChatPayloadForDeepSeekKeepsThinkingWhenHistoryHasReasoningContent(t *testing.T) {
+	raw := []byte(`{
+		"model":"deepseek-chat",
+		"reasoning":{"effort":"medium"},
+		"messages":[
+			{"role":"user","content":"first"},
+			{"role":"assistant","content":"answer","reasoning_content":"thoughts"},
+			{"role":"user","content":"next"}
+		]
+	}`)
+	out := AdaptOpenAIChatPayload(raw, "deepseek", "https://api.deepseek.com", "")
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if payload["reasoning_effort"] != "high" {
+		t.Fatalf("expected reasoning_effort=high, got %#v", payload["reasoning_effort"])
+	}
+	thinking, ok := payload["thinking"].(map[string]interface{})
+	if !ok || thinking["type"] != "enabled" {
+		t.Fatalf("expected thinking.type=enabled, got %#v", payload["thinking"])
+	}
+}
+
 func TestAdaptOpenAIChatPayloadForDeepSeekXHighMapsToMax(t *testing.T) {
 	raw := []byte(`{"model":"deepseek-chat","messages":[]}`)
 	out := AdaptOpenAIChatPayload(raw, "deepseek", "https://api.deepseek.com", "xhigh")

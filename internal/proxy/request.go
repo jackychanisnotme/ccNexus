@@ -355,11 +355,39 @@ func ensureCodexResponsesPayload(payload []byte) []byte {
 	if _, ok := body["instructions"]; !ok {
 		body["instructions"] = ""
 	}
+	normalizeCodexResponsesFunctionCallArguments(body)
 	updated, err := json.Marshal(body)
 	if err != nil {
 		return payload
 	}
 	return updated
+}
+
+func normalizeCodexResponsesFunctionCallArguments(body map[string]interface{}) {
+	input, ok := body["input"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		itemType, _ := item["type"].(string)
+		if itemType != "function_call" {
+			continue
+		}
+		argsText, ok := item["arguments"].(string)
+		if !ok || strings.TrimSpace(argsText) == "" {
+			continue
+		}
+		var args map[string]interface{}
+		if err := json.Unmarshal([]byte(argsText), &args); err != nil || args == nil {
+			continue
+		}
+		item["arguments"] = args
+	}
 }
 
 func validateClientJSONRequestBody(payload []byte) error {
