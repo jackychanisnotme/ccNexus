@@ -6,7 +6,7 @@
 
 [![Build Status](https://github.com/jackychanisnotme/ccNexus/actions/workflows/build.yml/badge.svg)](https://github.com/jackychanisnotme/ccNexus/actions)
 [![Latest Release](https://img.shields.io/github/v/release/jackychanisnotme/ccNexus?label=release)](https://github.com/jackychanisnotme/ccNexus/releases/latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Commercial use requires authorization](https://img.shields.io/badge/License-Commercial%20use%20requires%20authorization-red.svg)](../LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
 [![Wails](https://img.shields.io/badge/Wails-v2-blue)](https://wails.io/)
 
@@ -150,4 +150,4 @@ Server mode supports `CCNEXUS_PORT`, `CCNEXUS_LOG_LEVEL`, `CCNEXUS_DB_PATH`, `CC
 
 ## License
 
-[MIT](LICENSE)
+This project is no longer licensed under the MIT License. The source code may be used for non-commercial personal, educational, research, and evaluation purposes; any commercial use requires prior written authorization from the copyright holder. See [LICENSE](../LICENSE).

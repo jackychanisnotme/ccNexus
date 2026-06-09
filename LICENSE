@@ -1,21 +1,37 @@
-MIT License
+ccNexus Source-Available License
 
 Copyright (c) 2024 lich0821
+Copyright (c) 2026 jackychanisnotme and contributors
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This project is no longer licensed under the MIT License.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Permission is granted to view, download, copy, run, and modify the source code
+and compiled binaries for non-commercial personal, educational, research, and
+evaluation purposes only, subject to the terms below.
+
+Commercial use requires prior written authorization from the copyright holder.
+Commercial use includes, but is not limited to:
+
+- using the software in a company, organization, or revenue-generating workflow;
+- offering the software or a modified version as a paid product, hosted service,
+  consulting deliverable, or managed service;
+- integrating the software into a commercial product or internal business
+  system;
+- redistributing, sublicensing, selling, leasing, or otherwise making the
+  software available for commercial advantage.
+
+You may not remove or alter copyright, attribution, or license notices.
+
+Third-party dependencies, generated runtime files, and bundled components remain
+subject to their own licenses. Nothing in this license changes the rights or
+obligations granted by those third-party licenses.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For commercial authorization, please contact the repository owner:
+https://github.com/jackychanisnotme/ccNexus
