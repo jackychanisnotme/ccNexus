@@ -102,6 +102,8 @@ func endpointTransformerDisplayName(transformer string) string {
 		return "DeepSeek"
 	case providercompat.TransformerKimi:
 		return "Kimi"
+	case providercompat.TransformerPoe:
+		return "Poe"
 	case providercompat.TransformerGemini:
 		return "Gemini"
 	default:

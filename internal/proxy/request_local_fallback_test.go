@@ -984,6 +984,7 @@ func TestStreamingUpstreamErrorAfterSemanticDataWritesErrorAndSwitches(t *testin
 
 	streamReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
 	streamReq.Header.Set("Content-Type", "application/json")
+	streamReq.Header.Set("User-Agent", "OpenAI/Python_2.31.0")
 	streamReq.Header.Set(headerCCNexusRequestID, "req-stream-error-after-data")
 	streamRec := httptest.NewRecorder()
 	p.handleProxy(streamRec, streamReq)
@@ -1030,6 +1031,174 @@ func TestStreamingUpstreamErrorAfterSemanticDataWritesErrorAndSwitches(t *testin
 	}
 	if strings.Contains(logs, "[AUTO SWITCH]") {
 		t.Fatalf("expected no auto switch log after post-output stream interruption, got logs:\n%s", logs)
+	}
+}
+
+func TestStreamingUpstreamErrorAfterSemanticDataCompletesOpenAIJSResponsesStream(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	var fallbackHits int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "primary.example":
+			primaryHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body: partialFailingReadCloser{
+					reader: strings.NewReader(
+						`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-primary","object":"response","status":"in_progress","created_at":0,"model":"gpt-5.5","output":[]}}` + "\n\n" +
+							`data: {"type":"response.output_text.delta","sequence_number":2,"output_index":0,"content_index":0,"item_id":"msg-primary","delta":"hello"}` + "\n\n",
+					),
+					err: io.ErrUnexpectedEOF,
+				},
+				Request: req,
+			}, nil
+		case "fallback.example":
+			fallbackHits++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+					`data: {"type":"response.output_text.delta","delta":"fallback"}`,
+					"",
+					`data: {"type":"response.completed","response":{"id":"resp-fallback","object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fallback"}]}]}}`,
+					"",
+				}, "\n"))),
+				Request: req,
+			}, nil
+		default:
+			t.Fatalf("unexpected upstream host %q", req.URL.Host)
+			return nil, nil
+		}
+	})}
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", "https://primary.example"),
+		failoverPolicyTestEndpoint("Fallback", "https://fallback.example"),
+	}, client)
+	var currentEvents []EndpointCurrentEvent
+	p.SetOnCurrentEndpointChanged(func(event EndpointCurrentEvent) {
+		currentEvents = append(currentEvents, event)
+	})
+
+	streamReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	streamReq.Header.Set("Content-Type", "application/json")
+	streamReq.Header.Set("User-Agent", "OpenAI/JS_6.26.0")
+	streamReq.Header.Set(headerCCNexusRequestID, "req-stream-error-after-data-js")
+	streamRec := httptest.NewRecorder()
+	p.handleProxy(streamRec, streamReq)
+
+	if primaryHits != 1 {
+		t.Fatalf("expected in-flight streaming request to hit Primary once, got %d", primaryHits)
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("expected post-output stream interruption not to replay on fallback, got fallback hits=%d", fallbackHits)
+	}
+	body := streamRec.Body.String()
+	for _, want := range []string{
+		"response.output_text.delta",
+		"hello",
+		"response.completed",
+		`"id":"resp-primary"`,
+		`"text":"hello"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected downstream body to contain %q, got %q", want, body)
+		}
+	}
+	for _, notWant := range []string{
+		"event: error",
+		"Upstream stream interrupted",
+		"fallback",
+	} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("did not expect downstream body to contain %q, got %q", notWant, body)
+		}
+	}
+	if got := p.GetCurrentEndpointName(); got != "Primary" {
+		t.Fatalf("expected global current endpoint to remain Primary, got %q", got)
+	}
+	if len(currentEvents) != 0 {
+		t.Fatalf("expected no current endpoint events, got %#v", currentEvents)
+	}
+	p.cooldownMu.RLock()
+	cooldown, cooled := p.endpointCooldowns["Primary"]
+	p.cooldownMu.RUnlock()
+	if !cooled || cooldown.Reason != "upstream_stream_error" {
+		t.Fatalf("expected Primary cooldown for post-output upstream_stream_error, got cooled=%v cooldown=%#v", cooled, cooldown)
+	}
+
+	logs := joinedProxyLogs()
+	for _, want := range []string{
+		"Completing interrupted OpenAI Responses stream for JS/Codex client",
+		"retry_reason=upstream_stream_error",
+		"cooldown_reason=upstream_stream_error",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected logs to contain %q, got logs:\n%s", want, logs)
+		}
+	}
+	if strings.Contains(logs, "[AUTO SWITCH]") {
+		t.Fatalf("expected no auto switch log after post-output stream interruption, got logs:\n%s", logs)
+	}
+}
+
+func TestStreamingUpstreamErrorAfterToolDataDoesNotSynthesizeOpenAIJSCompletion(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host != "primary.example" {
+			t.Fatalf("unexpected upstream host %q", req.URL.Host)
+			return nil, nil
+		}
+		primaryHits++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: partialFailingReadCloser{
+				reader: strings.NewReader(
+					`data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"call-primary","type":"function_call","name":"edit_file","arguments":"{\"path\":\"a.go\""}}` + "\n\n",
+				),
+				err: io.ErrUnexpectedEOF,
+			},
+			Request: req,
+		}, nil
+	})}
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", "https://primary.example"),
+	}, client)
+
+	streamReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	streamReq.Header.Set("Content-Type", "application/json")
+	streamReq.Header.Set("User-Agent", "OpenAI/JS_6.26.0")
+	streamReq.Header.Set(headerCCNexusRequestID, "req-stream-tool-error-after-data-js")
+	streamRec := httptest.NewRecorder()
+	p.handleProxy(streamRec, streamReq)
+
+	if primaryHits != 1 {
+		t.Fatalf("expected in-flight streaming request to hit Primary once, got %d", primaryHits)
+	}
+	body := streamRec.Body.String()
+	if strings.Contains(body, "response.completed") {
+		t.Fatalf("did not expect synthetic response.completed for interrupted tool stream, got %q", body)
+	}
+	for _, want := range []string{
+		"response.output_item.added",
+		"event: error",
+		"Upstream stream interrupted",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected downstream body to contain %q, got %q", want, body)
+		}
 	}
 }
 

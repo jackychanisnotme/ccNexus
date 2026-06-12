@@ -3,7 +3,7 @@
 
 export function ActivateEndpointCredential(arg1:number,arg2:number):Promise<void>;
 
-export function AddEndpoint(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:boolean,arg9:string):Promise<void>;
+export function AddEndpoint(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:boolean,arg10:string):Promise<void>;
 
 export function AddProjectDir(arg1:string):Promise<void>;
 
@@ -14,6 +14,8 @@ export function BackupToProvider(arg1:string,arg2:string):Promise<void>;
 export function BackupToWebDAV(arg1:string):Promise<void>;
 
 export function CancelDownload():Promise<void>;
+
+export function CancelCodexCredentialAuth(arg1:string):Promise<string>;
 
 export function CheckForUpdates():Promise<string>;
 
@@ -47,7 +49,7 @@ export function FetchCodexRateLimitsForCredential(arg1:number,arg2:number):Promi
 
 export function FetchImageAsBase64(arg1:string):Promise<string>;
 
-export function FetchModels(arg1:string,arg2:string,arg3:string):Promise<string>;
+export function FetchModels(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function GenerateMockArchives(arg1:number):Promise<string>;
 
@@ -63,6 +65,8 @@ export function GetChangelog(arg1:string):Promise<string>;
 
 export function GetCodexProxyURL():Promise<string>;
 
+export function GetCodexCredentialAuthStatus(arg1:string):Promise<string>;
+
 export function GetCodexSessionData(arg1:string):Promise<string>;
 
 export function GetCodexSessions(arg1:string):Promise<string>;
@@ -70,6 +74,8 @@ export function GetCodexSessions(arg1:string):Promise<string>;
 export function GetConfig():Promise<string>;
 
 export function GetCurrentEndpoint():Promise<string>;
+
+export function GetEndpointProxyURL(arg1:number):Promise<string>;
 
 export function GetEndpointRuntimeStatuses():Promise<string>;
 
@@ -175,6 +181,8 @@ export function SetCloseWindowBehavior(arg1:string):Promise<void>;
 
 export function SetCodexProxyURL(arg1:string):Promise<void>;
 
+export function StartCodexCredentialAuth(arg1:number):Promise<string>;
+
 export function SetEndpointCredentialEnabled(arg1:number,arg2:number,arg3:boolean):Promise<void>;
 
 export function SetLanguage(arg1:string):Promise<void>;
@@ -211,9 +219,11 @@ export function UpdateBackupProvider(arg1:string):Promise<void>;
 
 export function UpdateConfig(arg1:string):Promise<void>;
 
-export function UpdateEndpoint(arg1:number,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:boolean,arg10:string):Promise<void>;
+export function UpdateEndpoint(arg1:number,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:string,arg10:boolean,arg11:string):Promise<void>;
 
 export function UpdateEndpointCredentialToken(arg1:number,arg2:number,arg3:string,arg4:string):Promise<void>;
+
+export function SetEndpointProxyURL(arg1:number,arg2:string):Promise<void>;
 
 export function UpdateLocalBackupDir(arg1:string):Promise<void>;
 

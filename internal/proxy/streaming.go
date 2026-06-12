@@ -28,17 +28,28 @@ const (
 	streamFinishTransformFailed       = "transform_failed"
 )
 
+const openAIResponsesWaitingID = "resp_ccnexus_waiting"
+
+func openAIResponsesWaitingCreatedEvent() []byte {
+	return []byte(fmt.Sprintf(
+		"data: {\"type\":\"response.created\",\"sequence_number\":1,\"response\":{\"id\":\"%s\",\"object\":\"response\",\"status\":\"in_progress\",\"created_at\":0,\"model\":\"\",\"output\":[],\"parallel_tool_calls\":false}}\n\n",
+		openAIResponsesWaitingID,
+	))
+}
+
 type downstreamStreamSession struct {
-	w                 http.ResponseWriter
-	flusher           http.Flusher
-	heartbeatInterval time.Duration
-	clientFormat      ClientFormat
-	done              chan struct{}
-	mu                sync.Mutex
-	closeOnce         sync.Once
-	heartbeatOnce     sync.Once
-	started           bool
-	closed            bool
+	w                       http.ResponseWriter
+	flusher                 http.Flusher
+	heartbeatInterval       time.Duration
+	clientFormat            ClientFormat
+	done                    chan struct{}
+	mu                      sync.Mutex
+	closeOnce               sync.Once
+	heartbeatOnce           sync.Once
+	started                 bool
+	closed                  bool
+	responsesCreatedWritten bool
+	responsesWaitingCreated bool
 }
 
 func newDownstreamStreamSession(w http.ResponseWriter, heartbeatInterval time.Duration, clientFormat ClientFormat) *downstreamStreamSession {
@@ -112,6 +123,12 @@ func (s *downstreamStreamSession) Write(data []byte) error {
 	if s.closed {
 		return fmt.Errorf("downstream stream is closed")
 	}
+	if s.clientFormat == ClientFormatOpenAIResponses {
+		data = s.filterDuplicateOpenAIResponsesCreatedLocked(data)
+		if len(data) == 0 {
+			return nil
+		}
+	}
 	if _, err := s.w.Write(data); err != nil {
 		return err
 	}
@@ -178,12 +195,90 @@ func (s *downstreamStreamSession) writeHeartbeat() error {
 		return s.Write([]byte("event: ping\ndata: {\"type\": \"ping\"}\n\n"))
 	}
 	if s != nil && s.clientFormat == ClientFormatOpenAIResponses {
-		// Python SDK openai>=1.0 ResponseStreamState._create_initial_response() raises
-		// RuntimeError unless the very first parsed event has type=="response.created".
-		// A minimal but schema-valid response object is enough to satisfy the parser.
-		return s.Write([]byte("data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_ccnexus_waiting\",\"object\":\"response\",\"status\":\"in_progress\",\"created_at\":0,\"model\":\"\",\"output\":[],\"parallel_tool_calls\":false}}\n\n"))
+		wroteCreated, err := s.writeOpenAIResponsesWaitingCreatedIfNeeded()
+		if err != nil || wroteCreated {
+			return err
+		}
 	}
 	return s.writeComment("ccnexus waiting for upstream")
+}
+
+func (s *downstreamStreamSession) writeOpenAIResponsesWaitingCreatedIfNeeded() (bool, error) {
+	if err := s.Start(); err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false, fmt.Errorf("downstream stream is closed")
+	}
+	if s.responsesCreatedWritten {
+		return false, nil
+	}
+	if _, err := s.w.Write(openAIResponsesWaitingCreatedEvent()); err != nil {
+		return false, err
+	}
+	s.responsesCreatedWritten = true
+	s.responsesWaitingCreated = true
+	s.flusher.Flush()
+	return true, nil
+}
+
+func (s *downstreamStreamSession) primeStreamContext(ctx *transformer.StreamContext) {
+	if s == nil || ctx == nil || s.clientFormat != ClientFormatOpenAIResponses {
+		return
+	}
+	s.mu.Lock()
+	waitingCreated := s.responsesWaitingCreated
+	s.mu.Unlock()
+	if !waitingCreated {
+		return
+	}
+	ctx.MessageStartSent = true
+	ctx.MessageID = openAIResponsesWaitingID
+	ctx.ResponseSequenceNumber = 1
+}
+
+func (s *downstreamStreamSession) filterDuplicateOpenAIResponsesCreatedLocked(data []byte) []byte {
+	if len(data) == 0 {
+		return data
+	}
+	parts := strings.SplitAfter(string(data), "\n\n")
+	var filtered strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if sseBlockEventType(part) == "response.created" {
+			if s.responsesCreatedWritten {
+				continue
+			}
+			s.responsesCreatedWritten = true
+		}
+		filtered.WriteString(part)
+	}
+	return []byte(filtered.String())
+}
+
+func sseBlockEventType(block string) string {
+	scanner := bufio.NewScanner(strings.NewReader(block))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		jsonData := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if jsonData == "" || jsonData == "[DONE]" {
+			continue
+		}
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonData), &payload); err != nil {
+			continue
+		}
+		eventType, _ := payload["type"].(string)
+		return eventType
+	}
+	return ""
 }
 
 func (s *downstreamStreamSession) writeComment(message string) error {
@@ -203,14 +298,169 @@ func (s *downstreamStreamSession) writeComment(message string) error {
 }
 
 type streamResponseResult struct {
-	InputTokens       int
-	OutputTokens      int
-	OutputText        string
-	Completed         bool
-	WroteData         bool
-	WroteSemanticData bool
-	Reason            string
-	Err               error
+	InputTokens             int
+	OutputTokens            int
+	OutputText              string
+	Completed               bool
+	WroteData               bool
+	WroteSemanticData       bool
+	ResponsesCompletionSafe openAIResponsesCompletionState
+	Reason                  string
+	Err                     error
+}
+
+type openAIResponsesCompletionState struct {
+	ResponseID     string
+	Model          string
+	ItemID         string
+	Text           string
+	SequenceNumber int
+	Completed      bool
+	Unsafe         bool
+}
+
+func (s openAIResponsesCompletionState) canSynthesizeCompleted() bool {
+	return !s.Completed && !s.Unsafe && strings.TrimSpace(s.Text) != ""
+}
+
+func (s openAIResponsesCompletionState) completedEvent(inputTokens, outputTokens int) []byte {
+	responseID := strings.TrimSpace(s.ResponseID)
+	if responseID == "" {
+		responseID = "resp_ccnexus_recovered"
+	}
+	itemID := strings.TrimSpace(s.ItemID)
+	if itemID == "" {
+		itemID = "msg_ccnexus_recovered_0"
+	}
+	if outputTokens <= 0 {
+		outputTokens = tokencount.EstimateOutputTokens(s.Text)
+	}
+	totalTokens := inputTokens + outputTokens
+	payload := map[string]interface{}{
+		"type":            "response.completed",
+		"sequence_number": s.SequenceNumber + 1,
+		"response": map[string]interface{}{
+			"id":                  responseID,
+			"object":              "response",
+			"created_at":          0,
+			"model":               strings.TrimSpace(s.Model),
+			"status":              "completed",
+			"parallel_tool_calls": false,
+			"output": []interface{}{
+				map[string]interface{}{
+					"type":   "message",
+					"id":     itemID,
+					"status": "completed",
+					"role":   "assistant",
+					"content": []interface{}{
+						map[string]interface{}{
+							"type": "output_text",
+							"text": s.Text,
+						},
+					},
+				},
+			},
+			"usage": map[string]interface{}{
+				"input_tokens":  inputTokens,
+				"output_tokens": outputTokens,
+				"total_tokens":  totalTokens,
+			},
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	return []byte("data: " + string(data) + "\n\n")
+}
+
+func (s *openAIResponsesCompletionState) observe(eventData []byte) {
+	if s == nil {
+		return
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(eventData))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		jsonData := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if jsonData == "" || jsonData == "[DONE]" {
+			continue
+		}
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonData), &event); err != nil {
+			continue
+		}
+		s.observeJSON(event)
+	}
+}
+
+func (s *openAIResponsesCompletionState) observeJSON(event map[string]interface{}) {
+	if s == nil || event == nil {
+		return
+	}
+	if seq := parseTokenNumber(event["sequence_number"]); seq > s.SequenceNumber {
+		s.SequenceNumber = seq
+	}
+	eventType, _ := event["type"].(string)
+	if strings.Contains(eventType, "tool_call") || strings.Contains(eventType, "function_call") || strings.Contains(eventType, "custom_tool") {
+		s.Unsafe = true
+	}
+
+	switch eventType {
+	case "response.created":
+		if response, ok := event["response"].(map[string]interface{}); ok {
+			if id, ok := response["id"].(string); ok && strings.TrimSpace(id) != "" {
+				s.ResponseID = id
+			}
+			if model, ok := response["model"].(string); ok && strings.TrimSpace(model) != "" {
+				s.Model = model
+			}
+		}
+	case "response.completed":
+		s.Completed = true
+	case "response.output_text.delta":
+		if delta, ok := event["delta"].(string); ok {
+			s.Text += delta
+		}
+		s.captureItemID(event)
+	case "response.output_text.done":
+		if text, ok := event["text"].(string); ok && s.Text == "" {
+			s.Text = text
+		}
+		s.captureItemID(event)
+	case "response.content_part.added", "response.content_part.done":
+		s.captureItemID(event)
+		if part, ok := event["part"].(map[string]interface{}); ok {
+			partType, _ := part["type"].(string)
+			if partType != "" && partType != "output_text" {
+				s.Unsafe = true
+			}
+			if text, ok := part["text"].(string); ok && eventType == "response.content_part.done" && s.Text == "" {
+				s.Text = text
+			}
+		}
+	case "response.output_item.added", "response.output_item.done":
+		if item, ok := event["item"].(map[string]interface{}); ok {
+			itemType, _ := item["type"].(string)
+			if itemType != "" && itemType != "message" && itemType != "reasoning" {
+				s.Unsafe = true
+			}
+			if id, ok := item["id"].(string); ok && strings.TrimSpace(id) != "" && s.ItemID == "" {
+				s.ItemID = id
+			}
+		}
+	}
+}
+
+func (s *openAIResponsesCompletionState) captureItemID(event map[string]interface{}) {
+	if s == nil || s.ItemID != "" || event == nil {
+		return
+	}
+	if itemID, ok := event["item_id"].(string); ok && strings.TrimSpace(itemID) != "" {
+		s.ItemID = itemID
+	}
 }
 
 // handleStreamingResponse processes streaming SSE responses
@@ -285,6 +535,9 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 		// cc_claude needs context for input_tokens fallback
 		streamCtx = transformer.NewStreamContext()
 		streamCtx.ModelName = modelName
+		if streamSession != nil {
+			streamSession.primeStreamContext(streamCtx)
+		}
 		// Pre-estimate input tokens for fallback
 		if bodyBytes != nil {
 			streamCtx.InputTokens = p.estimateInputTokens(bodyBytes)
@@ -300,6 +553,7 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 	var buffer bytes.Buffer
 	var pendingWrites bytes.Buffer
 	var outputText strings.Builder
+	var responsesCompletion openAIResponsesCompletionState
 	eventCount := 0
 	streamDone := false
 	semanticDataSeen := false
@@ -378,9 +632,15 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 			eventData := buffer.Bytes()
 			logger.DebugLog("[%s] SSE Event #%d (Original): %s", endpoint.Name, eventCount+1, string(eventData))
 
+			if streamSession != nil {
+				streamSession.primeStreamContext(streamCtx)
+			}
 			transformedEvent, err := p.transformStreamEvent(eventData, trans, transformerName, streamCtx)
 			if err == nil && len(transformedEvent) > 0 {
 				logger.DebugLog("[%s] SSE Event #%d (Transformed): %s", endpoint.Name, eventCount+1, string(transformedEvent))
+				if streamSession != nil && streamSession.clientFormat == ClientFormatOpenAIResponses {
+					responsesCompletion.observe(transformedEvent)
+				}
 				streamInspection := inspectSemanticStreamEvent(transformedEvent)
 				if streamInspection.EmptyKind != "" {
 					emptyKind = streamInspection.EmptyKind
@@ -433,6 +693,9 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 				}
 			}
 
+			if streamSession != nil {
+				streamSession.primeStreamContext(streamCtx)
+			}
 			transformedEvent, err := p.transformStreamEvent(eventData, trans, transformerName, streamCtx)
 			if err != nil {
 				logger.Error("[%s] Failed to transform SSE event: %v", endpoint.Name, err)
@@ -444,6 +707,9 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 				p.extractTokensFromEvent(transformedEvent, &inputTokens, &outputTokens)
 				p.extractTextFromEvent(transformedEvent, &outputText)
+				if streamSession != nil && streamSession.clientFormat == ClientFormatOpenAIResponses {
+					responsesCompletion.observe(transformedEvent)
+				}
 				streamInspection := inspectSemanticStreamEvent(transformedEvent)
 				semanticEvent := streamInspection.HasOutput
 				progressEvent := streamInspection.HasProgress
@@ -503,6 +769,7 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 	result.InputTokens = inputTokens
 	result.OutputTokens = outputTokens
 	result.OutputText = outputText.String()
+	result.ResponsesCompletionSafe = responsesCompletion
 	if result.Err == nil && result.Completed && !result.WroteSemanticData {
 		if hasSuccessfulOutputTokens(outputTokens) {
 			if pendingWrites.Len() > 0 {

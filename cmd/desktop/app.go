@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lich0821/ccNexus/internal/codexauth"
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/proxy"
@@ -67,14 +68,15 @@ type App struct {
 	trayIcon []byte
 
 	// Services
-	stats    *service.StatsService
-	endpoint *service.EndpointService
-	settings *service.SettingsService
-	webdav   *service.WebDAVService
-	backup   *service.BackupService
-	archive  *service.ArchiveService
-	update   *service.UpdateService
-	terminal *service.TerminalService
+	stats     *service.StatsService
+	endpoint  *service.EndpointService
+	settings  *service.SettingsService
+	webdav    *service.WebDAVService
+	backup    *service.BackupService
+	archive   *service.ArchiveService
+	update    *service.UpdateService
+	terminal  *service.TerminalService
+	codexAuth *codexauth.Manager
 }
 
 // NewApp creates a new App application struct
@@ -172,6 +174,13 @@ func (a *App) startup(ctx context.Context) {
 	a.archive = service.NewArchiveService(a.storage)
 	a.update = service.NewUpdateService(a.config, a.storage, version)
 	a.terminal = service.NewTerminalService(a.config, a.storage)
+	a.codexAuth = codexauth.NewManager(codexauth.Options{
+		Storage:    a.storage,
+		HTTPClient: codexauth.HTTPClientForConfig(a.config),
+		HTTPClientForEndpoint: func(endpoint config.Endpoint) *http.Client {
+			return codexauth.HTTPClientForEndpoint(a.config, endpoint)
+		},
+	})
 
 	a.initTray()
 
@@ -403,12 +412,12 @@ func (a *App) GetStatsTrendByPeriod(period string) string {
 
 // ========== Endpoint Bindings ==========
 
-func (a *App) AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking string, forceStream bool, remark string) error {
-	return a.endpoint.AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, forceStream, remark)
+func (a *App) AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, remark string) error {
+	return a.endpoint.AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, remark)
 }
 func (a *App) RemoveEndpoint(index int) error { return a.endpoint.RemoveEndpoint(index) }
-func (a *App) UpdateEndpoint(index int, name, apiUrl, apiKey, authMode, transformer, model, thinking string, forceStream bool, remark string) error {
-	return a.endpoint.UpdateEndpoint(index, name, apiUrl, apiKey, authMode, transformer, model, thinking, forceStream, remark)
+func (a *App) UpdateEndpoint(index int, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, remark string) error {
+	return a.endpoint.UpdateEndpoint(index, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, remark)
 }
 func (a *App) ToggleEndpoint(index int, enabled bool) error {
 	return a.endpoint.ToggleEndpoint(index, enabled)
@@ -417,6 +426,10 @@ func (a *App) ReorderEndpoints(names []string) error { return a.endpoint.Reorder
 func (a *App) GetCurrentEndpoint() string            { return a.endpoint.GetCurrentEndpoint() }
 func (a *App) SwitchToEndpoint(endpointName string) error {
 	return a.endpoint.SwitchToEndpoint(endpointName)
+}
+func (a *App) GetEndpointProxyURL(index int) string { return a.endpoint.GetEndpointProxyURL(index) }
+func (a *App) SetEndpointProxyURL(index int, proxyURL string) error {
+	return a.endpoint.SetEndpointProxyURL(index, proxyURL)
 }
 func (a *App) GetEndpointRuntimeStatuses() string {
 	if a.storage == nil {
@@ -437,8 +450,8 @@ func (a *App) GetEndpointRuntimeStatuses() string {
 func (a *App) TestEndpoint(index int) string      { return a.endpoint.TestEndpoint(index) }
 func (a *App) TestEndpointLight(index int) string { return a.endpoint.TestEndpointLight(index) }
 func (a *App) TestAllEndpointsZeroCost() string   { return a.endpoint.TestAllEndpointsZeroCost() }
-func (a *App) FetchModels(apiUrl, apiKey, transformer string) string {
-	return a.endpoint.FetchModels(apiUrl, apiKey, transformer)
+func (a *App) FetchModels(apiUrl, apiKey, transformer, proxyURL string) string {
+	return a.endpoint.FetchModels(apiUrl, apiKey, transformer, proxyURL)
 }
 
 func (a *App) FetchCodexRateLimits(index int) string {
@@ -497,6 +510,42 @@ func (a *App) RefreshEndpointCredential(index int, credentialID int64) string {
 		"accountId": refreshed.AccountID,
 		"expiresAt": refreshed.ExpiresAt,
 	})
+}
+
+func (a *App) StartCodexCredentialAuth(index int) string {
+	endpoint, err := a.getEndpointByIndex(index)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	if a.codexAuth == nil {
+		return desktopErrorJSON(fmt.Errorf("Codex auth unavailable"))
+	}
+	result, err := a.codexAuth.Start(context.Background(), *endpoint)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	return desktopSuccessJSON(result)
+}
+
+func (a *App) GetCodexCredentialAuthStatus(loginID string) string {
+	if a.codexAuth == nil {
+		return desktopErrorJSON(fmt.Errorf("Codex auth unavailable"))
+	}
+	result, err := a.codexAuth.Status(loginID)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	return desktopSuccessJSON(result)
+}
+
+func (a *App) CancelCodexCredentialAuth(loginID string) string {
+	if a.codexAuth == nil {
+		return desktopErrorJSON(fmt.Errorf("Codex auth unavailable"))
+	}
+	if err := a.codexAuth.Cancel(loginID); err != nil {
+		return desktopErrorJSON(err)
+	}
+	return desktopSuccessJSON(map[string]interface{}{"message": "Auth canceled"})
 }
 
 func (a *App) GetEndpointCredentials(index int) string {
@@ -868,14 +917,41 @@ func (a *App) GetLogLevel() int                     { return a.settings.GetLogLe
 func (a *App) SetCloseWindowBehavior(behavior string) error {
 	return a.settings.SetCloseWindowBehavior(behavior)
 }
-func (a *App) GetProxyURL() string               { return a.settings.GetProxyURL() }
-func (a *App) SetProxyURL(proxyURL string) error { return a.settings.SetProxyURL(proxyURL) }
-func (a *App) GetCodexProxyURL() string          { return a.settings.GetCodexProxyURL() }
+func (a *App) GetProxyURL() string { return a.settings.GetProxyURL() }
+func (a *App) SetProxyURL(proxyURL string) error {
+	if err := a.settings.SetProxyURL(proxyURL); err != nil {
+		return err
+	}
+	a.resetCodexAuthManager()
+	return nil
+}
+func (a *App) GetCodexProxyURL() string { return a.settings.GetCodexProxyURL() }
 func (a *App) SetCodexProxyURL(proxyURL string) error {
-	return a.settings.SetCodexProxyURL(proxyURL)
+	if err := a.settings.SetCodexProxyURL(proxyURL); err != nil {
+		return err
+	}
+	a.resetCodexAuthManager()
+	return nil
+}
+
+func (a *App) resetCodexAuthManager() {
+	if a.storage == nil || a.config == nil {
+		return
+	}
+	a.codexAuth = codexauth.NewManager(codexauth.Options{
+		Storage:    a.storage,
+		HTTPClient: codexauth.HTTPClientForConfig(a.config),
+		HTTPClientForEndpoint: func(endpoint config.Endpoint) *http.Client {
+			return codexauth.HTTPClientForEndpoint(a.config, endpoint)
+		},
+	})
 }
 func (a *App) SaveSettings(settingsJSON string) error {
-	return a.settings.SaveSettings(settingsJSON)
+	if err := a.settings.SaveSettings(settingsJSON); err != nil {
+		return err
+	}
+	a.resetCodexAuthManager()
+	return nil
 }
 
 // ========== WebDAV Bindings ==========

@@ -12,6 +12,10 @@ class Endpoints {
         this.currentEndpoint = null;
         this.draggedIndex = null;
         this.currentTokenPoolEndpoint = null;
+        this.codexAuthLoginId = '';
+        this.codexAuthPollTimer = null;
+        this.codexAuthCountdownTimer = null;
+        this.codexAuthPending = false;
         // 监听语言切换
         window.addEventListener('languageChanged', () => {
             if (state.get('currentView') === 'endpoints') {
@@ -362,6 +366,10 @@ class Endpoints {
                                 <input type="text" class="form-input" name="apiUrl" value="${endpoint ? this.escapeHtml(endpoint.apiUrl) : ''}" placeholder="${t('endpoints.apiUrlPlaceholder')}" required>
                             </div>
                             <div class="form-group">
+                                <label class="form-label">${t('endpoints.proxyUrl')}</label>
+                                <input type="text" class="form-input" name="proxyUrl" value="${endpoint ? this.escapeHtml(endpoint.proxyUrl || '') : ''}" placeholder="${t('endpoints.proxyUrlPlaceholder')}">
+                            </div>
+                            <div class="form-group">
                                 <label class="form-label">${t('endpoints.apiKey')} *</label>
                                 <input type="password" class="form-input" name="apiKey" value="${apiKeyValue}" placeholder="${apiKeyPlaceholder}" required>
                                 ${apiKeyHint}
@@ -375,6 +383,7 @@ class Endpoints {
                                     <option value="gemini" ${endpoint?.transformer === 'gemini' ? 'selected' : ''}>${t('transformers.gemini')}</option>
                                     <option value="deepseek" ${endpoint?.transformer === 'deepseek' ? 'selected' : ''}>${t('transformers.deepseek')}</option>
                                     <option value="kimi" ${endpoint?.transformer === 'kimi' ? 'selected' : ''}>${t('transformers.kimi')}</option>
+                                    <option value="poe" ${endpoint?.transformer === 'poe' ? 'selected' : ''}>${t('transformers.poe')}</option>
                                 </select>
                             </div>
                             <div class="form-group">
@@ -425,12 +434,14 @@ class Endpoints {
 
     async fetchModels() {
         const apiUrlInput = document.querySelector('input[name="apiUrl"]');
+        const proxyUrlInput = document.querySelector('input[name="proxyUrl"]');
         const apiKeyInput = document.querySelector('input[name="apiKey"]');
         const transformerSelect = document.querySelector('select[name="transformer"]');
         const modelInput = document.getElementById('model-input');
         const fetchBtn = document.getElementById('fetch-models-btn');
 
         const apiUrl = apiUrlInput.value.trim();
+        const proxyUrl = proxyUrlInput?.value.trim() || '';
         const apiKey = apiKeyInput.value.trim();
         const transformer = transformerSelect.value;
 
@@ -443,7 +454,7 @@ class Endpoints {
             fetchBtn.disabled = true;
             fetchBtn.textContent = 'Fetching...';
 
-            const result = await api.fetchModels(apiUrl, apiKey, transformer);
+            const result = await api.fetchModels(apiUrl, apiKey, transformer, proxyUrl);
 
             if (result.models && result.models.length > 0) {
                 // Show model selection modal
@@ -524,6 +535,7 @@ class Endpoints {
         const data = {
             name: formData.get('name'),
             apiUrl: formData.get('apiUrl'),
+            proxyUrl: formData.get('proxyUrl'),
             apiKey: formData.get('apiKey'),
             transformer: formData.get('transformer'),
             model: formData.get('model'),
@@ -659,6 +671,7 @@ class Endpoints {
         const clonedEndpoint = {
             name: newName,
             apiUrl: endpoint.apiUrl,
+            proxyUrl: endpoint.proxyUrl,
             transformer: endpoint.transformer,
             model: endpoint.model,
             thinking: endpoint.thinking,
@@ -683,6 +696,8 @@ class Endpoints {
             const result = await api.getEndpointCredentials(endpointName);
             const credentials = result.credentials || [];
             const stats = result.stats || {};
+            const endpoint = this.endpoints.find(ep => ep.name === endpointName);
+            const isCodexTokenPool = endpoint?.authMode === 'codex_token_pool';
             const modalContainer = document.getElementById('modal-container');
 
             modalContainer.innerHTML = `
@@ -711,6 +726,7 @@ class Endpoints {
                                 </label>
                                 <div style="margin-top: 8px;">
                                     <button class="btn btn-primary" id="token-import-btn">${t('common.import')}</button>
+                                    ${isCodexTokenPool ? `<button class="btn btn-secondary" id="token-auth-btn">${t('endpoints.chatgptAuth')}</button>` : ''}
                                 </div>
                             </div>
 
@@ -745,6 +761,7 @@ class Endpoints {
             document.getElementById('close-token-pool-btn').addEventListener('click', () => this.closeModal());
             document.getElementById('refresh-token-pool-btn').addEventListener('click', () => this.showTokenPoolModal(endpointName));
             document.getElementById('token-import-btn').addEventListener('click', () => this.importEndpointCredentials(endpointName));
+            document.getElementById('token-auth-btn')?.addEventListener('click', () => this.startCodexCredentialAuth(endpointName));
 
             document.querySelectorAll('.token-enable-toggle').forEach(toggle => {
                 toggle.addEventListener('change', () => this.updateCredentialEnabled(endpointName, toggle.dataset.id, toggle.checked));
@@ -760,6 +777,210 @@ class Endpoints {
             });
         } catch (error) {
             notifications.error(`${t('endpoints.failedToLoadTokenPool')}: ${error.message}`);
+        }
+    }
+
+    ensureCodexAuthModal() {
+        let modal = document.getElementById('codex-auth-modal');
+        if (modal) {
+            return modal;
+        }
+
+        modal = document.createElement('div');
+        modal.id = 'codex-auth-modal';
+        modal.className = 'modal-overlay';
+        modal.style.display = 'none';
+        modal.style.zIndex = '2000';
+        modal.innerHTML = `
+            <div class="modal" style="max-width: 560px; width: 92vw;">
+                <div class="modal-header">
+                    <h3 class="modal-title">${t('endpoints.chatgptAuth')}</h3>
+                    <button class="modal-close" id="codex-auth-close">×</button>
+                </div>
+                <div class="modal-body">
+                    <div id="codex-auth-status" style="font-size: 13px; margin-bottom: 12px;">${t('common.loading')}</div>
+                    <div style="display: grid; gap: 12px;">
+                        <div>
+                            <div class="text-muted" style="font-size: 12px; margin-bottom: 4px;">${t('endpoints.verificationUrl')}</div>
+                            <a id="codex-auth-url" href="#" target="_blank" rel="noreferrer" style="word-break: break-all;"></a>
+                        </div>
+                        <div>
+                            <div class="text-muted" style="font-size: 12px; margin-bottom: 4px;">${t('endpoints.userCode')}</div>
+                            <code id="codex-auth-code" style="display: inline-block; font-size: 22px; padding: 8px 10px; border-radius: 6px; background: rgba(148, 163, 184, 0.16);"></code>
+                        </div>
+                        <div id="codex-auth-countdown" class="text-muted" style="font-size: 12px;"></div>
+                    </div>
+                    <div class="flex gap-2" style="flex-wrap: wrap; margin-top: 16px;">
+                        <button class="btn btn-primary" id="codex-auth-open">${t('endpoints.openAuthUrl')}</button>
+                        <button class="btn btn-secondary" id="codex-auth-copy-url">${t('endpoints.copyAuthUrl')}</button>
+                        <button class="btn btn-secondary" id="codex-auth-copy-code">${t('endpoints.copyUserCode')}</button>
+                        <button class="btn btn-secondary" id="codex-auth-cancel">${t('endpoints.cancelLogin')}</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        modal.querySelector('#codex-auth-close').addEventListener('click', () => this.hideCodexAuthModal());
+        modal.querySelector('#codex-auth-open').addEventListener('click', () => {
+            const url = modal.querySelector('#codex-auth-url')?.textContent || '';
+            if (url) {
+                window.open(url, '_blank', 'noopener,noreferrer');
+            }
+        });
+        modal.querySelector('#codex-auth-copy-url').addEventListener('click', async () => {
+            const url = modal.querySelector('#codex-auth-url')?.textContent || '';
+            if (url) {
+                await navigator.clipboard.writeText(url);
+                notifications.success(t('endpoints.authCopied'));
+            }
+        });
+        modal.querySelector('#codex-auth-copy-code').addEventListener('click', async () => {
+            const code = modal.querySelector('#codex-auth-code')?.textContent || '';
+            if (code) {
+                await navigator.clipboard.writeText(code);
+                notifications.success(t('endpoints.authCopied'));
+            }
+        });
+        modal.querySelector('#codex-auth-cancel').addEventListener('click', () => this.cancelCodexCredentialAuth());
+        return modal;
+    }
+
+    showCodexAuthModal() {
+        const modal = this.ensureCodexAuthModal();
+        modal.style.display = 'flex';
+    }
+
+    hideCodexAuthModal() {
+        const modal = this.ensureCodexAuthModal();
+        modal.style.display = 'none';
+    }
+
+    clearCodexAuthTimers() {
+        if (this.codexAuthPollTimer) {
+            clearInterval(this.codexAuthPollTimer);
+            this.codexAuthPollTimer = null;
+        }
+        if (this.codexAuthCountdownTimer) {
+            clearInterval(this.codexAuthCountdownTimer);
+            this.codexAuthCountdownTimer = null;
+        }
+    }
+
+    setCodexAuthStatus(message, type = 'info') {
+        const modal = this.ensureCodexAuthModal();
+        const statusEl = modal.querySelector('#codex-auth-status');
+        if (!statusEl) {
+            return;
+        }
+        const colors = {
+            info: '#374151',
+            success: '#047857',
+            warning: '#b45309',
+            error: '#b91c1c'
+        };
+        statusEl.textContent = message;
+        statusEl.style.color = colors[type] || colors.info;
+    }
+
+    updateCodexAuthCountdown(expiresAt) {
+        const modal = this.ensureCodexAuthModal();
+        const countdownEl = modal.querySelector('#codex-auth-countdown');
+        const expires = Date.parse(expiresAt);
+        if (!countdownEl || Number.isNaN(expires)) {
+            return;
+        }
+        const remaining = Math.max(0, Math.ceil((expires - Date.now()) / 1000));
+        const minutes = Math.floor(remaining / 60);
+        const seconds = String(remaining % 60).padStart(2, '0');
+        countdownEl.textContent = t('endpoints.authExpiresIn').replace('{time}', `${minutes}:${seconds}`);
+    }
+
+    async startCodexCredentialAuth(endpointName) {
+        this.clearCodexAuthTimers();
+        this.codexAuthLoginId = '';
+        this.codexAuthPending = false;
+        this.currentTokenPoolEndpoint = endpointName;
+        this.showCodexAuthModal();
+        this.setCodexAuthStatus(t('endpoints.authRequesting'));
+
+        try {
+            const data = await api.startCodexCredentialAuth(endpointName);
+            this.codexAuthLoginId = data.loginId || '';
+            this.codexAuthPending = true;
+
+            const modal = this.ensureCodexAuthModal();
+            const urlEl = modal.querySelector('#codex-auth-url');
+            const codeEl = modal.querySelector('#codex-auth-code');
+            if (urlEl) {
+                urlEl.textContent = data.verificationUrl || '';
+                urlEl.href = data.verificationUrl || '#';
+            }
+            if (codeEl) {
+                codeEl.textContent = data.userCode || '';
+            }
+            this.setCodexAuthStatus(t('endpoints.authWaiting'));
+            this.updateCodexAuthCountdown(data.expiresAt);
+            this.codexAuthCountdownTimer = setInterval(() => this.updateCodexAuthCountdown(data.expiresAt), 1000);
+            const intervalMs = Math.max(2000, Number(data.pollIntervalSeconds || 2) * 1000);
+            this.codexAuthPollTimer = setInterval(() => this.pollCodexCredentialAuth(), intervalMs);
+            await this.pollCodexCredentialAuth();
+        } catch (error) {
+            this.clearCodexAuthTimers();
+            this.codexAuthPending = false;
+            this.setCodexAuthStatus(`${t('endpoints.authFailed')}: ${error.message}`, 'error');
+            notifications.error(`${t('endpoints.authFailed')}: ${error.message}`);
+        }
+    }
+
+    async pollCodexCredentialAuth() {
+        if (!this.currentTokenPoolEndpoint || !this.codexAuthLoginId) {
+            return;
+        }
+        try {
+            const data = await api.getCodexCredentialAuthStatus(this.currentTokenPoolEndpoint, this.codexAuthLoginId);
+            switch (data.status) {
+                case 'complete':
+                    this.clearCodexAuthTimers();
+                    this.codexAuthPending = false;
+                    this.setCodexAuthStatus(`${t('endpoints.authComplete')}${data.email ? `: ${data.email}` : ''}`, 'success');
+                    notifications.success(t('endpoints.authComplete'));
+                    await this.showTokenPoolModal(this.currentTokenPoolEndpoint);
+                    await this.loadEndpoints();
+                    break;
+                case 'failed':
+                case 'expired':
+                    this.clearCodexAuthTimers();
+                    this.codexAuthPending = false;
+                    this.setCodexAuthStatus(`${t('endpoints.authFailed')}: ${data.error || data.status}`, 'error');
+                    notifications.error(`${t('endpoints.authFailed')}: ${data.status}`);
+                    break;
+                case 'canceled':
+                    this.clearCodexAuthTimers();
+                    this.codexAuthPending = false;
+                    this.setCodexAuthStatus(t('endpoints.authCanceled'), 'warning');
+                    break;
+                default:
+                    this.setCodexAuthStatus(t('endpoints.authWaiting'));
+            }
+        } catch (error) {
+            this.clearCodexAuthTimers();
+            this.codexAuthPending = false;
+            this.setCodexAuthStatus(`${t('endpoints.authFailed')}: ${error.message}`, 'error');
+        }
+    }
+
+    async cancelCodexCredentialAuth() {
+        if (!this.currentTokenPoolEndpoint || !this.codexAuthLoginId || !this.codexAuthPending) {
+            return;
+        }
+        try {
+            await api.cancelCodexCredentialAuth(this.currentTokenPoolEndpoint, this.codexAuthLoginId);
+            this.clearCodexAuthTimers();
+            this.codexAuthPending = false;
+            this.setCodexAuthStatus(t('endpoints.authCanceled'), 'warning');
+        } catch (error) {
+            notifications.error(`${t('endpoints.failedToCancelAuth')}: ${error.message}`);
         }
     }
 

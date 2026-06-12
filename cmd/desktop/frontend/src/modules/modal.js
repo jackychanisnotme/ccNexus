@@ -276,6 +276,7 @@ export function showAddEndpointModal() {
 	document.getElementById('modalTitle').textContent = '➕ ' + t('modal.addEndpoint');
     document.getElementById('endpointName').value = '';
     document.getElementById('endpointUrl').value = '';
+    document.getElementById('endpointProxyUrl').value = '';
     document.getElementById('endpointKey').value = '';
     document.getElementById('endpointKey').type = 'password';
     document.getElementById('eyeIcon').innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
@@ -297,6 +298,7 @@ export function showAddEndpointModalWithPreset(presetData) {
 	document.getElementById('modalTitle').textContent = '➕ ' + t('modal.addEndpoint');
 	document.getElementById('endpointName').value = presetData.name || '';
 	document.getElementById('endpointUrl').value = presetData.apiUrl || '';
+	document.getElementById('endpointProxyUrl').value = presetData.proxyUrl || '';
 	document.getElementById('endpointKey').value = presetData.apiKey || '';
 	document.getElementById('endpointKey').type = 'password';
 	document.getElementById('eyeIcon').innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
@@ -321,6 +323,7 @@ export async function editEndpoint(index) {
 	document.getElementById('modalTitle').textContent = '✏️ ' + t('modal.editEndpoint');
     document.getElementById('endpointName').value = ep.name;
     document.getElementById('endpointUrl').value = ep.apiUrl;
+    document.getElementById('endpointProxyUrl').value = ep.proxyUrl || '';
     document.getElementById('endpointKey').value = ep.apiKey;
     document.getElementById('endpointKey').type = 'password';
     document.getElementById('eyeIcon').innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
@@ -358,6 +361,7 @@ export async function saveEndpoint() {
 	let transformer = document.getElementById('endpointTransformer').value;
     const model = document.getElementById('endpointModel').value.trim();
     const thinking = getThinkingControlValue();
+    const proxyUrl = document.getElementById('endpointProxyUrl').value.trim();
     const forceStream = document.getElementById('endpointForceStream').checked;
     const remark = document.getElementById('endpointRemark').value.trim();
     const isCodexTokenPool = isCodexTokenPoolMode(authMode);
@@ -393,9 +397,9 @@ export async function saveEndpoint() {
 
     try {
         if (currentEditIndex === -1) {
-            await addEndpoint(name, url, key, authMode, transformer, model, thinking, forceStream, remark);
+            await addEndpoint(name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, remark);
         } else {
-            await updateEndpoint(currentEditIndex, name, url, key, authMode, transformer, model, thinking, forceStream, remark);
+            await updateEndpoint(currentEditIndex, name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, remark);
         }
 
         closeModal();
@@ -456,6 +460,9 @@ export function handleTransformerChange() {
     } else if (transformer === 'kimi') {
         modelInput.placeholder = 'e.g., kimi-k2.6';
         modelHelpText.textContent = t('modal.modelHelpKimi');
+    } else if (transformer === 'poe') {
+        modelInput.placeholder = 'e.g., claude-fable-5';
+        modelHelpText.textContent = t('modal.modelHelpPoe');
     }
 
     const currentThinking = getThinkingControlValue();
@@ -470,6 +477,7 @@ export async function fetchModels() {
     const authMode = getEndpointAuthMode();
     const isCodexTokenPool = isCodexTokenPoolMode(authMode);
     const apiUrl = isCodexTokenPool ? CODEX_FIXED_API_URL : document.getElementById('endpointUrl').value.trim();
+    const proxyUrl = document.getElementById('endpointProxyUrl')?.value.trim() || '';
     const apiKey = document.getElementById('endpointKey').value.trim();
     const transformer = isCodexTokenPool ? CODEX_FIXED_TRANSFORMER : document.getElementById('endpointTransformer').value;
     const fetchBtn = document.getElementById('fetchModelsBtn');
@@ -492,7 +500,7 @@ export async function fetchModels() {
     fetchIcon.textContent = '⏳';
 
     try {
-        const resultStr = await window.go.main.App.FetchModels(apiUrl, apiKey, transformer);
+        const resultStr = await window.go.main.App.FetchModels(apiUrl, apiKey, transformer, proxyUrl);
         const result = JSON.parse(resultStr);
 
         if (result.success && result.models && result.models.length > 0) {

@@ -173,7 +173,7 @@ func (p *Proxy) fetchCodexRateLimitsForCredential(ctx context.Context, endpoint 
 		req.Header.Set("ChatGPT-Account-Id", accountID)
 	}
 
-	resp, err := p.codexRateLimitHTTPClient().Do(req)
+	resp, err := p.codexRateLimitHTTPClient(endpoint).Do(req)
 	if err != nil {
 		return nil, "network", err
 	}
@@ -259,7 +259,7 @@ func codexRateLimitHTTPClient() *http.Client {
 	return &http.Client{Timeout: codexRateLimitTimeout}
 }
 
-func (p *Proxy) codexRateLimitHTTPClient() *http.Client {
+func (p *Proxy) codexRateLimitHTTPClient(endpoint config.Endpoint) *http.Client {
 	client := codexRateLimitHTTPClient()
 	if p != nil && p.httpClient != nil {
 		client.Transport = p.httpClient.Transport
@@ -268,14 +268,7 @@ func (p *Proxy) codexRateLimitHTTPClient() *http.Client {
 		return client
 	}
 
-	proxyCfg := p.config.GetProxy()
-	codexProxyCfg := p.config.GetCodexProxy()
-	proxyURL := ""
-	if codexProxyCfg != nil && strings.TrimSpace(codexProxyCfg.URL) != "" {
-		proxyURL = codexProxyCfg.URL
-	} else if proxyCfg != nil && strings.TrimSpace(proxyCfg.URL) != "" {
-		proxyURL = proxyCfg.URL
-	}
+	proxyURL := config.ResolveEndpointProxyURL(&endpoint, config.CodexTokenPoolAPIURL, p.config.GetProxy(), p.config.GetCodexProxy())
 	if strings.TrimSpace(proxyURL) == "" {
 		return client
 	}

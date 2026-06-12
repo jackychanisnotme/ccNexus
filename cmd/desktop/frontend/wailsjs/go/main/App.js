@@ -6,8 +6,8 @@ export function ActivateEndpointCredential(arg1, arg2) {
   return window['go']['main']['App']['ActivateEndpointCredential'](arg1, arg2);
 }
 
-export function AddEndpoint(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
-  return window['go']['main']['App']['AddEndpoint'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+export function AddEndpoint(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
+  return window['go']['main']['App']['AddEndpoint'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 }
 
 export function AddProjectDir(arg1) {
@@ -28,6 +28,10 @@ export function BackupToWebDAV(arg1) {
 
 export function CancelDownload() {
   return window['go']['main']['App']['CancelDownload']();
+}
+
+export function CancelCodexCredentialAuth(arg1) {
+  return window['go']['main']['App']['CancelCodexCredentialAuth'](arg1);
 }
 
 export function CheckForUpdates() {
@@ -94,8 +98,8 @@ export function FetchImageAsBase64(arg1) {
   return window['go']['main']['App']['FetchImageAsBase64'](arg1);
 }
 
-export function FetchModels(arg1, arg2, arg3) {
-  return window['go']['main']['App']['FetchModels'](arg1, arg2, arg3);
+export function FetchModels(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['FetchModels'](arg1, arg2, arg3, arg4);
 }
 
 export function GenerateMockArchives(arg1) {
@@ -126,6 +130,10 @@ export function GetCodexProxyURL() {
   return window['go']['main']['App']['GetCodexProxyURL']();
 }
 
+export function GetCodexCredentialAuthStatus(arg1) {
+  return window['go']['main']['App']['GetCodexCredentialAuthStatus'](arg1);
+}
+
 export function GetCodexSessionData(arg1) {
   return window['go']['main']['App']['GetCodexSessionData'](arg1);
 }
@@ -144,6 +152,10 @@ export function GetCurrentEndpoint() {
 
 export function GetEndpointRuntimeStatuses() {
   return window['go']['main']['App']['GetEndpointRuntimeStatuses']();
+}
+
+export function GetEndpointProxyURL(arg1) {
+  return window['go']['main']['App']['GetEndpointProxyURL'](arg1);
 }
 
 export function GetDownloadProgress() {
@@ -350,6 +362,10 @@ export function SetCodexProxyURL(arg1) {
   return window['go']['main']['App']['SetCodexProxyURL'](arg1);
 }
 
+export function StartCodexCredentialAuth(arg1) {
+  return window['go']['main']['App']['StartCodexCredentialAuth'](arg1);
+}
+
 export function SetEndpointCredentialEnabled(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetEndpointCredentialEnabled'](arg1, arg2, arg3);
 }
@@ -422,12 +438,16 @@ export function UpdateConfig(arg1) {
   return window['go']['main']['App']['UpdateConfig'](arg1);
 }
 
-export function UpdateEndpoint(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
-  return window['go']['main']['App']['UpdateEndpoint'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+export function UpdateEndpoint(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11) {
+  return window['go']['main']['App']['UpdateEndpoint'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11);
 }
 
 export function UpdateEndpointCredentialToken(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['UpdateEndpointCredentialToken'](arg1, arg2, arg3, arg4);
+}
+
+export function SetEndpointProxyURL(arg1, arg2) {
+  return window['go']['main']['App']['SetEndpointProxyURL'](arg1, arg2);
 }
 
 export function UpdateLocalBackupDir(arg1) {

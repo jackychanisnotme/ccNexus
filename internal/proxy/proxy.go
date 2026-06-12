@@ -408,6 +408,33 @@ func detectClientFormat(path string) ClientFormat {
 	}
 }
 
+func shouldCompleteInterruptedOpenAIResponsesStream(r *http.Request, clientFormat ClientFormat, streamResult streamResponseResult) bool {
+	if clientFormat != ClientFormatOpenAIResponses {
+		return false
+	}
+	if !streamResult.ResponsesCompletionSafe.canSynthesizeCompleted() {
+		return false
+	}
+	if strings.TrimSpace(r.Header.Get("X-OpenClaw-Agent")) != "" {
+		return true
+	}
+	for _, value := range []string{
+		r.Header.Get("X-Agent-ID"),
+		r.Header.Get("X-Agent-Id"),
+		r.Header.Get("X-Agent-Name"),
+		r.UserAgent(),
+	} {
+		agent := strings.ToLower(strings.TrimSpace(value))
+		if agent == "" {
+			continue
+		}
+		if strings.Contains(agent, "openai/js") || strings.Contains(agent, "openclaw") || strings.Contains(agent, "codex") {
+			return true
+		}
+	}
+	return false
+}
+
 // handleProxy handles the main proxy logic
 func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	obs := newRequestObservability(r)
@@ -689,7 +716,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		proxyURL := resolveProxyURLForRequest(p.config, proxyReq.URL)
+		proxyURL := resolveProxyURLForRequest(p.config, proxyReq.URL, endpoint)
 		proxyLabel := strings.TrimSpace(proxyURL)
 		action := "Requesting"
 		if streamReq.Stream {
@@ -703,7 +730,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if upstreamStreaming {
 			responseHeaderTimeout = p.streamHeaderTimeoutOrDefault()
 		}
-		resp, err := sendRequestWithResponseHeaderTimeout(ctx, proxyReq, p.httpClient, p.config, responseHeaderTimeout, !upstreamStreaming)
+		resp, err := sendRequestWithResponseHeaderTimeout(ctx, proxyReq, endpoint, p.httpClient, p.config, responseHeaderTimeout, !upstreamStreaming)
 		if err != nil {
 			if isClientCanceled(ctx, err) {
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, 0, "client_canceled", "Client canceled request: %v", err)
@@ -863,6 +890,23 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				}
 				if retryReason == streamFinishUpstreamStreamError {
 					if streamResult.WroteSemanticData {
+						if shouldCompleteInterruptedOpenAIResponsesStream(r, clientFormat, streamResult) && streamSession != nil && streamSession.Started() {
+							logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, retryReason, "Completing interrupted OpenAI Responses stream for JS/Codex client: %v", streamResult.Err)
+							completedEvent := streamResult.ResponsesCompletionSafe.completedEvent(inputTokens, outputTokens)
+							if len(completedEvent) == 0 {
+								logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishTransformFailed, "Failed to build synthetic OpenAI Responses completion after stream interruption")
+							} else if writeErr := streamSession.Write(completedEvent); writeErr != nil {
+								logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishDownstreamWriteFailed, "Failed to write synthetic OpenAI Responses completion to downstream: %v", writeErr)
+							} else {
+								streamSession.Close()
+								p.markCredentialFailure(credentialID, 0, streamResult.Err.Error())
+								p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
+								p.recordEndpointError(endpoint.Name, retryReason)
+								p.markEndpointCooldownForReason(endpoint.Name, retryReason, resp.Header, obs, attemptNumber)
+								p.markRequestInactive(endpoint.Name)
+								return
+							}
+						}
 						logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, retryReason, "Streaming response failed after semantic output: %v", streamResult.Err)
 						if streamSession != nil && streamSession.Started() {
 							message := fmt.Sprintf("Upstream stream interrupted: %v", streamResult.Err)

@@ -60,7 +60,7 @@ func prepareCCTransformer(endpoint config.Endpoint, endpointTransformer string) 
 			return cc.NewClaudeTransformerWithModel(endpoint.Model), nil
 		}
 		return cc.NewClaudeTransformer(), nil
-	case "openai", "deepseek", "kimi":
+	case "openai", "deepseek", "kimi", "poe":
 		if endpoint.Model == "" {
 			return nil, fmt.Errorf("OpenAI transformer requires model field")
 		}
@@ -89,7 +89,7 @@ func prepareCxChatTransformer(endpoint config.Endpoint, endpointTransformer stri
 			model = "claude-sonnet-4-20250514"
 		}
 		return chat.NewClaudeTransformer(model), nil
-	case "openai", "deepseek", "kimi":
+	case "openai", "deepseek", "kimi", "poe":
 		if endpoint.Model == "" {
 			return nil, fmt.Errorf("OpenAI transformer requires model field")
 		}
@@ -118,7 +118,7 @@ func prepareCxRespTransformer(endpoint config.Endpoint, endpointTransformer stri
 			model = "claude-sonnet-4-20250514"
 		}
 		return responses.NewClaudeTransformer(model), nil
-	case "openai", "deepseek", "kimi":
+	case "openai", "deepseek", "kimi", "poe":
 		if endpoint.Model == "" {
 			return nil, fmt.Errorf("OpenAI transformer requires model field")
 		}
@@ -543,11 +543,11 @@ func extractModelFromPayload(payload []byte) string {
 }
 
 // sendRequest sends the HTTP request and returns the response.
-func sendRequest(ctx context.Context, proxyReq *http.Request, httpClient *http.Client, cfg *config.Config) (*http.Response, error) {
-	return sendRequestWithClientTimeout(ctx, proxyReq, httpClient, cfg, true)
+func sendRequest(ctx context.Context, proxyReq *http.Request, endpoint config.Endpoint, httpClient *http.Client, cfg *config.Config) (*http.Response, error) {
+	return sendRequestWithClientTimeout(ctx, proxyReq, endpoint, httpClient, cfg, true)
 }
 
-func sendRequestWithClientTimeout(ctx context.Context, proxyReq *http.Request, httpClient *http.Client, cfg *config.Config, useClientTimeout bool) (*http.Response, error) {
+func sendRequestWithClientTimeout(ctx context.Context, proxyReq *http.Request, endpoint config.Endpoint, httpClient *http.Client, cfg *config.Config, useClientTimeout bool) (*http.Response, error) {
 	proxyReq = proxyReq.WithContext(ctx)
 	client := httpClient
 	if !useClientTimeout {
@@ -556,7 +556,7 @@ func sendRequestWithClientTimeout(ctx context.Context, proxyReq *http.Request, h
 		client = &clientWithoutTimeout
 	}
 
-	proxyURL := resolveProxyURLForRequest(cfg, proxyReq.URL)
+	proxyURL := resolveProxyURLForRequest(cfg, proxyReq.URL, endpoint)
 	// Apply proxy if configured
 	if strings.TrimSpace(proxyURL) != "" {
 		// Clone the client and replace transport for this request
@@ -578,9 +578,9 @@ func sendRequestWithClientTimeout(ctx context.Context, proxyReq *http.Request, h
 	return client.Do(proxyReq)
 }
 
-func sendRequestWithResponseHeaderTimeout(ctx context.Context, proxyReq *http.Request, httpClient *http.Client, cfg *config.Config, responseHeaderTimeout time.Duration, useClientTimeout bool) (*http.Response, error) {
+func sendRequestWithResponseHeaderTimeout(ctx context.Context, proxyReq *http.Request, endpoint config.Endpoint, httpClient *http.Client, cfg *config.Config, responseHeaderTimeout time.Duration, useClientTimeout bool) (*http.Response, error) {
 	if responseHeaderTimeout <= 0 {
-		return sendRequestWithClientTimeout(ctx, proxyReq, httpClient, cfg, useClientTimeout)
+		return sendRequestWithClientTimeout(ctx, proxyReq, endpoint, httpClient, cfg, useClientTimeout)
 	}
 
 	requestCtx, cancel := context.WithCancel(ctx)
@@ -590,7 +590,7 @@ func sendRequestWithResponseHeaderTimeout(ctx context.Context, proxyReq *http.Re
 		cancel()
 	})
 
-	resp, err := sendRequestWithClientTimeout(requestCtx, proxyReq, httpClient, cfg, useClientTimeout)
+	resp, err := sendRequestWithClientTimeout(requestCtx, proxyReq, endpoint, httpClient, cfg, useClientTimeout)
 	if err != nil {
 		timer.Stop()
 		cancel()
@@ -644,19 +644,15 @@ func (r *cancelOnCloseReadCloser) Close() error {
 	return err
 }
 
-func resolveProxyURLForRequest(cfg *config.Config, targetURL *url.URL) string {
+func resolveProxyURLForRequest(cfg *config.Config, targetURL *url.URL, endpoint config.Endpoint) string {
+	target := ""
+	if targetURL != nil {
+		target = targetURL.String()
+	}
 	if cfg == nil {
-		return ""
+		return config.ResolveEndpointProxyURL(&endpoint, target, nil, nil)
 	}
-	if isCodexRequestURL(targetURL) {
-		if codexProxy := cfg.GetCodexProxy(); codexProxy != nil && strings.TrimSpace(codexProxy.URL) != "" {
-			return codexProxy.URL
-		}
-	}
-	if proxyCfg := cfg.GetProxy(); proxyCfg != nil && strings.TrimSpace(proxyCfg.URL) != "" {
-		return proxyCfg.URL
-	}
-	return ""
+	return config.ResolveEndpointProxyURL(&endpoint, target, cfg.GetProxy(), cfg.GetCodexProxy())
 }
 
 func isCodexRequestURL(targetURL *url.URL) bool {

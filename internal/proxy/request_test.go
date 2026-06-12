@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,60 @@ func TestGetTargetPathUsesV1ForCustomDeepSeekGateway(t *testing.T) {
 	got := getTargetPath("/v1/responses", ep, []byte(`{}`), "cx_resp_openai")
 	if got != "/v1/chat/completions" {
 		t.Fatalf("expected /v1/chat/completions, got %s", got)
+	}
+}
+
+func TestPrepareTransformerAcceptsPoeAsOpenAIChatCompatible(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:        "Poe",
+		Transformer: "poe",
+		Model:       "claude-fable-5",
+	}
+
+	trans, err := prepareTransformerForClient(ClientFormatClaude, endpoint)
+	if err != nil {
+		t.Fatalf("expected Poe transformer to prepare as OpenAI Chat compatible, got error: %v", err)
+	}
+	if got := trans.Name(); got != "cc_openai" {
+		t.Fatalf("expected cc_openai transformer, got %s", got)
+	}
+}
+
+func TestBuildProxyRequestAdaptsPoeOpenAIChatPayload(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:        "Poe",
+		APIUrl:      "https://api.poe.com/v1",
+		AuthMode:    config.AuthModeAPIKey,
+		Transformer: "poe",
+		Model:       "claude-fable-5",
+	}
+	body := []byte(`{"model":"claude-fable-5","messages":[],"max_completion_tokens":8,"reasoning":{"effort":"xhigh"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+
+	proxyReq, err := buildProxyRequest(req, endpoint, "poe-key", body, "cc_openai", nil)
+	if err != nil {
+		t.Fatalf("buildProxyRequest failed: %v", err)
+	}
+	if got := proxyReq.URL.String(); got != "https://api.poe.com/v1/chat/completions" {
+		t.Fatalf("expected Poe chat completions URL, got %s", got)
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "Bearer poe-key" {
+		t.Fatalf("expected Bearer auth header, got %q", got)
+	}
+
+	var payload map[string]interface{}
+	if err := json.NewDecoder(proxyReq.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode proxied payload: %v", err)
+	}
+	if payload["output_effort"] != "max" {
+		t.Fatalf("expected output_effort=max, got %#v", payload["output_effort"])
+	}
+	if payload["max_tokens"].(float64) != 8 {
+		t.Fatalf("expected max_tokens=8, got %#v", payload["max_tokens"])
+	}
+	if _, ok := payload["reasoning"]; ok {
+		t.Fatalf("did not expect reasoning object for Poe, got %#v", payload["reasoning"])
 	}
 }
 
@@ -469,7 +524,7 @@ func TestSendRequestDisablesClientTimeoutForStreamingBody(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 
-	resp, err := sendRequestWithResponseHeaderTimeout(context.Background(), req, client, nil, 0, false)
+	resp, err := sendRequestWithResponseHeaderTimeout(context.Background(), req, config.Endpoint{}, client, nil, 0, false)
 	if err != nil {
 		t.Fatalf("expected response with streaming client timeout disabled, got error: %v", err)
 	}
@@ -505,7 +560,7 @@ func TestSendRequestKeepsClientTimeoutForNonStreamingBody(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 
-	resp, err := sendRequestWithResponseHeaderTimeout(context.Background(), req, client, nil, 0, true)
+	resp, err := sendRequestWithResponseHeaderTimeout(context.Background(), req, config.Endpoint{}, client, nil, 0, true)
 	if err != nil {
 		t.Fatalf("expected response headers before client timeout, got error: %v", err)
 	}
@@ -568,4 +623,45 @@ func TestBuildProxyRequestForcesClaudeUserAgent(t *testing.T) {
 			t.Fatalf("%s: expected anthropic-version set, got %q", name, got)
 		}
 	}
+}
+
+func TestResolveProxyURLForRequestPrefersEndpointProxy(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateProxy(&config.ProxyConfig{URL: "http://127.0.0.1:7890"})
+	cfg.UpdateCodexProxy(&config.ProxyConfig{URL: "http://127.0.0.1:7891"})
+
+	got := resolveProxyURLForRequest(cfg, mustParseURL(t, "https://api.example.com/v1/chat/completions"), config.Endpoint{ProxyURL: "http://127.0.0.1:7892"})
+	if got != "http://127.0.0.1:7892" {
+		t.Fatalf("expected endpoint proxy to win, got %q", got)
+	}
+}
+
+func TestResolveProxyURLForRequestUsesCodexProxyForCodexRequests(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateProxy(&config.ProxyConfig{URL: "http://127.0.0.1:7890"})
+	cfg.UpdateCodexProxy(&config.ProxyConfig{URL: "http://127.0.0.1:7891"})
+
+	got := resolveProxyURLForRequest(cfg, mustParseURL(t, "https://chatgpt.com/backend-api/codex"), config.Endpoint{})
+	if got != "http://127.0.0.1:7891" {
+		t.Fatalf("expected codex proxy fallback, got %q", got)
+	}
+}
+
+func TestResolveProxyURLForRequestFallsBackToGlobalProxy(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateProxy(&config.ProxyConfig{URL: "http://127.0.0.1:7890"})
+
+	got := resolveProxyURLForRequest(cfg, mustParseURL(t, "https://api.example.com/v1/chat/completions"), config.Endpoint{})
+	if got != "http://127.0.0.1:7890" {
+		t.Fatalf("expected global proxy fallback, got %q", got)
+	}
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse url: %v", err)
+	}
+	return parsed
 }

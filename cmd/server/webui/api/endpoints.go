@@ -122,6 +122,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		Thinking    string `json:"thinking"`
 		ForceStream *bool  `json:"forceStream"`
 		Remark      string `json:"remark"`
+		ProxyURL    string `json:"proxyUrl"`
 		CloneFrom   string `json:"cloneFrom"` // Clone from existing endpoint name
 	}
 
@@ -144,6 +145,9 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 						forceStream := ep.ForceStream
 						req.ForceStream = &forceStream
 					}
+					if strings.TrimSpace(req.ProxyURL) == "" {
+						req.ProxyURL = ep.ProxyURL
+					}
 					break
 				}
 			}
@@ -164,6 +168,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		Thinking:    req.Thinking,
 		ForceStream: forceStream,
 		Remark:      req.Remark,
+		ProxyURL:    strings.TrimSpace(req.ProxyURL),
 	}
 	if normalizedEndpoint.Transformer == "" {
 		normalizedEndpoint.Transformer = "claude"
@@ -175,6 +180,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	req.APIKey = normalizedEndpoint.APIKey
 	req.Transformer = normalizedEndpoint.Transformer
 	req.Thinking = normalizedEndpoint.Thinking
+	req.ProxyURL = normalizedEndpoint.ProxyURL
 	forceStream = normalizedEndpoint.ForceStream
 
 	// Validate required fields
@@ -218,6 +224,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		Thinking:    req.Thinking,
 		ForceStream: forceStream,
 		Remark:      req.Remark,
+		ProxyURL:    strings.TrimSpace(req.ProxyURL),
 		SortOrder:   len(endpoints),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -251,6 +258,7 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 		Thinking    string `json:"thinking"`
 		ForceStream *bool  `json:"forceStream"`
 		Remark      string `json:"remark"`
+		ProxyURL    string `json:"proxyUrl"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -289,6 +297,7 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	if req.APIKey != "" {
 		existing.APIKey = req.APIKey
 	}
+	existing.ProxyURL = strings.TrimSpace(req.ProxyURL)
 	if req.AuthMode != "" {
 		existing.AuthMode = config.NormalizeAuthMode(req.AuthMode)
 	}
@@ -306,6 +315,7 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 		Thinking:    existing.Thinking,
 		ForceStream: existing.ForceStream,
 		Remark:      existing.Remark,
+		ProxyURL:    existing.ProxyURL,
 	}
 	if req.ForceStream != nil {
 		normalizedEndpoint.ForceStream = *req.ForceStream
@@ -545,7 +555,11 @@ func (h *Handler) reloadConfig() error {
 	}
 
 	h.config = cfg
-	return h.proxy.UpdateConfig(cfg)
+	if err := h.proxy.UpdateConfig(cfg); err != nil {
+		return err
+	}
+	h.resetCodexAuthManager()
+	return nil
 }
 
 // maskAPIKey masks an API key, showing only the last 4 characters

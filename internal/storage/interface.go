@@ -13,6 +13,7 @@ type Endpoint struct {
 	Model       string    `json:"model"`
 	Thinking    string    `json:"thinking"`
 	ForceStream bool      `json:"forceStream"`
+	ProxyURL    string    `json:"proxyUrl,omitempty"`
 	Remark      string    `json:"remark"`
 	SortOrder   int       `json:"sortOrder"`
 	CreatedAt   time.Time `json:"createdAt"`

@@ -173,3 +173,33 @@ func TestFailoverConfigPersistsAndNormalizes(t *testing.T) {
 		t.Fatalf("expected invalid failure rate threshold to normalize to default, got %f", failover.CircuitBreaker.FailureRateThreshold)
 	}
 }
+
+func TestEndpointProxyURLPersistsThroughStorageRoundTrip(t *testing.T) {
+	store := newFakeConfigStorage()
+	cfg := DefaultConfig()
+	cfg.UpdateEndpoints([]Endpoint{
+		{
+			Name:        "Primary",
+			APIUrl:      "https://api.example.com",
+			APIKey:      "key",
+			AuthMode:    AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "claude",
+			ProxyURL:    "http://127.0.0.1:7890",
+		},
+	})
+
+	if err := cfg.SaveToStorage(store); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	reloaded, err := LoadFromStorage(store)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if len(reloaded.Endpoints) != 1 {
+		t.Fatalf("expected one endpoint, got %d", len(reloaded.Endpoints))
+	}
+	if got := reloaded.Endpoints[0].ProxyURL; got != "http://127.0.0.1:7890" {
+		t.Fatalf("expected proxy URL to round-trip, got %q", got)
+	}
+}

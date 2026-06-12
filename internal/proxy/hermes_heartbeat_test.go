@@ -24,11 +24,9 @@ func TestOpenAIResponsesStreamHeartbeatIsResponseCreated(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
 
-	upstreamReady := make(chan struct{}, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
-		upstreamReady <- struct{}{}
 		// Slow upstream: silent for longer than one heartbeat interval.
 		time.Sleep(200 * time.Millisecond)
 		_, _ = w.Write([]byte(strings.Join([]string{
@@ -77,8 +75,6 @@ func TestOpenAIResponsesStreamHeartbeatIsResponseCreated(t *testing.T) {
 		firstDataCh <- ""
 	}()
 
-	<-upstreamReady
-
 	select {
 	case err := <-errCh:
 		t.Fatalf("request failed: %v", err)
@@ -92,5 +88,97 @@ func TestOpenAIResponsesStreamHeartbeatIsResponseCreated(t *testing.T) {
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("no data: event within 100ms; heartbeat was only SSE comments which Python SDK skips")
+	}
+}
+
+// TestOpenAIResponsesStreamFromChatUpstreamEmitsCreatedOnce verifies that when
+// a Codex Desktop /v1/responses streaming client hits a Poe (OpenAI Chat)
+// upstream behind ccNexus, the downstream SSE body contains exactly one
+// response.created event. Real Poe usage shows Codex cancelling the connection
+// ~10–14 s after start, which aligns with a bogus heartbeat response.created
+// landing on the open stream while the upstream has already billed for tokens.
+//
+// The path under test: ClientFormatOpenAIResponses → endpoint trans=openai
+// (cx_resp_openai) → /v1/chat/completions → OpenAIStreamToOpenAI2.
+func TestOpenAIResponsesStreamFromChatUpstreamEmitsCreatedOnce(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	const firstTokenDelay = 50 * time.Millisecond
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		time.Sleep(firstTokenDelay)
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"claude-opus-4.8","choices":[{"index":0,"delta":{"role":"assistant","content":"hello"},"finish_reason":null}]}`,
+			"",
+			`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"claude-opus-4.8","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}`,
+			"",
+			`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"claude-opus-4.8","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`,
+			"",
+			"data: [DONE]",
+			"",
+		}, "\n")))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	endpoint := failoverPolicyTestEndpoint("primary", upstream.URL)
+	endpoint.Transformer = "openai"
+	endpoint.Model = "claude-opus-4.8"
+	p := newFailoverPolicyTestProxy([]config.Endpoint{endpoint}, upstream.Client())
+	p.streamHeartbeatInterval = 20 * time.Millisecond
+
+	proxySrv := httptest.NewServer(http.HandlerFunc(p.handleProxy))
+	defer proxySrv.Close()
+
+	resp, err := proxySrv.Client().Post(
+		proxySrv.URL+"/v1/responses",
+		"application/json",
+		strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var fullBody strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		fullBody.WriteString(scanner.Text())
+		fullBody.WriteByte('\n')
+	}
+	body := fullBody.String()
+
+	if !strings.Contains(body, "hello") || !strings.Contains(body, "world") {
+		t.Fatalf("expected downstream stream to contain transformed text, got: %s", body)
+	}
+
+	createdCount := 0
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		jsonPart := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if jsonPart == "" || jsonPart == "[DONE]" {
+			continue
+		}
+		if strings.Contains(jsonPart, `"type":"response.created"`) {
+			createdCount++
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf(
+			"expected exactly 1 response.created event in downstream SSE (got %d). Duplicate created events corrupt Codex stream protocol and cause client-side cancellation.",
+			createdCount,
+		)
 	}
 }
