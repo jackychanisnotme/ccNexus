@@ -76,7 +76,7 @@ func (p *Proxy) refreshCredential(endpoint config.Endpoint, credential *storage.
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := p.codexRefreshHTTPClient().Do(req)
+	resp, err := p.codexRefreshHTTPClient(endpoint).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("refresh request failed (%s): %w", codexOAuthTokenURL, err)
 	}
@@ -160,7 +160,7 @@ func (p *Proxy) RefreshCodexCredential(endpoint config.Endpoint, credentialID in
 	return refreshed, nil
 }
 
-func (p *Proxy) codexRefreshHTTPClient() *http.Client {
+func (p *Proxy) codexRefreshHTTPClient(endpoint config.Endpoint) *http.Client {
 	client := &http.Client{Timeout: codexRefreshTimeout}
 	if p != nil && p.httpClient != nil {
 		client.Transport = p.httpClient.Transport
@@ -169,14 +169,7 @@ func (p *Proxy) codexRefreshHTTPClient() *http.Client {
 		return client
 	}
 
-	proxyCfg := p.config.GetProxy()
-	codexProxyCfg := p.config.GetCodexProxy()
-	proxyURL := ""
-	if codexProxyCfg != nil && strings.TrimSpace(codexProxyCfg.URL) != "" {
-		proxyURL = codexProxyCfg.URL
-	} else if proxyCfg != nil && strings.TrimSpace(proxyCfg.URL) != "" {
-		proxyURL = proxyCfg.URL
-	}
+	proxyURL := config.ResolveEndpointProxyURL(&endpoint, config.CodexTokenPoolAPIURL, p.config.GetProxy(), p.config.GetCodexProxy())
 	if strings.TrimSpace(proxyURL) == "" {
 		return client
 	}

@@ -238,6 +238,7 @@ export function initUI() {
                                         <label><input type="checkbox" value="openai2"> OpenAI2</label>
                                         <label><input type="checkbox" value="deepseek"> DeepSeek</label>
                                         <label><input type="checkbox" value="kimi"> Kimi</label>
+                                        <label><input type="checkbox" value="poe"> Poe</label>
                                     </div>
                                     <div class="panel-footer">
                                         <button class="btn-clear-dimension">${t('endpoints.filterClearDimension')}</button>
@@ -393,6 +394,10 @@ export function initUI() {
                             ${t('modal.apiUrlHelp')}
                         </p>
                     </div>
+                    <div class="form-group">
+                        <label>${t('settings.proxyUrl')}</label>
+                        <input type="text" id="endpointProxyUrl" placeholder="${t('settings.proxyUrlPlaceholder')}">
+                    </div>
                     <div class="form-group" id="endpointKeyGroup">
                         <label><span class="required">*</span>${t('modal.apiKey')}</label>
                         <div class="password-input-wrapper">
@@ -414,6 +419,7 @@ export function initUI() {
                             <option value="gemini">Gemini</option>
                             <option value="deepseek">DeepSeek</option>
                             <option value="kimi">Kimi / Moonshot</option>
+                            <option value="poe">Poe</option>
                         </select>
                         <p style="color: #666; font-size: 12px; margin-top: 5px;">
                             ${t('modal.transformerHelp')}

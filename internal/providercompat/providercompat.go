@@ -16,9 +16,11 @@ const (
 	TransformerGemini   = "gemini"
 	TransformerDeepSeek = "deepseek"
 	TransformerKimi     = "kimi"
+	TransformerPoe      = "poe"
 
 	ProviderDeepSeek = "deepseek"
 	ProviderKimi     = "kimi"
+	ProviderPoe      = "poe"
 )
 
 const errorBodyMaxChars = 512
@@ -56,6 +58,8 @@ func NormalizeTransformer(transformer string) string {
 		return TransformerDeepSeek
 	case TransformerKimi, "moonshot", "moonshotai":
 		return TransformerKimi
+	case TransformerPoe, "poe_chat", "poe_openai":
+		return TransformerPoe
 	default:
 		return strings.ToLower(strings.TrimSpace(transformer))
 	}
@@ -63,7 +67,7 @@ func NormalizeTransformer(transformer string) string {
 
 func IsOpenAIChatTransformer(transformer string) bool {
 	switch NormalizeTransformer(transformer) {
-	case TransformerOpenAI, TransformerDeepSeek, TransformerKimi:
+	case TransformerOpenAI, TransformerDeepSeek, TransformerKimi, TransformerPoe:
 		return true
 	default:
 		return false
@@ -88,6 +92,8 @@ func ProviderKind(transformer, baseURL string) string {
 		return ProviderDeepSeek
 	case TransformerKimi:
 		return ProviderKimi
+	case TransformerPoe:
+		return ProviderPoe
 	}
 
 	parsed, err := url.Parse(NormalizeBaseURL(baseURL))
@@ -100,6 +106,8 @@ func ProviderKind(transformer, baseURL string) string {
 		return ProviderDeepSeek
 	case strings.Contains(host, "moonshot") || strings.Contains(host, "kimi"):
 		return ProviderKimi
+	case host == "api.poe.com":
+		return ProviderPoe
 	default:
 		return ""
 	}
@@ -137,6 +145,8 @@ func DefaultModel(transformer string) string {
 		return "deepseek-v4-pro"
 	case TransformerKimi:
 		return "kimi-k2.6"
+	case TransformerPoe:
+		return "claude-fable-5"
 	default:
 		return "gpt-4-turbo"
 	}
@@ -152,6 +162,8 @@ func Owner(transformer string) string {
 		return "deepseek"
 	case TransformerKimi:
 		return "moonshot"
+	case TransformerPoe:
+		return "poe"
 	default:
 		return "openai"
 	}
@@ -300,6 +312,8 @@ func AdaptOpenAIChatPayload(payload []byte, transformer, baseURL, thinking strin
 
 	if provider == ProviderDeepSeek {
 		applyDeepSeekThinking(body, endpointThinking, requestEffort)
+	} else if provider == ProviderPoe {
+		applyPoeOutputEffort(body, endpointThinking, requestEffort)
 	} else {
 		effort := requestEffort
 		if effort == "" && endpointThinking != "off" {
@@ -325,6 +339,22 @@ func AdaptOpenAIChatPayload(payload []byte, transformer, baseURL, thinking strin
 	return updated
 }
 
+func applyPoeOutputEffort(body map[string]interface{}, endpointThinking, requestEffort string) {
+	delete(body, "reasoning_effort")
+
+	if stringFromMap(body, "output_effort") != "" {
+		return
+	}
+
+	effort := requestEffort
+	if effort == "" && endpointThinking != "off" {
+		effort = endpointThinking
+	}
+	if effort := normalizePoeOutputEffort(effort); effort != "" {
+		body["output_effort"] = effort
+	}
+}
+
 func applyDeepSeekThinking(body map[string]interface{}, endpointThinking, requestEffort string) {
 	if endpointThinking == "off" {
 		delete(body, "reasoning_effort")
@@ -342,6 +372,17 @@ func applyDeepSeekThinking(body map[string]interface{}, endpointThinking, reques
 		body["reasoning_effort"] = effort
 		body["thinking"] = map[string]interface{}{"type": "enabled"}
 		return
+	}
+}
+
+func normalizePoeOutputEffort(thinking string) string {
+	switch strings.ToLower(strings.TrimSpace(thinking)) {
+	case "low", "medium", "high", "max", "none":
+		return strings.ToLower(strings.TrimSpace(thinking))
+	case "xhigh":
+		return "max"
+	default:
+		return ""
 	}
 }
 

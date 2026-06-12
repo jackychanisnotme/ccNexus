@@ -78,7 +78,7 @@ func (p *Proxy) fetchModelsFromEndpoint(ep config.Endpoint) ([]ModelInfo, error)
 	var err error
 
 	switch providercompat.NormalizeTransformer(ep.Transformer) {
-	case "openai", "deepseek", "kimi", "openai2":
+	case "openai", "deepseek", "kimi", "poe", "openai2":
 		// OpenAI compatible endpoints
 		var candidates []string
 		if ep.AuthMode == config.AuthModeCodexTokenPool {
@@ -102,7 +102,8 @@ func (p *Proxy) fetchModelsFromEndpoint(ep config.Endpoint) ([]ModelInfo, error)
 			}
 			req.Header.Set("User-Agent", "ccNexus/1.0")
 
-			models, fetchErr := p.fetchOpenAIModelsWithRequest(req, ep.Name)
+			client := p.httpClientForEndpoint(ep, modelsURL, 10*time.Second)
+			models, fetchErr := p.fetchOpenAIModelsWithRequest(client, req, ep.Name)
 			if fetchErr == nil {
 				return models, nil
 			}
@@ -142,7 +143,8 @@ func (p *Proxy) fetchModelsFromEndpoint(ep config.Endpoint) ([]ModelInfo, error)
 	req.Header.Set("User-Agent", "ccNexus/1.0")
 
 	// Execute request
-	resp, err := p.httpClient.Do(req)
+	client := p.httpClientForEndpoint(ep, modelsURL, 10*time.Second)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch models: %w", err)
 	}
@@ -181,8 +183,8 @@ func (p *Proxy) fetchModelsFromEndpoint(ep config.Endpoint) ([]ModelInfo, error)
 	return models, nil
 }
 
-func (p *Proxy) fetchOpenAIModelsWithRequest(req *http.Request, endpointName string) ([]ModelInfo, error) {
-	resp, err := p.httpClient.Do(req)
+func (p *Proxy) fetchOpenAIModelsWithRequest(client *http.Client, req *http.Request, endpointName string) ([]ModelInfo, error) {
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch models: %w", err)
 	}
@@ -217,6 +219,33 @@ func (p *Proxy) fetchOpenAIModelsWithRequest(req *http.Request, endpointName str
 	}
 
 	return models, nil
+}
+
+func (p *Proxy) httpClientForEndpoint(endpoint config.Endpoint, targetURL string, timeout time.Duration) *http.Client {
+	client := &http.Client{Timeout: timeout}
+	if p != nil && p.httpClient != nil {
+		client.Transport = p.httpClient.Transport
+	}
+
+	var globalProxy *config.ProxyConfig
+	var codexProxy *config.ProxyConfig
+	if p != nil && p.config != nil {
+		globalProxy = p.config.GetProxy()
+		codexProxy = p.config.GetCodexProxy()
+	}
+
+	proxyURL := config.ResolveEndpointProxyURL(&endpoint, targetURL, globalProxy, codexProxy)
+	if proxyURL == "" {
+		return client
+	}
+
+	transport, err := CreateProxyTransport(proxyURL)
+	if err != nil {
+		logger.Warn("Failed to create endpoint proxy transport for models: %v", err)
+		return client
+	}
+	client.Transport = transport
+	return client
 }
 
 func isModelsCandidateFallbackError(err error) bool {
@@ -255,7 +284,7 @@ func (p *Proxy) getDefaultModels(ep config.Endpoint) []ModelInfo {
 		}
 		ownedBy = "openai"
 
-	case "deepseek", "kimi", "openai":
+	case "deepseek", "kimi", "poe", "openai":
 		if ep.Model != "" {
 			modelID = ep.Model
 		} else {

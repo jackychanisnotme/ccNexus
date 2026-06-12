@@ -68,8 +68,8 @@ class APIClient {
         return this.request('POST', '/endpoints/switch', { name });
     }
 
-    async fetchModels(apiUrl, apiKey, transformer) {
-        return this.request('POST', '/endpoints/fetch-models', { apiUrl, apiKey, transformer });
+    async fetchModels(apiUrl, apiKey, transformer, proxyUrl = '') {
+        return this.request('POST', '/endpoints/fetch-models', { apiUrl, apiKey, transformer, proxyUrl });
     }
 
     async getEndpointCredentials(name) {
@@ -86,6 +86,18 @@ class APIClient {
 
     async deleteEndpointCredential(name, id) {
         return this.request('DELETE', `/endpoints/${encodeURIComponent(name)}/credentials/${id}`);
+    }
+
+    async startCodexCredentialAuth(name) {
+        return this.request('POST', `/endpoints/${encodeURIComponent(name)}/credentials/auth/start`);
+    }
+
+    async getCodexCredentialAuthStatus(name, loginId) {
+        return this.request('GET', `/endpoints/${encodeURIComponent(name)}/credentials/auth/${encodeURIComponent(loginId)}`);
+    }
+
+    async cancelCodexCredentialAuth(name, loginId) {
+        return this.request('DELETE', `/endpoints/${encodeURIComponent(name)}/credentials/auth/${encodeURIComponent(loginId)}`);
     }
 
     // Statistics

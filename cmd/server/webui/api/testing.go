@@ -12,6 +12,7 @@ import (
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/providercompat"
+	"github.com/lich0821/ccNexus/internal/proxy"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
@@ -74,6 +75,7 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 	var reqBody []byte
 	var url string
 	var err error
+	configEndpoint := storageEndpointToConfig(endpoint)
 
 	normalizedURL := providercompat.NormalizeBaseURL(endpoint.APIUrl)
 	transformer := providercompat.NormalizeTransformer(endpoint.Transformer)
@@ -91,7 +93,7 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 			},
 			"max_tokens": 16,
 		})
-	case "openai", "deepseek", "kimi":
+	case "openai", "deepseek", "kimi", "poe":
 		url = providercompat.JoinBaseURLAndPath(normalizedURL, providercompat.OpenAIChatTargetPath(transformer, normalizedURL))
 		model := endpoint.Model
 		if model == "" {
@@ -163,7 +165,7 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 	case "claude":
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
-	case "openai", "openai2", "deepseek", "kimi":
+	case "openai", "openai2", "deepseek", "kimi", "poe":
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	case "gemini":
 		// Gemini uses API key in URL query parameter
@@ -172,9 +174,7 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 		req.URL.RawQuery = q.Encode()
 	}
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	client := h.createEndpointHTTPClient(30*time.Second, url, configEndpoint)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -207,7 +207,7 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 				}
 			}
 		}
-	case "openai", "openai2", "deepseek", "kimi":
+	case "openai", "openai2", "deepseek", "kimi", "poe":
 		if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
 			if choice, ok := choices[0].(map[string]interface{}); ok {
 				if message, ok := choice["message"].(map[string]interface{}); ok {
@@ -267,6 +267,7 @@ func (h *Handler) handleFetchModels(w http.ResponseWriter, r *http.Request) {
 		APIUrl      string `json:"apiUrl"`
 		APIKey      string `json:"apiKey"`
 		Transformer string `json:"transformer"`
+		ProxyURL    string `json:"proxyUrl"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -274,7 +275,12 @@ func (h *Handler) handleFetchModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models, err := h.fetchModelsFromProvider(req.APIUrl, req.APIKey, req.Transformer)
+	models, err := h.fetchModelsFromProvider(config.Endpoint{
+		APIUrl:      req.APIUrl,
+		APIKey:      req.APIKey,
+		Transformer: req.Transformer,
+		ProxyURL:    strings.TrimSpace(req.ProxyURL),
+	})
 	if err != nil {
 		logger.Error("Failed to fetch models: %v", err)
 		WriteError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to fetch models: %v", err))
@@ -287,20 +293,20 @@ func (h *Handler) handleFetchModels(w http.ResponseWriter, r *http.Request) {
 }
 
 // fetchModelsFromProvider fetches available models from a provider
-func (h *Handler) fetchModelsFromProvider(apiUrl, apiKey, transformer string) ([]string, error) {
-	transformer = providercompat.NormalizeTransformer(transformer)
-	apiUrl = providercompat.NormalizeBaseURL(apiUrl)
+func (h *Handler) fetchModelsFromProvider(endpoint config.Endpoint) ([]string, error) {
+	transformer := providercompat.NormalizeTransformer(endpoint.Transformer)
+	apiUrl := providercompat.NormalizeBaseURL(endpoint.APIUrl)
 	var urls []string
 	var authHeader string
 
 	switch transformer {
-	case "openai", "openai2", "deepseek", "kimi":
+	case "openai", "openai2", "deepseek", "kimi", "poe":
 		candidates, err := providercompat.BuildOpenAIModelURLCandidates(apiUrl, transformer)
 		if err != nil {
 			return nil, err
 		}
 		urls = candidates
-		authHeader = "Bearer " + apiKey
+		authHeader = "Bearer " + endpoint.APIKey
 	case "claude":
 		// Claude doesn't have a models endpoint, return known models
 		return []string{
@@ -330,9 +336,7 @@ func (h *Handler) fetchModelsFromProvider(apiUrl, apiKey, transformer string) ([
 
 		req.Header.Set("Authorization", authHeader)
 
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-		}
+		client := h.createEndpointHTTPClient(10*time.Second, url, endpoint)
 
 		resp, err := client.Do(req)
 		if err != nil {
@@ -374,4 +378,24 @@ func (h *Handler) fetchModelsFromProvider(apiUrl, apiKey, transformer string) ([
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("no models URL candidates")
+}
+
+func (h *Handler) createEndpointHTTPClient(timeout time.Duration, targetURL string, endpoint config.Endpoint) *http.Client {
+	client := &http.Client{Timeout: timeout}
+	if h == nil || h.config == nil {
+		return client
+	}
+
+	proxyURL := config.ResolveEndpointProxyURL(&endpoint, targetURL, h.config.GetProxy(), h.config.GetCodexProxy())
+	if proxyURL == "" {
+		return client
+	}
+
+	transport, err := proxy.CreateProxyTransport(proxyURL)
+	if err != nil {
+		logger.Warn("Failed to create endpoint proxy transport: %v", err)
+		return client
+	}
+	client.Transport = transport
+	return client
 }

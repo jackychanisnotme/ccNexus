@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
@@ -57,6 +58,9 @@ func (h *Handler) handleEndpointCredentials(w http.ResponseWriter, r *http.Reque
 	}
 
 	switch parts[0] {
+	case "auth":
+		h.handleEndpointCredentialAuth(w, r, endpoint, parts[1:])
+		return
 	case "import":
 		if r.Method != http.MethodPost {
 			WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -86,6 +90,85 @@ func (h *Handler) handleEndpointCredentials(w http.ResponseWriter, r *http.Reque
 		h.deleteEndpointCredential(w, r, endpointName, id)
 	default:
 		WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (h *Handler) handleEndpointCredentialAuth(w http.ResponseWriter, r *http.Request, endpoint *storage.Endpoint, parts []string) {
+	if endpoint == nil {
+		WriteError(w, http.StatusNotFound, "Endpoint not found")
+		return
+	}
+	if h.codexAuth == nil {
+		WriteError(w, http.StatusInternalServerError, "Codex auth unavailable")
+		return
+	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeCodexTokenPool {
+		WriteError(w, http.StatusBadRequest, "Codex Token Pool endpoint required")
+		return
+	}
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		WriteError(w, http.StatusBadRequest, "Auth action required")
+		return
+	}
+
+	switch parts[0] {
+	case "start":
+		if len(parts) != 1 {
+			WriteError(w, http.StatusBadRequest, "Invalid auth path")
+			return
+		}
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		result, err := h.codexAuth.Start(r.Context(), storageEndpointToConfig(endpoint))
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		WriteSuccess(w, result)
+	default:
+		if len(parts) != 1 {
+			WriteError(w, http.StatusBadRequest, "Invalid auth path")
+			return
+		}
+		loginID := strings.TrimSpace(parts[0])
+		switch r.Method {
+		case http.MethodGet:
+			result, err := h.codexAuth.Status(loginID)
+			if err != nil {
+				WriteError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			WriteSuccess(w, result)
+		case http.MethodDelete:
+			if err := h.codexAuth.Cancel(loginID); err != nil {
+				WriteError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			WriteSuccess(w, map[string]interface{}{"message": "Auth canceled"})
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		}
+	}
+}
+
+func storageEndpointToConfig(endpoint *storage.Endpoint) config.Endpoint {
+	if endpoint == nil {
+		return config.Endpoint{}
+	}
+	return config.Endpoint{
+		Name:        endpoint.Name,
+		APIUrl:      endpoint.APIUrl,
+		APIKey:      endpoint.APIKey,
+		AuthMode:    endpoint.AuthMode,
+		Enabled:     endpoint.Enabled,
+		Transformer: endpoint.Transformer,
+		Model:       endpoint.Model,
+		Thinking:    endpoint.Thinking,
+		ForceStream: endpoint.ForceStream,
+		Remark:      endpoint.Remark,
+		ProxyURL:    endpoint.ProxyURL,
 	}
 }
 

@@ -97,6 +97,10 @@ let endpointPanelExpanded = true;
 let tokenPoolCurrentIndex = -1;
 let tokenPoolErrorCache = new Map();
 let tokenPoolUsageCache = new Map();
+let tokenPoolAuthPollTimer = null;
+let tokenPoolAuthCountdownTimer = null;
+let tokenPoolAuthLoginID = '';
+let tokenPoolAuthPending = false;
 let currentEndpointName = '';
 let endpointRuntimeStatuses = {};
 let endpointActiveCounts = {};
@@ -505,7 +509,7 @@ function ensureTokenPoolModal() {
                 <div id="tokenPoolHint" style="font-size: 12px; color: #6b7280; margin-bottom: 8px; display: none;"></div>
                 <div id="tokenPoolStats" style="display: block; margin-bottom: 12px;"></div>
                 <div class="token-pool-proxy-bar">
-                    <label for="tokenPoolProxyUrl" class="token-pool-proxy-label" style="font-size: 13px; font-weight: 600;" title="Only applies to Codex requests and credential refresh.">Codex Proxy</label>
+                    <label for="tokenPoolProxyUrl" class="token-pool-proxy-label" style="font-size: 13px; font-weight: 600;">${t('settings.proxyUrl')}</label>
                     <input id="tokenPoolProxyUrl" class="form-input" type="text" placeholder="${t('settings.proxyUrlPlaceholder')}">
                     <button class="btn btn-secondary" id="tokenPoolProxySaveBtn">Save</button>
                     <button class="btn btn-secondary" id="tokenPoolProxyClearBtn">Clear</button>
@@ -526,6 +530,7 @@ function ensureTokenPoolModal() {
                     <div style="margin-top: 8px;">
                         <button class="btn btn-primary" id="tokenPoolImportBtn">Import</button>
                         <button class="btn btn-secondary" id="tokenPoolImportFilesBtn">Import Files</button>
+                        <button class="btn btn-secondary" id="tokenPoolAuthBtn" style="display: none;">Auth</button>
                         <button class="btn btn-secondary" id="tokenPoolRefreshBtn">Refresh</button>
                         <button class="btn btn-secondary" id="tokenPoolRateRefreshBtn">Refresh Limits</button>
                     </div>
@@ -571,6 +576,7 @@ function ensureTokenPoolModal() {
     modal.querySelector('#tokenPoolCloseBtn').addEventListener('click', closeModal);
     modal.querySelector('#tokenPoolImportBtn').addEventListener('click', handleTokenPoolImport);
     modal.querySelector('#tokenPoolImportFilesBtn').addEventListener('click', handleTokenPoolFileImport);
+    modal.querySelector('#tokenPoolAuthBtn').addEventListener('click', handleTokenPoolAuthStart);
     modal.querySelector('#tokenPoolRefreshBtn').addEventListener('click', async () => {
         await loadTokenPoolData(tokenPoolCurrentIndex);
     });
@@ -587,6 +593,11 @@ function ensureTokenPoolModal() {
     return modal;
 }
 
+function isCodexTokenPoolEndpoint(index) {
+    const allEndpoints = window.config?.endpoints || [];
+    return index >= 0 && index < allEndpoints.length && allEndpoints[index]?.authMode === 'codex_token_pool';
+}
+
 async function loadTokenPoolProxySetting() {
     const modal = ensureTokenPoolModal();
     const input = modal.querySelector('#tokenPoolProxyUrl');
@@ -595,11 +606,13 @@ async function loadTokenPoolProxySetting() {
     }
 
     try {
-        const proxyUrl = await window.go.main.App.GetCodexProxyURL();
+        const proxyUrl = tokenPoolCurrentIndex >= 0
+            ? await window.go.main.App.GetEndpointProxyURL(tokenPoolCurrentIndex)
+            : '';
         input.value = proxyUrl || '';
     } catch (error) {
         const message = error?.message || String(error);
-        showNotification(`Failed to load Codex proxy: ${message}`, 'error');
+        showNotification(`Failed to load proxy: ${message}`, 'error');
     }
 }
 
@@ -612,12 +625,18 @@ async function saveTokenPoolProxySetting(clear = false) {
 
     const proxyUrl = clear ? '' : input.value.trim();
     try {
-        await window.go.main.App.SetCodexProxyURL(proxyUrl);
+        if (tokenPoolCurrentIndex < 0) {
+            throw new Error('No endpoint selected');
+        }
+        await window.go.main.App.SetEndpointProxyURL(tokenPoolCurrentIndex, proxyUrl);
+        if (Array.isArray(window.config?.endpoints) && window.config.endpoints[tokenPoolCurrentIndex]) {
+            window.config.endpoints[tokenPoolCurrentIndex].proxyUrl = proxyUrl;
+        }
         input.value = proxyUrl;
-        showNotification(proxyUrl ? 'Codex proxy updated' : 'Codex proxy cleared', 'success');
+        showNotification(proxyUrl ? 'Proxy updated' : 'Proxy cleared', 'success');
     } catch (error) {
         const message = error?.message || String(error);
-        showNotification(`Failed to save Codex proxy: ${message}`, 'error');
+        showNotification(`Failed to save proxy: ${message}`, 'error');
     }
 }
 
@@ -760,6 +779,236 @@ function showTokenPoolUsageDialog(label, usage) {
     }
 
     modal.classList.add('active');
+}
+
+function ensureTokenPoolAuthModal() {
+    let modal = document.getElementById('tokenPoolAuthModal');
+    if (modal) {
+        return modal;
+    }
+
+    modal = document.createElement('div');
+    modal.id = 'tokenPoolAuthModal';
+    modal.className = 'modal';
+    modal.style.zIndex = '1002';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 560px;">
+            <div class="modal-header">
+                <h2>ChatGPT Auth</h2>
+            </div>
+            <div class="modal-body">
+                <div id="tokenPoolAuthStatus" style="font-size: 13px; margin-bottom: 12px;">Preparing...</div>
+                <div style="display: grid; gap: 12px;">
+                    <div>
+                        <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">Verification URL</div>
+                        <a id="tokenPoolAuthUrl" href="#" target="_blank" rel="noreferrer" style="word-break: break-all;"></a>
+                    </div>
+                    <div>
+                        <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">User Code</div>
+                        <code id="tokenPoolAuthCode" style="display: inline-block; font-size: 22px; letter-spacing: 0; padding: 8px 10px; border-radius: 6px; background: rgba(148, 163, 184, 0.16);"></code>
+                    </div>
+                    <div id="tokenPoolAuthCountdown" style="font-size: 12px; color: #6b7280;"></div>
+                </div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px;">
+                    <button class="btn btn-primary" id="tokenPoolAuthOpenBtn">Open</button>
+                    <button class="btn btn-secondary" id="tokenPoolAuthCopyUrlBtn">Copy URL</button>
+                    <button class="btn btn-secondary" id="tokenPoolAuthCopyCodeBtn">Copy Code</button>
+                    <button class="btn btn-secondary" id="tokenPoolAuthCancelBtn">Cancel Login</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="tokenPoolAuthCloseBtn">Close</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    const closeModal = () => modal.classList.remove('active');
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            closeModal();
+        }
+    });
+    modal.querySelector('#tokenPoolAuthCloseBtn')?.addEventListener('click', closeModal);
+    modal.querySelector('#tokenPoolAuthOpenBtn')?.addEventListener('click', () => {
+        const url = modal.querySelector('#tokenPoolAuthUrl')?.textContent || '';
+        if (url && window.go?.main?.App?.OpenURL) {
+            window.go.main.App.OpenURL(url);
+        }
+    });
+    modal.querySelector('#tokenPoolAuthCopyUrlBtn')?.addEventListener('click', (event) => {
+        const url = modal.querySelector('#tokenPoolAuthUrl')?.textContent || '';
+        if (url) {
+            copyToClipboard(url, event.currentTarget);
+        }
+    });
+    modal.querySelector('#tokenPoolAuthCopyCodeBtn')?.addEventListener('click', (event) => {
+        const code = modal.querySelector('#tokenPoolAuthCode')?.textContent || '';
+        if (code) {
+            copyToClipboard(code, event.currentTarget);
+        }
+    });
+    modal.querySelector('#tokenPoolAuthCancelBtn')?.addEventListener('click', cancelTokenPoolAuthLogin);
+    return modal;
+}
+
+function clearTokenPoolAuthTimers() {
+    if (tokenPoolAuthPollTimer) {
+        clearInterval(tokenPoolAuthPollTimer);
+        tokenPoolAuthPollTimer = null;
+    }
+    if (tokenPoolAuthCountdownTimer) {
+        clearInterval(tokenPoolAuthCountdownTimer);
+        tokenPoolAuthCountdownTimer = null;
+    }
+}
+
+function setTokenPoolAuthStatus(message, type = 'info') {
+    const modal = ensureTokenPoolAuthModal();
+    const statusEl = modal.querySelector('#tokenPoolAuthStatus');
+    if (!statusEl) {
+        return;
+    }
+    const colors = {
+        info: '#374151',
+        success: '#047857',
+        warning: '#b45309',
+        error: '#b91c1c'
+    };
+    statusEl.textContent = message;
+    statusEl.style.color = colors[type] || colors.info;
+}
+
+function updateTokenPoolAuthCountdown(expiresAt) {
+    const modal = ensureTokenPoolAuthModal();
+    const countdownEl = modal.querySelector('#tokenPoolAuthCountdown');
+    if (!countdownEl) {
+        return;
+    }
+    const expires = Date.parse(expiresAt);
+    if (Number.isNaN(expires)) {
+        countdownEl.textContent = '';
+        return;
+    }
+    const remaining = Math.max(0, Math.ceil((expires - Date.now()) / 1000));
+    const minutes = Math.floor(remaining / 60);
+    const seconds = String(remaining % 60).padStart(2, '0');
+    countdownEl.textContent = `Expires in ${minutes}:${seconds}`;
+}
+
+async function handleTokenPoolAuthStart() {
+    if (tokenPoolCurrentIndex < 0) {
+        return;
+    }
+    if (!isCodexTokenPoolEndpoint(tokenPoolCurrentIndex)) {
+        showNotification('Auth is only available for Codex Token Pool endpoints', 'warning');
+        return;
+    }
+
+    const modal = ensureTokenPoolAuthModal();
+    clearTokenPoolAuthTimers();
+    tokenPoolAuthLoginID = '';
+    tokenPoolAuthPending = false;
+    modal.classList.add('active');
+    setTokenPoolAuthStatus('Requesting device code...');
+
+    try {
+        const raw = await window.go.main.App.StartCodexCredentialAuth(tokenPoolCurrentIndex);
+        const parsed = parseAppJSON(raw);
+        if (!parsed.success) {
+            throw new Error(parsed.error || 'Auth start failed');
+        }
+        const data = parsed.data || {};
+        tokenPoolAuthLoginID = data.loginId || '';
+        tokenPoolAuthPending = true;
+
+        const urlEl = modal.querySelector('#tokenPoolAuthUrl');
+        const codeEl = modal.querySelector('#tokenPoolAuthCode');
+        if (urlEl) {
+            urlEl.textContent = data.verificationUrl || '';
+            urlEl.href = data.verificationUrl || '#';
+        }
+        if (codeEl) {
+            codeEl.textContent = data.userCode || '';
+        }
+        setTokenPoolAuthStatus('Waiting for browser verification...');
+        updateTokenPoolAuthCountdown(data.expiresAt);
+        tokenPoolAuthCountdownTimer = setInterval(() => updateTokenPoolAuthCountdown(data.expiresAt), 1000);
+
+        const intervalMs = Math.max(2000, Number(data.pollIntervalSeconds || 2) * 1000);
+        tokenPoolAuthPollTimer = setInterval(pollTokenPoolAuthStatus, intervalMs);
+        await pollTokenPoolAuthStatus();
+    } catch (error) {
+        const message = error?.message || String(error);
+        clearTokenPoolAuthTimers();
+        tokenPoolAuthPending = false;
+        setTokenPoolAuthStatus(`Auth failed: ${message}`, 'error');
+        showNotification(`Auth failed: ${message}`, 'error');
+    }
+}
+
+async function pollTokenPoolAuthStatus() {
+    if (!tokenPoolAuthLoginID) {
+        return;
+    }
+    try {
+        const raw = await window.go.main.App.GetCodexCredentialAuthStatus(tokenPoolAuthLoginID);
+        const parsed = parseAppJSON(raw);
+        if (!parsed.success) {
+            throw new Error(parsed.error || 'Auth status failed');
+        }
+        const data = parsed.data || {};
+        switch (data.status) {
+            case 'complete':
+                clearTokenPoolAuthTimers();
+                tokenPoolAuthPending = false;
+                setTokenPoolAuthStatus(`Auth complete${data.email ? `: ${data.email}` : ''}`, 'success');
+                showNotification('ChatGPT auth imported', 'success');
+                await loadTokenPoolData(tokenPoolCurrentIndex);
+                if (window.loadConfig) {
+                    window.loadConfig();
+                }
+                break;
+            case 'failed':
+            case 'expired':
+                clearTokenPoolAuthTimers();
+                tokenPoolAuthPending = false;
+                setTokenPoolAuthStatus(`Auth ${data.status}: ${data.error || 'unknown error'}`, 'error');
+                showNotification(`Auth ${data.status}`, 'error');
+                break;
+            case 'canceled':
+                clearTokenPoolAuthTimers();
+                tokenPoolAuthPending = false;
+                setTokenPoolAuthStatus('Auth canceled', 'warning');
+                break;
+            default:
+                setTokenPoolAuthStatus('Waiting for browser verification...');
+        }
+    } catch (error) {
+        const message = error?.message || String(error);
+        clearTokenPoolAuthTimers();
+        tokenPoolAuthPending = false;
+        setTokenPoolAuthStatus(`Auth status failed: ${message}`, 'error');
+    }
+}
+
+async function cancelTokenPoolAuthLogin() {
+    if (!tokenPoolAuthLoginID || !tokenPoolAuthPending) {
+        return;
+    }
+    try {
+        const raw = await window.go.main.App.CancelCodexCredentialAuth(tokenPoolAuthLoginID);
+        const parsed = parseAppJSON(raw);
+        if (!parsed.success) {
+            throw new Error(parsed.error || 'Cancel failed');
+        }
+        clearTokenPoolAuthTimers();
+        tokenPoolAuthPending = false;
+        setTokenPoolAuthStatus('Auth canceled', 'warning');
+    } catch (error) {
+        const message = error?.message || String(error);
+        showNotification(`Cancel failed: ${message}`, 'error');
+    }
 }
 
 function showTokenPoolUpdateTokenDialog() {
@@ -1447,7 +1696,11 @@ export async function openTokenPoolModal(index, endpointName = '') {
     tokenPoolCurrentIndex = index;
     const modal = ensureTokenPoolModal();
     const title = modal.querySelector('#tokenPoolTitle');
+    const authBtn = modal.querySelector('#tokenPoolAuthBtn');
     title.textContent = `🪪 Token Pool${endpointName ? `: ${endpointName}` : ''}`;
+    if (authBtn) {
+        authBtn.style.display = isCodexTokenPoolEndpoint(index) ? '' : 'none';
+    }
     modal.classList.add('active');
     await loadTokenPoolProxySetting();
 

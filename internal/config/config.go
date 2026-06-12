@@ -98,6 +98,21 @@ func ApplyEndpointAuthModeRules(ep *Endpoint) {
 	}
 }
 
+func ResolveEndpointProxyURL(endpoint *Endpoint, targetURL string, globalProxy, codexProxy *ProxyConfig) string {
+	if endpoint != nil && strings.TrimSpace(endpoint.ProxyURL) != "" {
+		return strings.TrimSpace(endpoint.ProxyURL)
+	}
+	if isCodexBackendAPIURL(targetURL) {
+		if codexProxy != nil && strings.TrimSpace(codexProxy.URL) != "" {
+			return strings.TrimSpace(codexProxy.URL)
+		}
+	}
+	if globalProxy != nil && strings.TrimSpace(globalProxy.URL) != "" {
+		return strings.TrimSpace(globalProxy.URL)
+	}
+	return ""
+}
+
 func isCodexBackendAPIURL(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -133,6 +148,7 @@ type Endpoint struct {
 	Model       string `json:"model,omitempty"`       // Target model name for non-Claude APIs
 	Thinking    string `json:"thinking,omitempty"`    // Reasoning effort: off, low, medium, high, xhigh
 	ForceStream bool   `json:"forceStream,omitempty"`
+	ProxyURL    string `json:"proxyUrl,omitempty"` // Optional endpoint-specific proxy URL
 	Remark      string `json:"remark,omitempty"` // Optional remark for the endpoint
 }
 
@@ -773,6 +789,7 @@ type StorageEndpoint struct {
 	Model       string
 	Thinking    string
 	ForceStream bool
+	ProxyURL    string
 	Remark      string
 	SortOrder   int
 }
@@ -799,6 +816,7 @@ func LoadFromStorage(storage StorageAdapter) (*Config, error) {
 			Model:       ep.Model,
 			Thinking:    ep.Thinking,
 			ForceStream: ep.ForceStream,
+			ProxyURL:    strings.TrimSpace(ep.ProxyURL),
 			Remark:      ep.Remark,
 		}
 		if endpoint.Transformer == "" {
@@ -1105,6 +1123,7 @@ func (c *Config) SaveToStorage(storage StorageAdapter) error {
 			Model:       ep.Model,
 			Thinking:    ep.Thinking,
 			ForceStream: ep.ForceStream,
+			ProxyURL:    ep.ProxyURL,
 			Remark:      ep.Remark,
 		}
 		if normalizedEndpoint.Transformer == "" {
@@ -1119,6 +1138,7 @@ func (c *Config) SaveToStorage(storage StorageAdapter) error {
 		endpoint.Model = normalizedEndpoint.Model
 		endpoint.Thinking = normalizedEndpoint.Thinking
 		endpoint.ForceStream = normalizedEndpoint.ForceStream
+		endpoint.ProxyURL = normalizedEndpoint.ProxyURL
 		endpoint.Remark = normalizedEndpoint.Remark
 		endpoint.SortOrder = i
 

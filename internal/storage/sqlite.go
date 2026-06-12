@@ -108,6 +108,7 @@ func (s *SQLiteStorage) initSchema() error {
 		model TEXT,
 			thinking TEXT DEFAULT '',
 		force_stream BOOLEAN DEFAULT FALSE,
+		proxy_url TEXT DEFAULT '',
 		remark TEXT,
 		sort_order INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -213,6 +214,9 @@ func (s *SQLiteStorage) initSchema() error {
 		return err
 	}
 	if err := s.migrateForceStream(); err != nil {
+		return err
+	}
+	if err := s.migrateProxyURL(); err != nil {
 		return err
 	}
 	if err := s.migrateEndpointRuntimeFailureStatusCode(); err != nil {
@@ -325,6 +329,23 @@ func (s *SQLiteStorage) migrateForceStream() error {
 	return err
 }
 
+func (s *SQLiteStorage) migrateProxyURL() error {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('endpoints') WHERE name='proxy_url'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+
+	if count == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE endpoints ADD COLUMN proxy_url TEXT DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+
+	_, err = s.db.Exec(`UPDATE endpoints SET proxy_url='' WHERE proxy_url IS NULL`)
+	return err
+}
+
 func (s *SQLiteStorage) migrateEndpointRuntimeFailureStatusCode() error {
 	var count int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('endpoint_runtime_status') WHERE name='last_failure_status_code'`).Scan(&count)
@@ -346,7 +367,7 @@ func (s *SQLiteStorage) GetEndpoints() ([]Endpoint, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query(`SELECT id, name, api_url, api_key, auth_mode, enabled, transformer, model, COALESCE(thinking, ''), force_stream, remark, sort_order, created_at, updated_at FROM endpoints ORDER BY sort_order ASC`)
+	rows, err := s.db.Query(`SELECT id, name, api_url, api_key, auth_mode, enabled, transformer, model, COALESCE(thinking, ''), force_stream, COALESCE(proxy_url, ''), remark, sort_order, created_at, updated_at FROM endpoints ORDER BY sort_order ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +376,7 @@ func (s *SQLiteStorage) GetEndpoints() ([]Endpoint, error) {
 	var endpoints []Endpoint
 	for rows.Next() {
 		var ep Endpoint
-		if err := rows.Scan(&ep.ID, &ep.Name, &ep.APIUrl, &ep.APIKey, &ep.AuthMode, &ep.Enabled, &ep.Transformer, &ep.Model, &ep.Thinking, &ep.ForceStream, &ep.Remark, &ep.SortOrder, &ep.CreatedAt, &ep.UpdatedAt); err != nil {
+		if err := rows.Scan(&ep.ID, &ep.Name, &ep.APIUrl, &ep.APIKey, &ep.AuthMode, &ep.Enabled, &ep.Transformer, &ep.Model, &ep.Thinking, &ep.ForceStream, &ep.ProxyURL, &ep.Remark, &ep.SortOrder, &ep.CreatedAt, &ep.UpdatedAt); err != nil {
 			return nil, err
 		}
 		normalizeEndpointAuthMode(&ep)
@@ -371,8 +392,8 @@ func (s *SQLiteStorage) SaveEndpoint(ep *Endpoint) error {
 
 	normalizeEndpointAuthMode(ep)
 
-	result, err := s.db.Exec(`INSERT INTO endpoints (name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, remark, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ep.Name, ep.APIUrl, ep.APIKey, ep.AuthMode, ep.Enabled, ep.Transformer, ep.Model, ep.Thinking, ep.ForceStream, ep.Remark, ep.SortOrder)
+	result, err := s.db.Exec(`INSERT INTO endpoints (name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, proxy_url, remark, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ep.Name, ep.APIUrl, ep.APIKey, ep.AuthMode, ep.Enabled, ep.Transformer, ep.Model, ep.Thinking, ep.ForceStream, ep.ProxyURL, ep.Remark, ep.SortOrder)
 	if err != nil {
 		return err
 	}
@@ -391,8 +412,8 @@ func (s *SQLiteStorage) UpdateEndpoint(ep *Endpoint) error {
 
 	normalizeEndpointAuthMode(ep)
 
-	_, err := s.db.Exec(`UPDATE endpoints SET api_url=?, api_key=?, auth_mode=?, enabled=?, transformer=?, model=?, thinking=?, force_stream=?, remark=?, sort_order=?, updated_at=CURRENT_TIMESTAMP WHERE name=?`,
-		ep.APIUrl, ep.APIKey, ep.AuthMode, ep.Enabled, ep.Transformer, ep.Model, ep.Thinking, ep.ForceStream, ep.Remark, ep.SortOrder, ep.Name)
+	_, err := s.db.Exec(`UPDATE endpoints SET api_url=?, api_key=?, auth_mode=?, enabled=?, transformer=?, model=?, thinking=?, force_stream=?, proxy_url=?, remark=?, sort_order=?, updated_at=CURRENT_TIMESTAMP WHERE name=?`,
+		ep.APIUrl, ep.APIKey, ep.AuthMode, ep.Enabled, ep.Transformer, ep.Model, ep.Thinking, ep.ForceStream, ep.ProxyURL, ep.Remark, ep.SortOrder, ep.Name)
 	return err
 }
 
@@ -995,6 +1016,7 @@ func normalizeEndpointAuthMode(ep *Endpoint) {
 		Model:       ep.Model,
 		Thinking:    ep.Thinking,
 		ForceStream: ep.ForceStream,
+		ProxyURL:    ep.ProxyURL,
 		Remark:      ep.Remark,
 	}
 	if normalized.Transformer == "" {
@@ -1008,6 +1030,7 @@ func normalizeEndpointAuthMode(ep *Endpoint) {
 	ep.Model = normalized.Model
 	ep.Thinking = normalized.Thinking
 	ep.ForceStream = normalized.ForceStream
+	ep.ProxyURL = strings.TrimSpace(normalized.ProxyURL)
 	ep.Remark = normalized.Remark
 }
 
@@ -1038,6 +1061,9 @@ func compareEndpoints(local, remote Endpoint) []string {
 	}
 	if local.ForceStream != remote.ForceStream {
 		conflicts = append(conflicts, "forceStream")
+	}
+	if local.ProxyURL != remote.ProxyURL {
+		conflicts = append(conflicts, "proxyUrl")
 	}
 	if local.Remark != remote.Remark {
 		conflicts = append(conflicts, "remark")

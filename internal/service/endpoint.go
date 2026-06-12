@@ -23,7 +23,7 @@ import (
 )
 
 // createHTTPClient creates an HTTP client with optional proxy support
-func (e *EndpointService) createHTTPClient(timeout time.Duration, targetURL string) *http.Client {
+func (e *EndpointService) createHTTPClient(timeout time.Duration, targetURL string, endpoint config.Endpoint) *http.Client {
 	// Always create client with proper transport configuration
 	// Enhanced for large SSE streaming and HTTP/2 support
 	client := &http.Client{
@@ -41,7 +41,10 @@ func (e *EndpointService) createHTTPClient(timeout time.Duration, targetURL stri
 		},
 	}
 
-	proxyURL := e.resolveProxyURLForTarget(targetURL)
+	if e == nil || e.config == nil {
+		return client
+	}
+	proxyURL := config.ResolveEndpointProxyURL(&endpoint, targetURL, e.config.GetProxy(), e.config.GetCodexProxy())
 	// Override with proxy transport if configured
 	if strings.TrimSpace(proxyURL) != "" {
 		logger.Debug("Using proxy for request: %s", proxyURL)
@@ -55,27 +58,23 @@ func (e *EndpointService) createHTTPClient(timeout time.Duration, targetURL stri
 	return client
 }
 
-func (e *EndpointService) resolveProxyURLForTarget(targetURL string) string {
-	targetURL = strings.TrimSpace(targetURL)
-	if targetURL != "" {
-		if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
-			targetURL = "https://" + targetURL
-		}
-		parsed, err := url.Parse(targetURL)
-		if err == nil && parsed != nil {
-			host := strings.ToLower(strings.TrimSpace(parsed.Host))
-			cleanPath := path.Clean(strings.TrimSpace(parsed.Path))
-			if host == "chatgpt.com" && strings.Contains(cleanPath, "/backend-api/codex") {
-				if codexProxy := e.config.GetCodexProxy(); codexProxy != nil && strings.TrimSpace(codexProxy.URL) != "" {
-					return codexProxy.URL
-				}
-			}
-		}
+func endpointStorageToConfig(endpoint *storage.Endpoint) config.Endpoint {
+	if endpoint == nil {
+		return config.Endpoint{}
 	}
-	if proxyCfg := e.config.GetProxy(); proxyCfg != nil && strings.TrimSpace(proxyCfg.URL) != "" {
-		return proxyCfg.URL
+	return config.Endpoint{
+		Name:        endpoint.Name,
+		APIUrl:      endpoint.APIUrl,
+		APIKey:      endpoint.APIKey,
+		AuthMode:    endpoint.AuthMode,
+		Enabled:     endpoint.Enabled,
+		Transformer: endpoint.Transformer,
+		Model:       endpoint.Model,
+		Thinking:    endpoint.Thinking,
+		ForceStream: endpoint.ForceStream,
+		ProxyURL:    endpoint.ProxyURL,
+		Remark:      endpoint.Remark,
 	}
-	return ""
 }
 
 // Test endpoint constants
@@ -137,7 +136,7 @@ func (e *EndpointService) resolveEndpointAPIKey(endpoint config.Endpoint) (strin
 }
 
 // AddEndpoint adds a new endpoint
-func (e *EndpointService) AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking string, forceStream bool, remark string) error {
+func (e *EndpointService) AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, remark string) error {
 	endpoints := e.config.GetEndpoints()
 	for _, ep := range endpoints {
 		if ep.Name == name {
@@ -166,6 +165,7 @@ func (e *EndpointService) AddEndpoint(name, apiUrl, apiKey, authMode, transforme
 		Model:       model,
 		Thinking:    thinking,
 		ForceStream: forceStream,
+		ProxyURL:    strings.TrimSpace(proxyURL),
 		Remark:      remark,
 	}
 	config.ApplyEndpointAuthModeRules(&newEndpoint)
@@ -233,7 +233,7 @@ func (e *EndpointService) RemoveEndpoint(index int) error {
 }
 
 // UpdateEndpoint updates an endpoint by index
-func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMode, transformer, model, thinking string, forceStream bool, remark string) error {
+func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, remark string) error {
 	endpoints := e.config.GetEndpoints()
 
 	if index < 0 || index >= len(endpoints) {
@@ -275,6 +275,7 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 		Model:       model,
 		Thinking:    thinking,
 		ForceStream: forceStream,
+		ProxyURL:    strings.TrimSpace(proxyURL),
 		Remark:      remark,
 	}
 	config.ApplyEndpointAuthModeRules(&updatedEndpoint)
@@ -418,6 +419,46 @@ func (e *EndpointService) SwitchToEndpoint(endpointName string) error {
 	return e.proxy.SetCurrentEndpoint(endpointName)
 }
 
+func (e *EndpointService) GetEndpointProxyURL(index int) string {
+	endpoints := e.config.GetEndpoints()
+	if index < 0 || index >= len(endpoints) {
+		return ""
+	}
+	return strings.TrimSpace(endpoints[index].ProxyURL)
+}
+
+func (e *EndpointService) SetEndpointProxyURL(index int, proxyURL string) error {
+	endpoints := e.config.GetEndpoints()
+	if index < 0 || index >= len(endpoints) {
+		return fmt.Errorf("invalid endpoint index: %d", index)
+	}
+
+	currentEndpointName := ""
+	if e.proxy != nil {
+		currentEndpointName = e.proxy.GetCurrentEndpointName()
+	}
+	endpoints[index].ProxyURL = strings.TrimSpace(proxyURL)
+	e.config.UpdateEndpoints(endpoints)
+
+	if err := e.config.Validate(); err != nil {
+		return err
+	}
+	if e.proxy != nil {
+		if err := e.proxy.UpdateConfigPreservingCurrentName(e.config, currentEndpointName); err != nil {
+			return err
+		}
+	}
+	if e.storage != nil {
+		configAdapter := storage.NewConfigStorageAdapter(e.storage)
+		if err := e.config.SaveToStorage(configAdapter); err != nil {
+			return fmt.Errorf("failed to save config: %w", err)
+		}
+	}
+
+	logger.Info("Endpoint proxy updated: %s", endpoints[index].Name)
+	return nil
+}
+
 // TestEndpoint tests an endpoint by sending a simple request
 func (e *EndpointService) TestEndpoint(index int) string {
 	endpoints := e.config.GetEndpoints()
@@ -469,7 +510,7 @@ func (e *EndpointService) TestEndpoint(index int) string {
 			},
 		})
 
-	case "openai", "deepseek", "kimi":
+	case "openai", "deepseek", "kimi", "poe":
 		apiPath = providercompat.OpenAIChatTargetPath(transformer, endpoint.APIUrl)
 		model := endpoint.Model
 		if model == "" {
@@ -560,7 +601,7 @@ func (e *EndpointService) TestEndpoint(index int) string {
 	case "claude":
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
-	case "openai", "openai2", "deepseek", "kimi":
+	case "openai", "openai2", "deepseek", "kimi", "poe":
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	case "gemini":
 		q := req.URL.Query()
@@ -569,7 +610,7 @@ func (e *EndpointService) TestEndpoint(index int) string {
 	}
 	applyCodexCredentialHeadersForTest(req, credential, requestBody)
 
-	client := e.createHTTPClient(30*time.Second, req.URL.String())
+	client := e.createHTTPClient(30*time.Second, req.URL.String(), endpoint)
 	resp, err := client.Do(req)
 	if err != nil {
 		result := map[string]interface{}{
@@ -624,7 +665,7 @@ func (e *EndpointService) TestEndpoint(index int) string {
 				}
 			}
 		}
-	case "openai", "deepseek", "kimi":
+	case "openai", "deepseek", "kimi", "poe":
 		if choices, ok := responseData["choices"].([]interface{}); ok && len(choices) > 0 {
 			if choice, ok := choices[0].(map[string]interface{}); ok {
 				if msg, ok := choice["message"].(map[string]interface{}); ok {
@@ -696,7 +737,7 @@ func (e *EndpointService) TestEndpointLight(index int) string {
 
 	// Codex endpoints are validated by a minimal ping-style inference request only.
 	if isCodexOpenAI2 {
-		statusCode, minErr := e.testMinimalRequest(normalizedURL, apiKey, transformer, endpoint.Model, credential)
+		statusCode, minErr := e.testMinimalRequest(endpoint, normalizedURL, apiKey, transformer, endpoint.Model, credential)
 		if minErr == nil {
 			return e.testResult(true, "ok", "minimal", "Minimal ping request successful")
 		}
@@ -715,7 +756,7 @@ func (e *EndpointService) TestEndpointLight(index int) string {
 	authMode := config.NormalizeAuthMode(endpoint.AuthMode)
 	if config.IsTokenPoolAuthMode(authMode) {
 		// Token pool credentials are best validated by an actual minimal inference request.
-		statusCode, minErr := e.testMinimalRequest(normalizedURL, apiKey, transformer, endpoint.Model, credential)
+		statusCode, minErr := e.testMinimalRequest(endpoint, normalizedURL, apiKey, transformer, endpoint.Model, credential)
 		if minErr == nil {
 			return e.testResult(true, "ok", "minimal", "Minimal request successful")
 		}
@@ -732,7 +773,7 @@ func (e *EndpointService) TestEndpointLight(index int) string {
 	}
 
 	// Step 1: Try models API
-	statusCode, err := e.testModelsAPI(normalizedURL, apiKey, transformer)
+	statusCode, err := e.testModelsAPI(endpoint, normalizedURL, apiKey, transformer)
 	if err == nil {
 		return e.testResult(true, "ok", "models", "Models API accessible")
 	}
@@ -742,7 +783,7 @@ func (e *EndpointService) TestEndpointLight(index int) string {
 
 	// Step 2: Try token count (Claude) or billing API (OpenAI)
 	if transformer == "claude" {
-		statusCode, err = e.testTokenCountAPI(normalizedURL, apiKey)
+		statusCode, err = e.testTokenCountAPI(endpoint, normalizedURL, apiKey)
 		if err == nil {
 			return e.testResult(true, "ok", "token_count", "Token count API accessible")
 		}
@@ -750,7 +791,7 @@ func (e *EndpointService) TestEndpointLight(index int) string {
 			return e.testResult(false, "invalid_key", "token_count", fmt.Sprintf("Authentication failed: HTTP %d", statusCode))
 		}
 	} else if providercompat.IsOpenAIChatTransformer(transformer) || transformer == "openai2" {
-		statusCode, err = e.testBillingAPI(normalizedURL, apiKey)
+		statusCode, err = e.testBillingAPI(endpoint, normalizedURL, apiKey)
 		if err == nil {
 			return e.testResult(true, "ok", "billing", "Billing API accessible")
 		}
@@ -760,7 +801,7 @@ func (e *EndpointService) TestEndpointLight(index int) string {
 	}
 
 	// Step 3: Minimal request (fallback)
-	statusCode, err = e.testMinimalRequest(normalizedURL, apiKey, transformer, endpoint.Model, nil)
+	statusCode, err = e.testMinimalRequest(endpoint, normalizedURL, apiKey, transformer, endpoint.Model, nil)
 	if err == nil {
 		return e.testResult(true, "ok", "minimal", "Minimal request successful")
 	}
@@ -841,7 +882,7 @@ func (e *EndpointService) testSingleEndpointZeroCost(endpoint config.Endpoint) s
 		return "invalid_key"
 	}
 	if isCodexOpenAI2Endpoint(transformer, normalizedURL) {
-		statusCode, minErr := e.testMinimalRequest(normalizedURL, apiKey, transformer, endpoint.Model, credential)
+		statusCode, minErr := e.testMinimalRequest(endpoint, normalizedURL, apiKey, transformer, endpoint.Model, credential)
 		if minErr == nil {
 			return "ok"
 		}
@@ -851,21 +892,21 @@ func (e *EndpointService) testSingleEndpointZeroCost(endpoint config.Endpoint) s
 		return "unknown"
 	}
 
-	statusCode, err := e.testModelsAPI(normalizedURL, apiKey, transformer)
+	statusCode, err := e.testModelsAPI(endpoint, normalizedURL, apiKey, transformer)
 	if err == nil {
 		status = "ok"
 	} else if statusCode == 401 || statusCode == 403 {
 		status = "invalid_key"
 	} else {
 		if transformer == "claude" {
-			statusCode, err = e.testTokenCountAPI(normalizedURL, apiKey)
+			statusCode, err = e.testTokenCountAPI(endpoint, normalizedURL, apiKey)
 			if err == nil {
 				status = "ok"
 			} else if statusCode == 401 || statusCode == 403 {
 				status = "invalid_key"
 			}
 		} else if providercompat.IsOpenAIChatTransformer(transformer) || transformer == "openai2" {
-			statusCode, err = e.testBillingAPI(normalizedURL, apiKey)
+			statusCode, err = e.testBillingAPI(endpoint, normalizedURL, apiKey)
 			if err == nil {
 				status = "ok"
 			} else if statusCode == 401 || statusCode == 403 {
@@ -877,7 +918,7 @@ func (e *EndpointService) testSingleEndpointZeroCost(endpoint config.Endpoint) s
 	return status
 }
 
-func (e *EndpointService) testModelsAPI(apiUrl, apiKey, transformer string) (int, error) {
+func (e *EndpointService) testModelsAPI(endpoint config.Endpoint, apiUrl, apiKey, transformer string) (int, error) {
 	transformer = providercompat.NormalizeTransformer(transformer)
 	var urls []string
 	if transformer == "gemini" {
@@ -902,7 +943,7 @@ func (e *EndpointService) testModelsAPI(apiUrl, apiKey, transformer string) (int
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
 
-		client := e.createHTTPClient(8*time.Second, req.URL.String())
+		client := e.createHTTPClient(8*time.Second, req.URL.String(), endpoint)
 		resp, err := client.Do(req)
 		if err != nil {
 			return 0, err
@@ -955,7 +996,7 @@ func (e *EndpointService) testModelsAPI(apiUrl, apiKey, transformer string) (int
 	return 0, fmt.Errorf("no models URL candidates")
 }
 
-func (e *EndpointService) testTokenCountAPI(apiUrl, apiKey string) (int, error) {
+func (e *EndpointService) testTokenCountAPI(endpoint config.Endpoint, apiUrl, apiKey string) (int, error) {
 	url := fmt.Sprintf("%s/v1/messages/count_tokens", apiUrl)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -975,7 +1016,7 @@ func (e *EndpointService) testTokenCountAPI(apiUrl, apiKey string) (int, error) 
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("anthropic-beta", "token-counting-2024-11-01")
 
-	client := e.createHTTPClient(8*time.Second, req.URL.String())
+	client := e.createHTTPClient(8*time.Second, req.URL.String(), endpoint)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
@@ -1003,7 +1044,7 @@ func (e *EndpointService) testTokenCountAPI(apiUrl, apiKey string) (int, error) 
 	return resp.StatusCode, nil
 }
 
-func (e *EndpointService) testBillingAPI(apiUrl, apiKey string) (int, error) {
+func (e *EndpointService) testBillingAPI(endpoint config.Endpoint, apiUrl, apiKey string) (int, error) {
 	url := fmt.Sprintf("%s/v1/dashboard/billing/credit_grants", apiUrl)
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -1013,7 +1054,7 @@ func (e *EndpointService) testBillingAPI(apiUrl, apiKey string) (int, error) {
 
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := e.createHTTPClient(8*time.Second, req.URL.String())
+	client := e.createHTTPClient(8*time.Second, req.URL.String(), endpoint)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
@@ -1037,7 +1078,7 @@ func (e *EndpointService) testBillingAPI(apiUrl, apiKey string) (int, error) {
 	return resp.StatusCode, nil
 }
 
-func (e *EndpointService) testMinimalRequest(apiUrl, apiKey, transformer, model string, credential *storage.EndpointCredential) (int, error) {
+func (e *EndpointService) testMinimalRequest(endpoint config.Endpoint, apiUrl, apiKey, transformer, model string, credential *storage.EndpointCredential) (int, error) {
 	transformer = providercompat.NormalizeTransformer(transformer)
 	var reqURL string
 	var body []byte
@@ -1054,7 +1095,7 @@ func (e *EndpointService) testMinimalRequest(apiUrl, apiKey, transformer, model 
 			"max_tokens": 1,
 			"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
 		})
-	case "openai", "deepseek", "kimi":
+	case "openai", "deepseek", "kimi", "poe":
 		apiPath = providercompat.OpenAIChatTargetPath(transformer, apiUrl)
 		if model == "" {
 			model = providercompat.DefaultModel(transformer)
@@ -1144,7 +1185,7 @@ func (e *EndpointService) testMinimalRequest(apiUrl, apiKey, transformer, model 
 			// Align with production proxy request transport stack to avoid protocol mismatch.
 			timeout = 45 * time.Second
 		}
-		client := e.createHTTPClient(timeout, reqURL)
+		client := e.createHTTPClient(timeout, reqURL, endpoint)
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
@@ -1371,7 +1412,7 @@ func (e *EndpointService) resolveTokenPoolAuthForAPI(apiURL, transformer string)
 }
 
 // FetchModels fetches available models from the API provider
-func (e *EndpointService) FetchModels(apiUrl, apiKey, transformer string) string {
+func (e *EndpointService) FetchModels(apiUrl, apiKey, transformer, proxyURL string) string {
 	logger.Info("Fetching models for transformer: %s", transformer)
 
 	if transformer == "" {
@@ -1401,18 +1442,22 @@ func (e *EndpointService) FetchModels(apiUrl, apiKey, transformer string) string
 
 	var models []string
 	var err error
+	requestEndpoint := config.Endpoint{
+		APIUrl:   normalizedAPIUrl,
+		ProxyURL: strings.TrimSpace(proxyURL),
+	}
 
 	switch providercompat.NormalizeTransformer(transformer) {
 	case "claude":
-		models, err = e.fetchOpenAIModels(normalizedAPIUrl, resolvedAPIKey, transformer, resolvedCredential)
-	case "openai", "deepseek", "kimi", "openai2":
+		models, err = e.fetchOpenAIModels(normalizedAPIUrl, resolvedAPIKey, transformer, resolvedCredential, requestEndpoint)
+	case "openai", "deepseek", "kimi", "poe", "openai2":
 		if transformer == "openai2" && isCodexBackendAPIURL(normalizedAPIUrl) {
 			models, err = e.fetchCodexModels(normalizedAPIUrl, resolvedAPIKey, resolvedCredential)
 			break
 		}
-		models, err = e.fetchOpenAIModels(normalizedAPIUrl, resolvedAPIKey, transformer, resolvedCredential)
+		models, err = e.fetchOpenAIModels(normalizedAPIUrl, resolvedAPIKey, transformer, resolvedCredential, requestEndpoint)
 	case "gemini":
-		models, err = e.fetchGeminiModels(normalizedAPIUrl, resolvedAPIKey)
+		models, err = e.fetchGeminiModels(normalizedAPIUrl, resolvedAPIKey, requestEndpoint)
 	default:
 		result := map[string]interface{}{
 			"success": false,
@@ -1443,7 +1488,7 @@ func (e *EndpointService) FetchModels(apiUrl, apiKey, transformer string) string
 	return string(data)
 }
 
-func (e *EndpointService) fetchOpenAIModels(apiUrl, apiKey, transformer string, credential *storage.EndpointCredential) ([]string, error) {
+func (e *EndpointService) fetchOpenAIModels(apiUrl, apiKey, transformer string, credential *storage.EndpointCredential, endpoint config.Endpoint) ([]string, error) {
 	transformer = providercompat.NormalizeTransformer(transformer)
 	isCodexBackend := isCodexBackendAPIURL(apiUrl)
 	var candidates []string
@@ -1472,7 +1517,7 @@ func (e *EndpointService) fetchOpenAIModels(apiUrl, apiKey, transformer string, 
 		}
 		logger.Debug("Fetching models from: %s (transformer=%s)", url, transformer)
 
-		client := e.createHTTPClient(30*time.Second, req.URL.String())
+		client := e.createHTTPClient(30*time.Second, req.URL.String(), endpoint)
 		resp, err := client.Do(req)
 		if err != nil {
 			logger.Error("Request failed for %s: %v", url, err)
@@ -1561,7 +1606,7 @@ func codexRegistryModels() []string {
 	}
 }
 
-func (e *EndpointService) fetchGeminiModels(apiUrl, apiKey string) ([]string, error) {
+func (e *EndpointService) fetchGeminiModels(apiUrl, apiKey string, endpoint config.Endpoint) ([]string, error) {
 	url := fmt.Sprintf("%s/v1beta/models?key=%s", apiUrl, apiKey)
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -1572,7 +1617,7 @@ func (e *EndpointService) fetchGeminiModels(apiUrl, apiKey string) ([]string, er
 
 	logger.Debug("Fetching Gemini models from: %s", apiUrl)
 
-	client := e.createHTTPClient(30*time.Second, req.URL.String())
+	client := e.createHTTPClient(30*time.Second, req.URL.String(), endpoint)
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Error("Request failed for %s: %v", apiUrl, err)

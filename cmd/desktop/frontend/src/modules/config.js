@@ -40,12 +40,12 @@ export async function updatePort(port) {
     await window.go.main.App.UpdatePort(port);
 }
 
-export async function addEndpoint(name, url, key, authMode, transformer, model, thinking, forceStream, remark) {
-    await window.go.main.App.AddEndpoint(name, url, key, authMode, transformer, model, thinking ?? '', !!forceStream, remark || '');
+export async function addEndpoint(name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, remark) {
+    await window.go.main.App.AddEndpoint(name, url, key, authMode, transformer, model, thinking ?? '', proxyUrl || '', !!forceStream, remark || '');
 }
 
-export async function updateEndpoint(index, name, url, key, authMode, transformer, model, thinking, forceStream, remark) {
-    await window.go.main.App.UpdateEndpoint(index, name, url, key, authMode, transformer, model, thinking ?? '', !!forceStream, remark || '');
+export async function updateEndpoint(index, name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, remark) {
+    await window.go.main.App.UpdateEndpoint(index, name, url, key, authMode, transformer, model, thinking ?? '', proxyUrl || '', !!forceStream, remark || '');
 }
 
 export async function removeEndpoint(index) {

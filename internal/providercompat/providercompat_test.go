@@ -74,6 +74,24 @@ func TestOpenAIChatTargetPathDeepSeekOfficial(t *testing.T) {
 	}
 }
 
+func TestPoeIsOpenAIChatCompatible(t *testing.T) {
+	if got := NormalizeTransformer("poe_chat"); got != "poe" {
+		t.Fatalf("expected poe_chat alias to normalize to poe, got %q", got)
+	}
+	if !IsOpenAIChatTransformer("poe") {
+		t.Fatal("expected poe transformer to be OpenAI Chat compatible")
+	}
+	if got := DefaultModel("poe"); got != "claude-fable-5" {
+		t.Fatalf("expected Poe default model claude-fable-5, got %q", got)
+	}
+	if got := Owner("poe"); got != "poe" {
+		t.Fatalf("expected Poe owner, got %q", got)
+	}
+	if got := ProviderKind("openai", "https://api.poe.com/v1"); got != "poe" {
+		t.Fatalf("expected api.poe.com OpenAI endpoint to be detected as poe, got %q", got)
+	}
+}
+
 func TestAdaptOpenAIChatPayloadForDeepSeek(t *testing.T) {
 	raw := []byte(`{"model":"deepseek-chat","max_completion_tokens":8,"reasoning":{"effort":"medium"}}`)
 	out := AdaptOpenAIChatPayload(raw, "deepseek", "https://api.deepseek.com", "")
@@ -97,6 +115,44 @@ func TestAdaptOpenAIChatPayloadForDeepSeek(t *testing.T) {
 	}
 	if _, ok := payload["reasoning"]; ok {
 		t.Fatalf("did not expect reasoning object, got %#v", payload["reasoning"])
+	}
+}
+
+func TestAdaptOpenAIChatPayloadForPoeOutputEffort(t *testing.T) {
+	raw := []byte(`{"model":"claude-fable-5","messages":[],"max_completion_tokens":8,"reasoning":{"effort":"xhigh"}}`)
+	out := AdaptOpenAIChatPayload(raw, "poe", "https://api.poe.com/v1", "")
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if _, ok := payload["max_completion_tokens"]; ok {
+		t.Fatalf("did not expect max_completion_tokens, got %#v", payload)
+	}
+	if payload["max_tokens"].(float64) != 8 {
+		t.Fatalf("expected max_tokens=8, got %#v", payload["max_tokens"])
+	}
+	if payload["output_effort"] != "max" {
+		t.Fatalf("expected output_effort=max, got %#v", payload["output_effort"])
+	}
+	if _, ok := payload["reasoning"]; ok {
+		t.Fatalf("did not expect reasoning object for Poe, got %#v", payload["reasoning"])
+	}
+	if _, ok := payload["reasoning_effort"]; ok {
+		t.Fatalf("did not expect reasoning_effort for Poe, got %#v", payload["reasoning_effort"])
+	}
+}
+
+func TestAdaptOpenAIChatPayloadForPoePreservesExplicitOutputEffort(t *testing.T) {
+	raw := []byte(`{"model":"claude-fable-5","messages":[],"output_effort":"max"}`)
+	out := AdaptOpenAIChatPayload(raw, "openai", "https://api.poe.com/v1", "low")
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if payload["output_effort"] != "max" {
+		t.Fatalf("expected explicit output_effort to be preserved, got %#v", payload["output_effort"])
 	}
 }
 

@@ -96,6 +96,81 @@ func TestMigrateDeepSeekThinkingDefaultRunsOnce(t *testing.T) {
 	}
 }
 
+func TestMigrateEndpointProxyURLRunsOnce(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "ccnexus.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE endpoints (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL,
+			api_url TEXT NOT NULL,
+			api_key TEXT NOT NULL,
+			auth_mode TEXT NOT NULL DEFAULT 'api_key',
+			enabled BOOLEAN DEFAULT TRUE,
+			transformer TEXT DEFAULT 'claude',
+			model TEXT,
+			thinking TEXT DEFAULT '',
+			force_stream BOOLEAN DEFAULT FALSE,
+			remark TEXT,
+			sort_order INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE app_config (
+			key TEXT PRIMARY KEY,
+			value TEXT,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO endpoints (name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, remark)
+		VALUES ('Primary', 'https://api.example.com', 'key', 'api_key', TRUE, 'claude', '', '', '');
+	`)
+	if err != nil {
+		t.Fatalf("seed database: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seed database: %v", err)
+	}
+
+	store, err := NewSQLiteStorage(dbPath)
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	endpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get endpoints: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected one endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].ProxyURL != "" {
+		t.Fatalf("expected empty proxy URL after migration, got %q", endpoints[0].ProxyURL)
+	}
+
+	endpoints[0].ProxyURL = "http://127.0.0.1:7890"
+	if err := store.UpdateEndpoint(&endpoints[0]); err != nil {
+		t.Fatalf("update endpoint proxy url: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close migrated storage: %v", err)
+	}
+
+	store, err = NewSQLiteStorage(dbPath)
+	if err != nil {
+		t.Fatalf("reopen storage: %v", err)
+	}
+	defer store.Close()
+	endpoints, err = store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("reload endpoints: %v", err)
+	}
+	if got := endpoints[0].ProxyURL; got != "http://127.0.0.1:7890" {
+		t.Fatalf("expected proxy URL to persist, got %q", got)
+	}
+}
+
 func TestEndpointRuntimeStatusPersistsAcrossReopen(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ccnexus.db")
 	store, err := NewSQLiteStorage(dbPath)

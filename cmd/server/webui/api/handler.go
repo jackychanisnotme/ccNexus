@@ -1,25 +1,34 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
+	"github.com/lich0821/ccNexus/internal/codexauth"
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/proxy"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
+type codexCredentialAuthManager interface {
+	Start(ctx context.Context, endpoint config.Endpoint) (codexauth.StartResponse, error)
+	Status(loginID string) (codexauth.StatusResponse, error)
+	Cancel(loginID string) error
+}
+
 // Handler handles API requests
 type Handler struct {
-	config  *config.Config
-	proxy   *proxy.Proxy
-	storage *storage.SQLiteStorage
-	auth    AuthConfig
+	config    *config.Config
+	proxy     *proxy.Proxy
+	storage   *storage.SQLiteStorage
+	auth      AuthConfig
+	codexAuth codexCredentialAuthManager
 }
 
 // NewHandler creates a new API handler
 func NewHandler(cfg *config.Config, p *proxy.Proxy, s *storage.SQLiteStorage) *Handler {
-	return &Handler{
+	h := &Handler{
 		config:  cfg,
 		proxy:   p,
 		storage: s,
@@ -29,6 +38,18 @@ func NewHandler(cfg *config.Config, p *proxy.Proxy, s *storage.SQLiteStorage) *H
 			Password: cfg.BasicAuthPassword,
 		},
 	}
+	h.resetCodexAuthManager()
+	return h
+}
+
+func (h *Handler) resetCodexAuthManager() {
+	h.codexAuth = codexauth.NewManager(codexauth.Options{
+		Storage:    h.storage,
+		HTTPClient: codexauth.HTTPClientForConfig(h.config),
+		HTTPClientForEndpoint: func(endpoint config.Endpoint) *http.Client {
+			return codexauth.HTTPClientForEndpoint(h.config, endpoint)
+		},
+	})
 }
 
 // ServeHTTP implements http.Handler interface
