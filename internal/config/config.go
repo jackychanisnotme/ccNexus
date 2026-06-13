@@ -20,6 +20,9 @@ const (
 	RecoveredEndpointPolicyDeprioritize = "deprioritize"
 	RecoveredEndpointPolicyAutoReturn   = "auto_return"
 
+	ListenModeLocal = "local"
+	ListenModeLAN   = "lan"
+
 	ThinkingOff    = "off"
 	ThinkingLow    = "low"
 	ThinkingMedium = "medium"
@@ -29,6 +32,15 @@ const (
 	CodexTokenPoolAPIURL      = "https://chatgpt.com/backend-api/codex"
 	CodexTokenPoolTransformer = "openai2"
 )
+
+func NormalizeListenMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case ListenModeLAN:
+		return ListenModeLAN
+	default:
+		return ListenModeLocal
+	}
+}
 
 func NormalizeAuthMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
@@ -149,7 +161,7 @@ type Endpoint struct {
 	Thinking    string `json:"thinking,omitempty"`    // Reasoning effort: off, low, medium, high, xhigh
 	ForceStream bool   `json:"forceStream,omitempty"`
 	ProxyURL    string `json:"proxyUrl,omitempty"` // Optional endpoint-specific proxy URL
-	Remark      string `json:"remark,omitempty"` // Optional remark for the endpoint
+	Remark      string `json:"remark,omitempty"`   // Optional remark for the endpoint
 }
 
 // WebDAVConfig represents WebDAV synchronization configuration
@@ -235,6 +247,7 @@ type FailoverConfig struct {
 // Config represents the application configuration
 type Config struct {
 	Port                      int             `json:"port"`
+	ListenMode                string          `json:"listenMode,omitempty"`
 	PortLocked                bool            `json:"-"` // CLI forced port, cannot be changed via API
 	BasicAuthEnabled          bool            `json:"basicAuthEnabled"`
 	BasicAuthUsername         string          `json:"basicAuthUsername"`
@@ -272,6 +285,7 @@ func (c *Config) ReplaceWith(src *Config) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Port = src.Port
+	c.ListenMode = NormalizeListenMode(src.ListenMode)
 	c.PortLocked = src.PortLocked
 	c.BasicAuthEnabled = src.BasicAuthEnabled
 	c.BasicAuthUsername = src.BasicAuthUsername
@@ -377,6 +391,7 @@ func normalizeFailureRateThreshold(value float64, defaultValue float64) float64 
 func DefaultConfig() *Config {
 	return &Config{
 		Port:                      3000,
+		ListenMode:                ListenModeLocal,
 		BasicAuthEnabled:          true,
 		BasicAuthUsername:         "admin",
 		BasicAuthPassword:         "",
@@ -412,6 +427,7 @@ func (c *Config) Validate() error {
 	if c.Port < 1 || c.Port > 65535 {
 		return fmt.Errorf("invalid port: %d", c.Port)
 	}
+	c.ListenMode = NormalizeListenMode(c.ListenMode)
 
 	if len(c.Endpoints) == 0 {
 		return fmt.Errorf("no endpoints configured")
@@ -461,6 +477,24 @@ func (c *Config) GetPort() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Port
+}
+
+// GetListenMode returns the configured listen mode (thread-safe)
+func (c *Config) GetListenMode() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return NormalizeListenMode(c.ListenMode)
+}
+
+// GetListenAddr returns the host:port pair used by the proxy listener (thread-safe)
+func (c *Config) GetListenAddr() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	host := "127.0.0.1"
+	if NormalizeListenMode(c.ListenMode) == ListenModeLAN {
+		host = "0.0.0.0"
+	}
+	return host + ":" + strconv.Itoa(c.Port)
 }
 
 // GetLogLevel returns the configured log level (thread-safe)
@@ -516,6 +550,13 @@ func (c *Config) UpdatePort(port int) {
 		return
 	}
 	c.Port = port
+}
+
+// UpdateListenMode updates the listener mode (thread-safe)
+func (c *Config) UpdateListenMode(mode string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ListenMode = NormalizeListenMode(mode)
 }
 
 // LockPort locks the port so it cannot be changed via API
@@ -834,6 +875,12 @@ func LoadFromStorage(storage StorageAdapter) (*Config, error) {
 	}
 	if config.Port == 0 {
 		config.Port = 3000
+	}
+	if listenMode, err := storage.GetConfig("listenMode"); err == nil {
+		config.ListenMode = NormalizeListenMode(listenMode)
+	}
+	if config.ListenMode == "" {
+		config.ListenMode = ListenModeLocal
 	}
 
 	if logLevelStr, err := storage.GetConfig("logLevel"); err == nil && logLevelStr != "" {
@@ -1164,6 +1211,9 @@ func (c *Config) SaveToStorage(storage StorageAdapter) error {
 	// Save app config
 	if err := storage.SetConfig("port", strconv.Itoa(c.Port)); err != nil {
 		return fmt.Errorf("failed to save port config: %w", err)
+	}
+	if err := storage.SetConfig("listenMode", NormalizeListenMode(c.ListenMode)); err != nil {
+		return fmt.Errorf("failed to save listenMode config: %w", err)
 	}
 	if err := storage.SetConfig("logLevel", strconv.Itoa(c.LogLevel)); err != nil {
 		return fmt.Errorf("failed to save logLevel config: %w", err)

@@ -73,6 +73,25 @@ func (s *SettingsService) UpdatePort(port int) error {
 	return nil
 }
 
+// UpdateListenMode updates the proxy listener mode. The active listener changes after restart.
+func (s *SettingsService) UpdateListenMode(mode string) error {
+	cleanMode := strings.ToLower(strings.TrimSpace(mode))
+	if cleanMode != config.ListenModeLocal && cleanMode != config.ListenModeLAN {
+		return fmt.Errorf("invalid listen mode: %s", mode)
+	}
+
+	s.config.UpdateListenMode(cleanMode)
+
+	if s.storage != nil {
+		configAdapter := storage.NewConfigStorageAdapter(s.storage)
+		if err := s.config.SaveToStorage(configAdapter); err != nil {
+			return fmt.Errorf("failed to save listen mode: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // GetSystemLanguage detects the system language
 func (s *SettingsService) GetSystemLanguage() string {
 	locale := os.Getenv("LANG")

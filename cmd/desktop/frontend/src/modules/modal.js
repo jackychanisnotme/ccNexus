@@ -1,6 +1,6 @@
 import { t } from '../i18n/index.js';
 import { escapeHtml } from '../utils/format.js';
-import { addEndpoint, updateEndpoint, removeEndpoint, testEndpoint, testEndpointLight, updatePort } from './config.js';
+import { addEndpoint, updateEndpoint, removeEndpoint, testEndpoint, testEndpointLight, updatePort, getNetworkStatus, updateListenMode } from './config.js';
 import { setTestState, clearTestState, saveEndpointTestStatus, openTokenPoolModal } from './endpoints.js';
 
 let currentEditIndex = -1;
@@ -214,9 +214,14 @@ function updateManageTokenPoolButton() {
     if (!btn) {
         return;
     }
+    const actionGroup = btn.closest('.endpoint-token-pool-action');
     const isEditMode = currentEditIndex >= 0;
     const isTokenPool = isTokenPoolMode(getEndpointAuthMode());
-    btn.style.display = isEditMode && isTokenPool ? 'inline-block' : 'none';
+    const shouldShow = isEditMode && isTokenPool;
+    btn.style.display = shouldShow ? 'inline-flex' : 'none';
+    if (actionGroup) {
+        actionGroup.style.display = shouldShow ? 'block' : 'none';
+    }
 }
 
 export function handleAuthModeChange() {
@@ -349,6 +354,17 @@ export async function openEndpointTokenPoolFromModal() {
         return;
     }
     const endpointName = document.getElementById('endpointName')?.value?.trim() || '';
+    const proxyUrl = document.getElementById('endpointProxyUrl')?.value?.trim() || '';
+    try {
+        await window.go.main.App.SetEndpointProxyURL(currentEditIndex, proxyUrl);
+        if (Array.isArray(window.config?.endpoints) && window.config.endpoints[currentEditIndex]) {
+            window.config.endpoints[currentEditIndex].proxyUrl = proxyUrl;
+        }
+    } catch (error) {
+        const message = error?.message || String(error);
+        showNotification(t('modal.syncProxyFailed').replace('{error}', message), 'error');
+        return;
+    }
     closeModal();
     await openTokenPoolModal(currentEditIndex, endpointName);
 }
@@ -587,16 +603,123 @@ export function clearFetchedModels() {
 }
 
 // Port Modal
-export async function showEditPortModal() {
-    const configStr = await window.go.main.App.GetConfig();
-    const config = JSON.parse(configStr);
+const networkCategoryKeys = {
+    proxy: 'connectionCategoryProxy',
+    admin_ui: 'connectionCategoryAdminUi',
+    api: 'connectionCategoryApi',
+    health: 'connectionCategoryHealth',
+    events: 'connectionCategoryEvents'
+};
 
-    document.getElementById('portInput').value = config.port;
+function getNetworkCategoryLabel(category) {
+    return t(`modal.${networkCategoryKeys[category] || 'connectionCategoryProxy'}`);
+}
+
+function formatConnectionDuration(ms) {
+    const seconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    if (seconds < 60) {
+        return `${seconds}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return `${minutes}m ${rest}s`;
+}
+
+function renderNetworkAddressList(status) {
+    const localURL = status?.localURL || '';
+    const lanURLs = Array.isArray(status?.lanURLs) ? status.lanURLs : [];
+    return `
+        <div class="network-address-group">
+            <div class="network-section-title">${t('modal.localAddress')}</div>
+            <code class="network-address">${escapeHtml(localURL)}</code>
+        </div>
+        <div class="network-address-group">
+            <div class="network-section-title">${t('modal.lanAddresses')}</div>
+            ${lanURLs.length > 0
+                ? lanURLs.map(url => `<code class="network-address">${escapeHtml(url)}</code>`).join('')
+                : `<div class="network-empty">${t('modal.noLanAddresses')}</div>`}
+        </div>
+        ${status?.restartRequired ? `<div class="network-restart">${t('modal.restartRequired')}</div>` : ''}
+    `;
+}
+
+function renderNetworkConnections(status) {
+    const connections = status?.connections || {};
+    const byCategory = connections.byCategory || {};
+    const activeConnections = Array.isArray(connections.connections) ? connections.connections : [];
+    const categoryOrder = ['proxy', 'admin_ui', 'api', 'health', 'events'];
+    const categorySummary = categoryOrder.map(category => `
+        <span class="network-count-pill">${getNetworkCategoryLabel(category)} ${Number(byCategory[category] || 0)}</span>
+    `).join('');
+
+    if (activeConnections.length === 0) {
+        return `
+            <div class="network-category-summary">${categorySummary}</div>
+            <div class="network-empty">${t('modal.noActiveConnections')}</div>
+        `;
+    }
+
+    return `
+        <div class="network-category-summary">${categorySummary}</div>
+        <div class="network-connection-list">
+            ${activeConnections.map(conn => `
+                <div class="network-connection-row">
+                    <span class="network-connection-category">${getNetworkCategoryLabel(conn.category)}</span>
+                    <span title="${escapeHtml(conn.userAgent || '')}">${escapeHtml(conn.clientIp || 'unknown')}</span>
+                    <span title="${escapeHtml(conn.path || '')}">${escapeHtml(conn.method || '')} ${escapeHtml(conn.path || '')}</span>
+                    <span>${formatConnectionDuration(conn.durationMillis)}</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+export function updateNetworkStatus(status) {
+    const portInput = document.getElementById('portInput');
+    const listenModeInput = document.getElementById('listenModeInput');
+    const statusPanel = document.getElementById('networkStatusPanel');
+    const connectionsPanel = document.getElementById('networkConnectionsPanel');
+    const warning = document.getElementById('networkRiskWarning');
+
+    if (!statusPanel || !connectionsPanel) {
+        return;
+    }
+    if (portInput && status?.port) {
+        portInput.value = status.port;
+    }
+    if (listenModeInput && status?.listenMode) {
+        listenModeInput.value = status.listenMode;
+    }
+    const mode = listenModeInput?.value || status?.listenMode || 'local';
+    if (warning) {
+        warning.style.display = mode === 'lan' ? 'block' : 'none';
+    }
+    statusPanel.innerHTML = renderNetworkAddressList(status);
+    connectionsPanel.innerHTML = renderNetworkConnections(status);
+}
+
+export async function showEditPortModal() {
     document.getElementById('portModal').classList.add('active');
+    try {
+        const status = await getNetworkStatus();
+        updateNetworkStatus(status);
+        const listenModeInput = document.getElementById('listenModeInput');
+        if (listenModeInput) {
+            listenModeInput.onchange = () => {
+                const warning = document.getElementById('networkRiskWarning');
+                if (warning) {
+                    warning.style.display = listenModeInput.value === 'lan' ? 'block' : 'none';
+                }
+            };
+        }
+    } catch (error) {
+        showNotification(t('modal.portUpdateFailed').replace('{error}', error), 'error');
+    }
 }
 
 export async function savePort() {
     const port = parseInt(document.getElementById('portInput').value);
+    const listenMode = document.getElementById('listenModeInput')?.value || 'local';
 
     if (!port || port < 1 || port > 65535) {
         showNotification(t('modal.portInvalid'), 'error');
@@ -605,6 +728,7 @@ export async function savePort() {
 
     try {
         await updatePort(port);
+        await updateListenMode(listenMode);
         closePortModal();
         window.loadConfig();
         showNotification(t('modal.portUpdateSuccess'), 'success');

@@ -59,6 +59,7 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 				"timestamp":       time.Now().Unix(),
 				"stats":           stats,
 				"currentEndpoint": currentEndpoint,
+				"connections":     h.proxy.GetInboundConnectionsSnapshot(),
 			}
 
 			data, err := json.Marshal(event)

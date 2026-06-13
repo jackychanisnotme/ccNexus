@@ -54,6 +54,30 @@ export default {
         noEndpoints: 'No endpoints configured',
         noEnabledEndpoints: 'No enabled endpoints'
     },
+    network: {
+        title: 'Network Access',
+        listenMode: 'Access Mode',
+        localOnly: 'Local only',
+        lanAccess: 'LAN access',
+        localAddress: 'Local address',
+        lanAddresses: 'LAN addresses',
+        noLanAddresses: 'No LAN IPv4 address detected',
+        riskWarning: 'LAN access exposes the proxy API to devices on your network. This version does not enforce an inbound proxy access key.',
+        activeConnections: 'Active Connections',
+        noActiveConnections: 'No active connections',
+        restartRequired: 'Restart required for access changes to take effect',
+        saveAccess: 'Save access mode',
+        saved: 'Network access settings saved. Restart ccNexus to apply listener changes.',
+        failedToLoad: 'Failed to load network status',
+        failedToSave: 'Failed to save network settings',
+        categories: {
+            proxy: 'Proxy',
+            admin_ui: 'Admin UI',
+            api: 'API',
+            health: 'Health',
+            events: 'Events'
+        }
+    },
     endpoints: {
         title: 'Endpoints',
         addEndpoint: 'Add Endpoint',

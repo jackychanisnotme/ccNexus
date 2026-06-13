@@ -40,6 +40,15 @@ export async function updatePort(port) {
     await window.go.main.App.UpdatePort(port);
 }
 
+export async function getNetworkStatus() {
+    const statusStr = await window.go.main.App.GetNetworkStatus();
+    return JSON.parse(statusStr);
+}
+
+export async function updateListenMode(mode) {
+    await window.go.main.App.UpdateListenMode(mode);
+}
+
 export async function addEndpoint(name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, remark) {
     await window.go.main.App.AddEndpoint(name, url, key, authMode, transformer, model, thinking ?? '', proxyUrl || '', !!forceStream, remark || '');
 }

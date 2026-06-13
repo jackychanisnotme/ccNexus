@@ -145,6 +145,14 @@ class APIClient {
     async updateLogLevel(logLevel) {
         return this.request('PUT', '/config/log-level', { logLevel });
     }
+
+    async getNetwork() {
+        return this.request('GET', '/network');
+    }
+
+    async updateNetwork(listenMode) {
+        return this.request('PUT', '/network', { listenMode });
+    }
 }
 
 export const api = new APIClient();

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/lich0821/ccNexus/internal/config"
@@ -101,7 +102,7 @@ func main() {
 		errCh <- p.StartWithMux(mux)
 	}()
 
-	logger.Info("ccNexus headless API listening on :%d (data dir: %s, db: %s)", cfg.GetPort(), dataDir, dbPath)
+	logger.Info("ccNexus headless API listening on %s (data dir: %s, db: %s)", cfg.GetListenAddr(), dataDir, dbPath)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -169,6 +170,14 @@ func applyEnvOverrides(cfg *config.Config) {
 		} else {
 			logger.Warn("Invalid CCNEXUS_LOG_LEVEL value %q: %v", levelStr, err)
 		}
+	}
+
+	if listenMode := os.Getenv("CCNEXUS_LISTEN_MODE"); listenMode != "" {
+		normalized := config.NormalizeListenMode(listenMode)
+		if normalized != strings.ToLower(strings.TrimSpace(listenMode)) {
+			logger.Warn("Invalid CCNEXUS_LISTEN_MODE value %q, using %q", listenMode, normalized)
+		}
+		cfg.UpdateListenMode(normalized)
 	}
 
 	if authEnabled := os.Getenv("CCNEXUS_BASIC_AUTH_ENABLED"); authEnabled != "" {

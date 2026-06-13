@@ -34,6 +34,7 @@ import {
     showEditPortModal,
     savePort,
     closePortModal,
+    updateNetworkStatus,
     showWelcomeModal,
     closeWelcomeModal,
     showChangelogModal,
@@ -159,6 +160,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (window.runtime && window.runtime.EventsOn) {
         window.runtime.EventsOn('stats:updated', (data) => {
             handleStatsUpdate(data);
+        });
+        window.runtime.EventsOn('network:updated', (data) => {
+            updateNetworkStatus(data);
         });
     }
 

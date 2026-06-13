@@ -34,31 +34,33 @@ type APIResponse struct {
 
 // Proxy represents the proxy server
 type Proxy struct {
-	config                   *config.Config
-	configEndpointsSnapshot  []config.Endpoint
-	storage                  *storage.SQLiteStorage
-	stats                    *Stats
-	currentIndex             int
-	mu                       sync.RWMutex
-	server                   *http.Server
-	httpClient               *http.Client                  // Reusable HTTP client with connection pool
-	activeRequests           map[string]int                // tracks active request count by endpoint name
-	activeRequestsMu         sync.RWMutex                  // protects activeRequests map
-	endpointCtx              map[string]context.Context    // context per endpoint for cancellation
-	endpointCancel           map[string]context.CancelFunc // cancel functions per endpoint
-	ctxMu                    sync.RWMutex                  // protects context maps
-	onEndpointSuccess        func(endpointName string)     // callback when endpoint request succeeds
-	onCurrentEndpointChanged func(EndpointCurrentEvent)
-	onEndpointRuntimeChanged func(EndpointRuntimeEvent)
-	modelsCache              *ModelsCache                // Cache for /v1/models endpoint
-	resolver                 *EndpointResolver           // 端点解析器，用于解析客户端指定的端点
-	retrySleep               func(time.Duration)         // injectable sleep hook for retry backoff tests
-	endpointCooldowns        map[string]endpointCooldown // temporary request-plan skips for deterministic endpoint failures
-	cooldownMu               sync.RWMutex                // protects endpointCooldowns
-	circuitBreakerMu         sync.Mutex
-	endpointCircuitBreakers  map[string]*endpointCircuitBreakerState
-	streamHeaderTimeout      time.Duration // injectable response-header timeout for upstream streaming requests
-	streamHeartbeatInterval  time.Duration // injectable downstream SSE heartbeat interval
+	config                      *config.Config
+	configEndpointsSnapshot     []config.Endpoint
+	storage                     *storage.SQLiteStorage
+	stats                       *Stats
+	currentIndex                int
+	mu                          sync.RWMutex
+	server                      *http.Server
+	httpClient                  *http.Client                  // Reusable HTTP client with connection pool
+	activeRequests              map[string]int                // tracks active request count by endpoint name
+	activeRequestsMu            sync.RWMutex                  // protects activeRequests map
+	endpointCtx                 map[string]context.Context    // context per endpoint for cancellation
+	endpointCancel              map[string]context.CancelFunc // cancel functions per endpoint
+	ctxMu                       sync.RWMutex                  // protects context maps
+	onEndpointSuccess           func(endpointName string)     // callback when endpoint request succeeds
+	onCurrentEndpointChanged    func(EndpointCurrentEvent)
+	onEndpointRuntimeChanged    func(EndpointRuntimeEvent)
+	modelsCache                 *ModelsCache      // Cache for /v1/models endpoint
+	resolver                    *EndpointResolver // 端点解析器，用于解析客户端指定的端点
+	inboundTracker              *InboundConnectionTracker
+	onInboundConnectionsChanged func(InboundConnectionsSnapshot)
+	retrySleep                  func(time.Duration)         // injectable sleep hook for retry backoff tests
+	endpointCooldowns           map[string]endpointCooldown // temporary request-plan skips for deterministic endpoint failures
+	cooldownMu                  sync.RWMutex                // protects endpointCooldowns
+	circuitBreakerMu            sync.Mutex
+	endpointCircuitBreakers     map[string]*endpointCircuitBreakerState
+	streamHeaderTimeout         time.Duration // injectable response-header timeout for upstream streaming requests
+	streamHeartbeatInterval     time.Duration // injectable downstream SSE heartbeat interval
 }
 
 // New creates a new Proxy instance
@@ -95,6 +97,7 @@ func New(cfg *config.Config, statsStorage StatsStorage, sqliteStorage *storage.S
 		endpointCancel:          make(map[string]context.CancelFunc),
 		modelsCache:             NewModelsCache(cfg.ModelsCacheTTL),
 		resolver:                NewEndpointResolverWithFunc(cfg.GetEndpoints),
+		inboundTracker:          NewInboundConnectionTracker(),
 		retrySleep:              time.Sleep,
 		endpointCooldowns:       make(map[string]endpointCooldown),
 		endpointCircuitBreakers: make(map[string]*endpointCircuitBreakerState),
@@ -123,8 +126,6 @@ func (p *Proxy) Start() error {
 
 // StartWithMux starts the proxy server with an optional custom mux
 func (p *Proxy) StartWithMux(customMux *http.ServeMux) error {
-	port := p.config.GetPort()
-
 	var mux *http.ServeMux
 	if customMux != nil {
 		mux = customMux
@@ -135,11 +136,11 @@ func (p *Proxy) StartWithMux(customMux *http.ServeMux) error {
 	p.registerRoutes(mux)
 
 	p.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Addr:    p.config.GetListenAddr(),
+		Handler: p.trackInboundConnections(mux),
 	}
 
-	logger.Info("ccNexus starting on port %d", port)
+	logger.Info("ccNexus starting on %s", p.server.Addr)
 	logger.Info("Configured %d endpoints", len(p.config.GetEndpoints()))
 
 	return p.server.ListenAndServe()

@@ -83,6 +83,9 @@ function initRealtime() {
             if (data.type === 'stats') {
                 state.update('stats', data.stats);
                 state.update('currentEndpoint', data.currentEndpoint);
+                if (data.connections) {
+                    state.update('networkConnections', data.connections);
+                }
 
                 // Update dashboard if it's the current view
                 if (state.get('currentView') === 'dashboard') {
