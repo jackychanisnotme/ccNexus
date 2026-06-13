@@ -14,6 +14,11 @@ func OpenAIReqToOpenAI2(openaiReq []byte, model string) ([]byte, error) {
 	if err := json.Unmarshal(openaiReq, &req); err != nil {
 		return nil, err
 	}
+	normalizedMessages, err := normalizeOpenAIMessagesForToolChains(req.Messages, "openai_to_openai2")
+	if err != nil {
+		return nil, err
+	}
+	req.Messages = normalizedMessages
 
 	openai2Req := map[string]interface{}{
 		"model":  model,
@@ -91,16 +96,16 @@ func NormalizeOpenAI2RequestForUpstream(openai2Req []byte) ([]byte, error) {
 		return openai2Req, nil
 	}
 
-	normalizedInput, changed := normalizeOpenAI2InputForUpstream(rawInput)
-	if !changed {
-		return openai2Req, nil
+	normalizedInput, _, err := normalizeOpenAI2InputForUpstream(rawInput)
+	if err != nil {
+		return nil, err
 	}
 
 	body["input"] = normalizedInput
 	return json.Marshal(body)
 }
 
-func normalizeOpenAI2InputForUpstream(input []interface{}) ([]interface{}, bool) {
+func normalizeOpenAI2InputForUpstream(input []interface{}) ([]interface{}, bool, error) {
 	normalized := make([]interface{}, 0, len(input))
 	changed := false
 
@@ -152,7 +157,7 @@ func normalizeOpenAI2InputForUpstream(input []interface{}) ([]interface{}, bool)
 		normalized = append(normalized, item)
 	}
 
-	return normalized, changed
+	return normalized, changed, nil
 }
 
 func openAIMessageToOpenAI2Message(msg transformer.OpenAIMessage, role string) (map[string]interface{}, bool) {
@@ -369,6 +374,14 @@ func OpenAI2ReqToOpenAI(openai2Req []byte, model string) ([]byte, error) {
 	var req transformer.OpenAI2Request
 	if err := json.Unmarshal(openai2Req, &req); err != nil {
 		return nil, err
+	}
+
+	if input, ok := req.Input.([]interface{}); ok {
+		normalizedInput, err := normalizeOpenAI2InputForToolChains(input, "openai2_to_openai")
+		if err != nil {
+			return nil, err
+		}
+		req.Input = normalizedInput
 	}
 
 	messages := make([]transformer.OpenAIMessage, 0)
