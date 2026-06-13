@@ -1,6 +1,6 @@
 [
   {
-    "version": "v6.0.5",
+    "version": "v6.0.6",
     "date": "2026-03-11",
     "changes": [
       "新增 Token Pool 凭证使用统计（请求/错误/Token），支持快捷查看",
