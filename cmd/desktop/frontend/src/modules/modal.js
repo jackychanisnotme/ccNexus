@@ -7,8 +7,12 @@ let currentEditIndex = -1;
 const AUTH_MODE_API_KEY = 'api_key';
 const AUTH_MODE_TOKEN_POOL = 'token_pool';
 const AUTH_MODE_CODEX_TOKEN_POOL = 'codex_token_pool';
+const AUTH_MODE_CLAUDE_OAUTH_TOKEN_POOL = 'claude_oauth_token_pool';
 const CODEX_FIXED_API_URL = 'https://chatgpt.com/backend-api/codex';
 const CODEX_FIXED_TRANSFORMER = 'openai2';
+const CLAUDE_OAUTH_FIXED_API_URL = 'https://api.anthropic.com';
+const CLAUDE_OAUTH_FIXED_TRANSFORMER = 'claude';
+const CLAUDE_OAUTH_DEFAULT_MODEL = 'opus';
 
 function normalizeThinkingForTransformer(transformer, value) {
     const normalized = String(value ?? '').trim().toLowerCase();
@@ -192,6 +196,9 @@ export function togglePasswordVisibility() {
 
 function getEndpointAuthMode() {
     const mode = document.getElementById('endpointAuthMode')?.value;
+    if (mode === AUTH_MODE_CLAUDE_OAUTH_TOKEN_POOL) {
+        return AUTH_MODE_CLAUDE_OAUTH_TOKEN_POOL;
+    }
     if (mode === AUTH_MODE_CODEX_TOKEN_POOL) {
         return AUTH_MODE_CODEX_TOKEN_POOL;
     }
@@ -202,11 +209,15 @@ function getEndpointAuthMode() {
 }
 
 function isTokenPoolMode(mode) {
-    return mode === AUTH_MODE_TOKEN_POOL || mode === AUTH_MODE_CODEX_TOKEN_POOL;
+    return mode === AUTH_MODE_TOKEN_POOL || mode === AUTH_MODE_CODEX_TOKEN_POOL || mode === AUTH_MODE_CLAUDE_OAUTH_TOKEN_POOL;
 }
 
 function isCodexTokenPoolMode(mode) {
     return mode === AUTH_MODE_CODEX_TOKEN_POOL;
+}
+
+function isClaudeOAuthTokenPoolMode(mode) {
+    return mode === AUTH_MODE_CLAUDE_OAUTH_TOKEN_POOL;
 }
 
 function updateManageTokenPoolButton() {
@@ -232,9 +243,12 @@ export function handleAuthModeChange() {
 	const urlHelp = document.getElementById('endpointUrlHelp');
 	const urlInput = document.getElementById('endpointUrl');
 	const transformerSelect = document.getElementById('endpointTransformer');
+	const modelInput = document.getElementById('endpointModel');
 
 	const isTokenPool = isTokenPoolMode(authMode);
 	const isCodexTokenPool = isCodexTokenPoolMode(authMode);
+	const isClaudeOAuthTokenPool = isClaudeOAuthTokenPoolMode(authMode);
+	const isFixedTokenPool = isCodexTokenPool || isClaudeOAuthTokenPool;
     if (keyGroup) {
         keyGroup.style.display = isTokenPool ? 'none' : 'block';
     }
@@ -242,21 +256,28 @@ export function handleAuthModeChange() {
 		keyInput.disabled = isTokenPool;
 	}
 	if (urlInput) {
-		urlInput.disabled = isCodexTokenPool;
-		urlInput.readOnly = isCodexTokenPool;
-		urlInput.classList.toggle('field-locked', isCodexTokenPool);
-		urlInput.title = isCodexTokenPool ? t('modal.codexLockedFieldTip') : '';
+		urlInput.disabled = isFixedTokenPool;
+		urlInput.readOnly = isFixedTokenPool;
+		urlInput.classList.toggle('field-locked', isFixedTokenPool);
+		urlInput.title = isFixedTokenPool ? t('modal.tokenPoolLockedFieldTip') : '';
 		if (isCodexTokenPool) {
 			urlInput.value = CODEX_FIXED_API_URL;
+		} else if (isClaudeOAuthTokenPool) {
+			urlInput.value = CLAUDE_OAUTH_FIXED_API_URL;
 		}
 	}
 	if (transformerSelect) {
-		transformerSelect.disabled = isCodexTokenPool;
-		transformerSelect.classList.toggle('field-locked', isCodexTokenPool);
-		transformerSelect.title = isCodexTokenPool ? t('modal.codexLockedFieldTip') : '';
+		transformerSelect.disabled = isFixedTokenPool;
+		transformerSelect.classList.toggle('field-locked', isFixedTokenPool);
+		transformerSelect.title = isFixedTokenPool ? t('modal.tokenPoolLockedFieldTip') : '';
 		if (isCodexTokenPool) {
 			transformerSelect.value = CODEX_FIXED_TRANSFORMER;
+		} else if (isClaudeOAuthTokenPool) {
+			transformerSelect.value = CLAUDE_OAUTH_FIXED_TRANSFORMER;
 		}
+	}
+	if (modelInput && isClaudeOAuthTokenPool && !modelInput.value.trim()) {
+		modelInput.value = CLAUDE_OAUTH_DEFAULT_MODEL;
 	}
 	if (fetchModelsBtn) {
 		fetchModelsBtn.disabled = false;
@@ -265,11 +286,13 @@ export function handleAuthModeChange() {
 	if (urlHelp) {
 		if (isCodexTokenPool) {
 			urlHelp.textContent = t('modal.codexTokenPoolApiUrlHelp');
+		} else if (isClaudeOAuthTokenPool) {
+			urlHelp.textContent = t('modal.claudeOAuthTokenPoolApiUrlHelp');
 		} else {
 			urlHelp.textContent = isTokenPool ? t('modal.tokenPoolApiUrlHelp') : t('modal.apiUrlHelp');
 		}
 	}
-	if (isCodexTokenPool) {
+	if (isFixedTokenPool) {
 		handleTransformerChange();
 	}
 	updateManageTokenPoolButton();
@@ -381,12 +404,18 @@ export async function saveEndpoint() {
     const forceStream = document.getElementById('endpointForceStream').checked;
     const remark = document.getElementById('endpointRemark').value.trim();
     const isCodexTokenPool = isCodexTokenPoolMode(authMode);
+    const isClaudeOAuthTokenPool = isClaudeOAuthTokenPoolMode(authMode);
 
     if (isCodexTokenPool) {
         url = CODEX_FIXED_API_URL;
         transformer = CODEX_FIXED_TRANSFORMER;
         key = '';
+    } else if (isClaudeOAuthTokenPool) {
+        url = CLAUDE_OAUTH_FIXED_API_URL;
+        transformer = CLAUDE_OAUTH_FIXED_TRANSFORMER;
+        key = '';
     }
+    const finalModel = isClaudeOAuthTokenPool && !model ? CLAUDE_OAUTH_DEFAULT_MODEL : model;
 
     if (!name || !url) {
         showError(t('modal.requiredFields'));
@@ -413,9 +442,9 @@ export async function saveEndpoint() {
 
     try {
         if (currentEditIndex === -1) {
-            await addEndpoint(name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, remark);
+            await addEndpoint(name, url, key, authMode, transformer, finalModel, thinking, proxyUrl, forceStream, remark);
         } else {
-            await updateEndpoint(currentEditIndex, name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, remark);
+            await updateEndpoint(currentEditIndex, name, url, key, authMode, transformer, finalModel, thinking, proxyUrl, forceStream, remark);
         }
 
         closeModal();

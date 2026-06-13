@@ -67,7 +67,7 @@ func (h *Handler) testEndpoint(w http.ResponseWriter, r *http.Request, name stri
 
 // sendTestRequest sends a test request to an endpoint
 func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
-	apiKey, authErr := h.resolveEndpointAPIKey(endpoint)
+	apiKey, credential, authErr := h.resolveEndpointAuth(endpoint)
 	if authErr != nil {
 		return "", authErr
 	}
@@ -163,8 +163,7 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 	// Add authentication based on transformer
 	switch transformer {
 	case "claude":
-		req.Header.Set("x-api-key", apiKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
+		applyClaudeTestAuthHeaders(req, apiKey, credential)
 	case "openai", "openai2", "deepseek", "kimi", "poe":
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	case "gemini":
@@ -236,24 +235,53 @@ func (h *Handler) sendTestRequest(endpoint *storage.Endpoint) (string, error) {
 	return string(body), nil
 }
 
-func (h *Handler) resolveEndpointAPIKey(endpoint *storage.Endpoint) (string, error) {
+func (h *Handler) resolveEndpointAuth(endpoint *storage.Endpoint) (string, *storage.EndpointCredential, error) {
 	authMode := config.NormalizeAuthMode(endpoint.AuthMode)
 	if config.IsTokenPoolAuthMode(authMode) {
-		cred, err := h.storage.GetUsableEndpointCredential(endpoint.Name, time.Now().UTC())
+		cred, err := h.storage.GetUsableEndpointCredentialByProvider(endpoint.Name, defaultProviderTypeForAuthMode(authMode), time.Now().UTC())
 		if err != nil {
-			return "", fmt.Errorf("failed to get token from pool: %w", err)
+			return "", nil, fmt.Errorf("failed to get token from pool: %w", err)
 		}
 		if cred == nil || strings.TrimSpace(cred.AccessToken) == "" {
-			return "", fmt.Errorf("no usable token in token pool")
+			return "", nil, fmt.Errorf("no usable token in token pool")
 		}
-		return strings.TrimSpace(cred.AccessToken), nil
+		return strings.TrimSpace(cred.AccessToken), cred, nil
 	}
 
 	apiKey := strings.TrimSpace(endpoint.APIKey)
 	if apiKey == "" {
-		return "", fmt.Errorf("apiKey is empty")
+		return "", nil, fmt.Errorf("apiKey is empty")
 	}
-	return apiKey, nil
+	return apiKey, nil, nil
+}
+
+func (h *Handler) resolveEndpointAPIKey(endpoint *storage.Endpoint) (string, error) {
+	apiKey, _, err := h.resolveEndpointAuth(endpoint)
+	return apiKey, err
+}
+
+func defaultProviderTypeForAuthMode(authMode string) string {
+	switch config.NormalizeAuthMode(authMode) {
+	case config.AuthModeCodexTokenPool:
+		return storage.ProviderTypeCodex
+	case config.AuthModeClaudeOAuthTokenPool:
+		return storage.ProviderTypeClaudeOAuth
+	default:
+		return ""
+	}
+}
+
+func applyClaudeTestAuthHeaders(req *http.Request, apiKey string, credential *storage.EndpointCredential) {
+	if req == nil {
+		return
+	}
+	if credential != nil && strings.EqualFold(strings.TrimSpace(credential.ProviderType), storage.ProviderTypeClaudeOAuth) {
+		req.Header.Del("x-api-key")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	} else {
+		req.Header.Set("x-api-key", apiKey)
+	}
+	req.Header.Set("anthropic-version", "2023-06-01")
 }
 
 // handleFetchModels fetches available models from a provider

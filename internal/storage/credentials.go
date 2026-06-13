@@ -202,7 +202,7 @@ func (s *SQLiteStorage) SaveEndpointCredential(cred *EndpointCredential) error {
 	defer s.mu.Unlock()
 
 	if cred.ProviderType == "" {
-		cred.ProviderType = "codex"
+		cred.ProviderType = ProviderTypeCodex
 	}
 	if cred.Status == "" {
 		cred.Status = credentialStatusActive
@@ -253,7 +253,7 @@ func (s *SQLiteStorage) UpdateEndpointCredential(cred *EndpointCredential) error
 		return fmt.Errorf("credential id is required")
 	}
 	if cred.ProviderType == "" {
-		cred.ProviderType = "codex"
+		cred.ProviderType = ProviderTypeCodex
 	}
 	if cred.Status == "" {
 		cred.Status = credentialStatusActive
@@ -409,6 +409,59 @@ func (s *SQLiteStorage) GetUsableEndpointCredential(endpointName string, now tim
 	}
 
 	return nil, nil
+}
+
+func (s *SQLiteStorage) GetUsableEndpointCredentialByProvider(endpointName string, providerType string, now time.Time) (*EndpointCredential, error) {
+	providerType = strings.ToLower(strings.TrimSpace(providerType))
+	if providerType == "" {
+		return s.GetUsableEndpointCredential(endpointName, now)
+	}
+
+	credentials, err := s.GetEndpointCredentials(endpointName)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range credentials {
+		if !credentialProviderMatches(credentials[i].ProviderType, providerType) {
+			continue
+		}
+		status := deriveCredentialStatus(&credentials[i], now)
+		if status == credentialStatusActive || status == credentialStatusExpiring || status == credentialStatusNeedRefresh {
+			credentials[i].Status = status
+			return &credentials[i], nil
+		}
+	}
+
+	return nil, nil
+}
+
+func credentialProviderMatches(actual, expected string) bool {
+	actual = strings.ToLower(strings.TrimSpace(actual))
+	expected = strings.ToLower(strings.TrimSpace(expected))
+	if expected == "" {
+		return true
+	}
+	if expected == ProviderTypeCodex {
+		return actual == "" || actual == ProviderTypeCodex
+	}
+	return actual == expected
+}
+
+func (s *SQLiteStorage) HasCredentialProviderType(providerType string) (bool, error) {
+	providerType = strings.TrimSpace(providerType)
+	if providerType == "" {
+		return false, nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(1) FROM endpoint_credentials WHERE provider_type=?`, providerType).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (s *SQLiteStorage) MarkCredentialSuccess(id int64, now time.Time) error {

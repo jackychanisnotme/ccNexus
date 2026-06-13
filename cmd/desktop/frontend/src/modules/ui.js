@@ -392,6 +392,7 @@ export function initUI() {
                             <option value="api_key">${t('modal.authModeApiKey')}</option>
                             <option value="token_pool">${t('modal.authModeTokenPool')}</option>
                             <option value="codex_token_pool">${t('modal.authModeCodexTokenPool')}</option>
+                            <option value="claude_oauth_token_pool">${t('modal.authModeClaudeOAuthTokenPool')}</option>
                         </select>
                         <p style="color: #666; font-size: 12px; margin-top: 5px;">
                             ${t('modal.authModeHelp')}

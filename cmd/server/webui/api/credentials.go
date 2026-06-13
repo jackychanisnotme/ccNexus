@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lich0821/ccNexus/internal/claudeoauth"
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/storage"
@@ -50,7 +51,7 @@ func (h *Handler) handleEndpointCredentials(w http.ResponseWriter, r *http.Reque
 		case http.MethodGet:
 			h.listEndpointCredentials(w, r, endpointName)
 		case http.MethodPost:
-			h.importEndpointCredentials(w, r, endpointName)
+			h.importEndpointCredentials(w, r, endpoint)
 		default:
 			WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
@@ -61,12 +62,15 @@ func (h *Handler) handleEndpointCredentials(w http.ResponseWriter, r *http.Reque
 	case "auth":
 		h.handleEndpointCredentialAuth(w, r, endpoint, parts[1:])
 		return
+	case "claude-oauth":
+		h.handleClaudeOAuthCredentials(w, r, endpoint, parts[1:])
+		return
 	case "import":
 		if r.Method != http.MethodPost {
 			WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
-		h.importEndpointCredentials(w, r, endpointName)
+		h.importEndpointCredentials(w, r, endpoint)
 		return
 	case "stats":
 		if r.Method != http.MethodGet {
@@ -172,6 +176,149 @@ func storageEndpointToConfig(endpoint *storage.Endpoint) config.Endpoint {
 	}
 }
 
+func defaultCredentialProviderType(endpoint *storage.Endpoint) string {
+	if endpoint != nil && config.NormalizeAuthMode(endpoint.AuthMode) == config.AuthModeClaudeOAuthTokenPool {
+		return storage.ProviderTypeClaudeOAuth
+	}
+	return storage.ProviderTypeCodex
+}
+
+func (h *Handler) handleClaudeOAuthCredentials(w http.ResponseWriter, r *http.Request, endpoint *storage.Endpoint, parts []string) {
+	if endpoint == nil {
+		WriteError(w, http.StatusNotFound, "Endpoint not found")
+		return
+	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeClaudeOAuthTokenPool {
+		WriteError(w, http.StatusBadRequest, "Claude OAuth Token Pool endpoint required")
+		return
+	}
+	if len(parts) != 1 || strings.TrimSpace(parts[0]) == "" {
+		WriteError(w, http.StatusBadRequest, "Claude OAuth action required")
+		return
+	}
+
+	switch parts[0] {
+	case "discover":
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		candidates, err := claudeoauth.Discover(claudeoauth.DiscoverOptions{})
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		WriteSuccess(w, map[string]interface{}{
+			"credentials": claudeoauth.Preview(candidates),
+		})
+	case "import":
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		h.importClaudeOAuthCredential(w, r, endpoint)
+	default:
+		WriteError(w, http.StatusBadRequest, "Invalid Claude OAuth action")
+	}
+}
+
+func (h *Handler) importClaudeOAuthCredential(w http.ResponseWriter, r *http.Request, endpoint *storage.Endpoint) {
+	var req struct {
+		ID        string `json:"id"`
+		Token     string `json:"token"`
+		AccountID string `json:"accountId"`
+		Email     string `json:"email"`
+		Remark    string `json:"remark"`
+		Overwrite bool   `json:"overwrite"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	token := strings.TrimSpace(req.Token)
+	if token != "" {
+		parsed, err := claudeoauth.ParseSetupToken(token)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		token = parsed
+	} else if strings.TrimSpace(req.ID) != "" {
+		candidates, err := claudeoauth.Discover(claudeoauth.DiscoverOptions{})
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, candidate := range candidates {
+			if candidate.ID == strings.TrimSpace(req.ID) {
+				token = candidate.Token
+				break
+			}
+		}
+	}
+	if strings.TrimSpace(token) == "" {
+		WriteError(w, http.StatusBadRequest, "Claude OAuth token or discovery id is required")
+		return
+	}
+
+	created, updated, skipped, err := h.saveClaudeOAuthCredential(endpoint.Name, token, strings.TrimSpace(req.AccountID), strings.TrimSpace(req.Email), strings.TrimSpace(req.Remark), req.Overwrite)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	WriteSuccess(w, map[string]interface{}{
+		"created":   created,
+		"updated":   updated,
+		"skipped":   skipped,
+		"failed":    0,
+		"processed": 1,
+		"errors":    []string{},
+	})
+}
+
+func (h *Handler) saveClaudeOAuthCredential(endpointName string, token string, accountID string, email string, remark string, overwrite bool) (int, int, int, error) {
+	existing, err := h.storage.GetEndpointCredentials(endpointName)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to get existing credentials")
+	}
+	for _, cred := range existing {
+		if cred.ProviderType != storage.ProviderTypeClaudeOAuth || cred.AccessToken != token {
+			continue
+		}
+		if !overwrite {
+			return 0, 0, 1, nil
+		}
+		cred.AccountID = accountID
+		cred.Email = email
+		cred.Remark = remark
+		cred.Status = "active"
+		cred.Enabled = true
+		cred.FailureCount = 0
+		cred.CooldownUntil = nil
+		cred.LastError = ""
+		if err := h.storage.UpdateEndpointCredential(&cred); err != nil {
+			return 0, 0, 0, fmt.Errorf("failed to update credential")
+		}
+		return 0, 1, 0, nil
+	}
+
+	cred := storage.EndpointCredential{
+		EndpointName: endpointName,
+		ProviderType: storage.ProviderTypeClaudeOAuth,
+		AccountID:    accountID,
+		Email:        email,
+		AccessToken:  token,
+		Status:       "active",
+		Enabled:      true,
+		Remark:       remark,
+	}
+	if err := h.storage.SaveEndpointCredential(&cred); err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to save credential")
+	}
+	return 1, 0, 0, nil
+}
+
 func (h *Handler) listEndpointCredentials(w http.ResponseWriter, r *http.Request, endpointName string) {
 	credentials, err := h.storage.GetEndpointCredentials(endpointName)
 	if err != nil {
@@ -207,7 +354,12 @@ func (h *Handler) listEndpointCredentials(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (h *Handler) importEndpointCredentials(w http.ResponseWriter, r *http.Request, endpointName string) {
+func (h *Handler) importEndpointCredentials(w http.ResponseWriter, r *http.Request, endpoint *storage.Endpoint) {
+	if endpoint == nil {
+		WriteError(w, http.StatusNotFound, "Endpoint not found")
+		return
+	}
+	endpointName := endpoint.Name
 	rawBody, err := io.ReadAll(r.Body)
 	if err != nil {
 		WriteError(w, http.StatusBadRequest, "Invalid request body")
@@ -285,7 +437,7 @@ func (h *Handler) importEndpointCredentials(w http.ResponseWriter, r *http.Reque
 			Remark:       strings.TrimSpace(item.Remark),
 		}
 		if cred.ProviderType == "" {
-			cred.ProviderType = "codex"
+			cred.ProviderType = defaultCredentialProviderType(endpoint)
 		}
 		if cred.Remark == "" {
 			cred.Remark = strings.TrimSpace(req.Remark)

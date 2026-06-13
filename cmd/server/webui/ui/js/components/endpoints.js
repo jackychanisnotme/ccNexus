@@ -362,8 +362,17 @@ class Endpoints {
                                 <input type="text" class="form-input" name="name" value="${endpoint ? this.escapeHtml(endpoint.name) : ''}" required ${isEdit ? 'readonly' : ''}>
                             </div>
                             <div class="form-group">
+                                <label class="form-label">${t('endpoints.authMode')} *</label>
+                                <select class="form-select" name="authMode" id="endpoint-auth-mode">
+                                    <option value="api_key" ${(endpoint?.authMode || 'api_key') === 'api_key' ? 'selected' : ''}>${t('endpoints.authModeApiKey')}</option>
+                                    <option value="token_pool" ${endpoint?.authMode === 'token_pool' ? 'selected' : ''}>${t('endpoints.authModeTokenPool')}</option>
+                                    <option value="codex_token_pool" ${endpoint?.authMode === 'codex_token_pool' ? 'selected' : ''}>${t('endpoints.authModeCodexTokenPool')}</option>
+                                    <option value="claude_oauth_token_pool" ${endpoint?.authMode === 'claude_oauth_token_pool' ? 'selected' : ''}>${t('endpoints.authModeClaudeOAuthTokenPool')}</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
                                 <label class="form-label">${t('endpoints.apiUrl')} *</label>
-                                <input type="text" class="form-input" name="apiUrl" value="${endpoint ? this.escapeHtml(endpoint.apiUrl) : ''}" placeholder="${t('endpoints.apiUrlPlaceholder')}" required>
+                                <input type="text" class="form-input" name="apiUrl" id="endpoint-api-url" value="${endpoint ? this.escapeHtml(endpoint.apiUrl) : ''}" placeholder="${t('endpoints.apiUrlPlaceholder')}" required>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">${t('endpoints.proxyUrl')}</label>
@@ -371,12 +380,12 @@ class Endpoints {
                             </div>
                             <div class="form-group">
                                 <label class="form-label">${t('endpoints.apiKey')} *</label>
-                                <input type="password" class="form-input" name="apiKey" value="${apiKeyValue}" placeholder="${apiKeyPlaceholder}" required>
+                                <input type="password" class="form-input" name="apiKey" id="endpoint-api-key" value="${apiKeyValue}" placeholder="${apiKeyPlaceholder}">
                                 ${apiKeyHint}
                             </div>
                             <div class="form-group">
                                 <label class="form-label">${t('endpoints.transformer')} *</label>
-                                <select class="form-select" name="transformer" required>
+                                <select class="form-select" name="transformer" id="endpoint-transformer" required>
                                     <option value="claude" ${endpoint?.transformer === 'claude' ? 'selected' : ''}>${t('transformers.claude')}</option>
                                     <option value="openai" ${endpoint?.transformer === 'openai' ? 'selected' : ''}>${t('transformers.openai')}</option>
                                     <option value="openai2" ${endpoint?.transformer === 'openai2' ? 'selected' : ''}>${t('transformers.openai2')}</option>
@@ -430,6 +439,32 @@ class Endpoints {
             this.saveEndpoint(isEdit, endpoint?.name, isClone);
         });
         document.getElementById('fetch-models-btn').addEventListener('click', () => this.fetchModels());
+        const syncAuthModeFields = () => {
+            const mode = document.getElementById('endpoint-auth-mode')?.value || 'api_key';
+            const apiUrl = document.getElementById('endpoint-api-url');
+            const apiKey = document.getElementById('endpoint-api-key');
+            const transformer = document.getElementById('endpoint-transformer');
+            const model = document.getElementById('model-input');
+            const isTokenPool = mode === 'token_pool' || mode === 'codex_token_pool' || mode === 'claude_oauth_token_pool';
+            if (apiKey) {
+                apiKey.closest('.form-group').style.display = isTokenPool ? 'none' : '';
+            }
+            if (mode === 'codex_token_pool') {
+                apiUrl.value = 'https://chatgpt.com/backend-api/codex';
+                transformer.value = 'openai2';
+            } else if (mode === 'claude_oauth_token_pool') {
+                apiUrl.value = 'https://api.anthropic.com';
+                transformer.value = 'claude';
+                if (!model.value.trim()) {
+                    model.value = 'opus';
+                }
+            }
+            const fixed = mode === 'codex_token_pool' || mode === 'claude_oauth_token_pool';
+            apiUrl.readOnly = fixed;
+            transformer.disabled = fixed;
+        };
+        document.getElementById('endpoint-auth-mode').addEventListener('change', syncAuthModeFields);
+        syncAuthModeFields();
     }
 
     async fetchModels() {
@@ -534,6 +569,7 @@ class Endpoints {
 
         const data = {
             name: formData.get('name'),
+            authMode: formData.get('authMode'),
             apiUrl: formData.get('apiUrl'),
             proxyUrl: formData.get('proxyUrl'),
             apiKey: formData.get('apiKey'),
@@ -543,6 +579,18 @@ class Endpoints {
             remark: formData.get('remark'),
             enabled: formData.get('enabled') === 'on'
         };
+        if (data.authMode === 'codex_token_pool') {
+            data.apiUrl = 'https://chatgpt.com/backend-api/codex';
+            data.transformer = 'openai2';
+            delete data.apiKey;
+        } else if (data.authMode === 'claude_oauth_token_pool') {
+            data.apiUrl = 'https://api.anthropic.com';
+            data.transformer = 'claude';
+            data.model = data.model || 'opus';
+            delete data.apiKey;
+        } else if (data.authMode === 'token_pool') {
+            delete data.apiKey;
+        }
 
         // If editing and API key is ****, don't send it (keep existing)
         if ((isEdit || isClone) && data.apiKey === '****') {
@@ -670,6 +718,7 @@ class Endpoints {
         // Create cloned endpoint - don't include apiKey, use cloneFrom instead
         const clonedEndpoint = {
             name: newName,
+            authMode: endpoint.authMode,
             apiUrl: endpoint.apiUrl,
             proxyUrl: endpoint.proxyUrl,
             transformer: endpoint.transformer,
@@ -698,13 +747,14 @@ class Endpoints {
             const stats = result.stats || {};
             const endpoint = this.endpoints.find(ep => ep.name === endpointName);
             const isCodexTokenPool = endpoint?.authMode === 'codex_token_pool';
+            const isClaudeOAuthTokenPool = endpoint?.authMode === 'claude_oauth_token_pool';
             const modalContainer = document.getElementById('modal-container');
 
             modalContainer.innerHTML = `
                 <div class="modal-overlay">
                     <div class="modal" style="max-width: 960px; width: 95vw;">
                         <div class="modal-header">
-                            <h3 class="modal-title">${t('endpoints.tokenPoolTitle')} ${this.escapeHtml(endpointName)}</h3>
+                            <h3 class="modal-title">${isClaudeOAuthTokenPool ? t('endpoints.claudeOAuthTokenPoolTitle') : t('endpoints.tokenPoolTitle')} ${this.escapeHtml(endpointName)}</h3>
                             <button class="modal-close" id="close-modal">×</button>
                         </div>
                         <div class="modal-body">
@@ -719,13 +769,14 @@ class Endpoints {
 
                             <div class="form-group">
                                 <label class="form-label">${t('endpoints.batchImportJson')}</label>
-                                <textarea class="form-textarea" id="token-import-json" style="min-height: 140px;" placeholder='${t('endpoints.jsonPasteHint')}'></textarea>
+                                <textarea class="form-textarea" id="token-import-json" style="min-height: 140px;" placeholder='${isClaudeOAuthTokenPool ? t('endpoints.claudeJsonPasteHint') : t('endpoints.jsonPasteHint')}'></textarea>
                                 <label style="display: inline-flex; gap: 8px; align-items: center; margin-top: 8px;">
                                     <input type="checkbox" id="token-import-overwrite">
                                     ${t('endpoints.overwriteExisting')}
                                 </label>
                                 <div style="margin-top: 8px;">
                                     <button class="btn btn-primary" id="token-import-btn">${t('common.import')}</button>
+                                    ${isClaudeOAuthTokenPool ? `<button class="btn btn-secondary" id="token-claude-discover-btn">${t('endpoints.discoverClaude')}</button>` : ''}
                                     ${isCodexTokenPool ? `<button class="btn btn-secondary" id="token-auth-btn">${t('endpoints.chatgptAuth')}</button>` : ''}
                                 </div>
                             </div>
@@ -760,7 +811,8 @@ class Endpoints {
             document.getElementById('close-modal').addEventListener('click', () => this.closeModal());
             document.getElementById('close-token-pool-btn').addEventListener('click', () => this.closeModal());
             document.getElementById('refresh-token-pool-btn').addEventListener('click', () => this.showTokenPoolModal(endpointName));
-            document.getElementById('token-import-btn').addEventListener('click', () => this.importEndpointCredentials(endpointName));
+            document.getElementById('token-import-btn').addEventListener('click', () => this.importEndpointCredentials(endpointName, isClaudeOAuthTokenPool));
+            document.getElementById('token-claude-discover-btn')?.addEventListener('click', () => this.discoverAndImportClaudeOAuthCredential(endpointName));
             document.getElementById('token-auth-btn')?.addEventListener('click', () => this.startCodexCredentialAuth(endpointName));
 
             document.querySelectorAll('.token-enable-toggle').forEach(toggle => {
@@ -1029,7 +1081,7 @@ class Endpoints {
         return `<span style="display:inline-block;padding:2px 8px;border-radius:999px;background:${color};color:#fff;font-size:12px;">${this.escapeHtml(normalized)}</span>`;
     }
 
-    async importEndpointCredentials(endpointName) {
+    async importEndpointCredentials(endpointName, isClaudeOAuthTokenPool = false) {
         const jsonInput = document.getElementById('token-import-json');
         const overwriteInput = document.getElementById('token-import-overwrite');
         const raw = (jsonInput?.value || '').trim();
@@ -1043,7 +1095,22 @@ class Endpoints {
         try {
             payload = JSON.parse(raw);
         } catch {
-            notifications.error(t('endpoints.invalidJson'));
+            if (!isClaudeOAuthTokenPool) {
+                notifications.error(t('endpoints.invalidJson'));
+                return;
+            }
+            try {
+                const result = await api.importClaudeOAuthCredential(endpointName, {
+                    token: raw,
+                    overwrite: overwriteInput?.checked === true
+                });
+                notifications.success(t('notifications.importDone').replace('{created}', result.created || 0).replace('{updated}', result.updated || 0).replace('{skipped}', result.skipped || 0).replace('{failed}', result.failed || 0));
+                jsonInput.value = '';
+                await this.showTokenPoolModal(endpointName);
+                await this.loadEndpoints();
+            } catch (error) {
+                notifications.error(`${t('endpoints.failedToImport')}: ${error.message}`);
+            }
             return;
         }
 
@@ -1060,6 +1127,31 @@ class Endpoints {
             const result = await api.importEndpointCredentials(endpointName, requestBody);
             notifications.success(t('notifications.importDone').replace('{created}', result.created || 0).replace('{updated}', result.updated || 0).replace('{skipped}', result.skipped || 0).replace('{failed}', result.failed || 0));
             jsonInput.value = '';
+            await this.showTokenPoolModal(endpointName);
+            await this.loadEndpoints();
+        } catch (error) {
+            notifications.error(`${t('endpoints.failedToImport')}: ${error.message}`);
+        }
+    }
+
+    async discoverAndImportClaudeOAuthCredential(endpointName) {
+        try {
+            const result = await api.discoverClaudeOAuthCredentials(endpointName);
+            const credentials = result.credentials || [];
+            if (!credentials.length) {
+                notifications.warning(t('endpoints.noClaudeCredentialsFound'));
+                return;
+            }
+            const choice = credentials[0];
+            if (!confirm(t('endpoints.importClaudeDiscoveredConfirm').replace('{label}', choice.label || choice.source || choice.id).replace('{token}', choice.maskedToken || ''))) {
+                return;
+            }
+            const overwrite = document.getElementById('token-import-overwrite')?.checked === true;
+            const imported = await api.importClaudeOAuthCredential(endpointName, {
+                id: choice.id,
+                overwrite
+            });
+            notifications.success(t('notifications.importDone').replace('{created}', imported.created || 0).replace('{updated}', imported.updated || 0).replace('{skipped}', imported.skipped || 0).replace('{failed}', imported.failed || 0));
             await this.showTokenPoolModal(endpointName);
             await this.loadEndpoints();
         } catch (error) {

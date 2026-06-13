@@ -113,7 +113,7 @@ func (e *EndpointService) resolveEndpointAuth(endpoint config.Endpoint) (string,
 		if e.storage == nil {
 			return "", nil, fmt.Errorf("token pool mode requires storage")
 		}
-		cred, err := e.storage.GetUsableEndpointCredential(endpoint.Name, time.Now().UTC())
+		cred, err := e.storage.GetUsableEndpointCredentialByProvider(endpoint.Name, credentialProviderTypeForAuthMode(authMode), time.Now().UTC())
 		if err != nil {
 			return "", nil, fmt.Errorf("failed to select token from token pool: %w", err)
 		}
@@ -133,6 +133,17 @@ func (e *EndpointService) resolveEndpointAuth(endpoint config.Endpoint) (string,
 func (e *EndpointService) resolveEndpointAPIKey(endpoint config.Endpoint) (string, error) {
 	apiKey, _, err := e.resolveEndpointAuth(endpoint)
 	return apiKey, err
+}
+
+func credentialProviderTypeForAuthMode(authMode string) string {
+	switch config.NormalizeAuthMode(authMode) {
+	case config.AuthModeCodexTokenPool:
+		return storage.ProviderTypeCodex
+	case config.AuthModeClaudeOAuthTokenPool:
+		return storage.ProviderTypeClaudeOAuth
+	default:
+		return ""
+	}
 }
 
 // AddEndpoint adds a new endpoint
@@ -599,8 +610,7 @@ func (e *EndpointService) TestEndpoint(index int) string {
 	req.Header.Set("Content-Type", "application/json")
 	switch transformer {
 	case "claude":
-		req.Header.Set("x-api-key", apiKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
+		applyClaudeAuthHeadersForTest(req, apiKey, credential)
 	case "openai", "openai2", "deepseek", "kimi", "poe":
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	case "gemini":
@@ -1173,8 +1183,7 @@ func (e *EndpointService) testMinimalRequest(endpoint config.Endpoint, apiUrl, a
 
 		req.Header.Set("Content-Type", "application/json")
 		if transformer == "claude" {
-			req.Header.Set("x-api-key", apiKey)
-			req.Header.Set("anthropic-version", "2023-06-01")
+			applyClaudeAuthHeadersForTest(req, apiKey, credential)
 		} else if transformer != "gemini" {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
@@ -1312,7 +1321,24 @@ func normalizeEndpointPathForBaseURL(baseURL, apiPath string) string {
 
 func isCodexProviderType(providerType string) bool {
 	p := strings.ToLower(strings.TrimSpace(providerType))
-	return p == "" || p == "codex"
+	return p == "" || p == storage.ProviderTypeCodex
+}
+
+func isClaudeOAuthProviderType(providerType string) bool {
+	return strings.EqualFold(strings.TrimSpace(providerType), storage.ProviderTypeClaudeOAuth)
+}
+
+func applyClaudeAuthHeadersForTest(req *http.Request, apiKey string, credential *storage.EndpointCredential) {
+	if req == nil {
+		return
+	}
+	if credential != nil && isClaudeOAuthProviderType(credential.ProviderType) {
+		req.Header.Del("x-api-key")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	} else {
+		req.Header.Set("x-api-key", apiKey)
+	}
+	req.Header.Set("anthropic-version", "2023-06-01")
 }
 
 func isResponsesRequestPath(requestPath string) bool {
@@ -1510,7 +1536,11 @@ func (e *EndpointService) fetchOpenAIModels(apiUrl, apiKey, transformer string, 
 			return nil, fmt.Errorf("failed to create request: %v", err)
 		}
 
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+		if transformer == "claude" {
+			applyClaudeAuthHeadersForTest(req, apiKey, credential)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
 		req.Header.Set("Accept", "application/json")
 		if isCodexBackend {
 			applyCodexCredentialHeadersForTest(req, credential, nil)

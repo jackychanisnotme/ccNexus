@@ -756,7 +756,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		credentialID := int64(0)
 		var selectedCredential *storage.EndpointCredential
 		if config.IsTokenPoolAuthMode(authMode) {
-			credential, err := p.selectCredential(endpoint.Name)
+			credential, err := p.selectCredential(endpoint.Name, credentialProviderTypeForAuthMode(authMode))
 			if err != nil {
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, 0, "credential_select_failed", "Failed to select token pool credential: %v", err)
 				p.recordEndpointErrorForClient(endpoint.Name, "credential_select_failed", obs.ClientIP)
@@ -1404,11 +1404,29 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "All endpoints failed", http.StatusServiceUnavailable)
 }
 
-func (p *Proxy) selectCredential(endpointName string) (*storage.EndpointCredential, error) {
+func credentialProviderTypeForAuthMode(authMode string) string {
+	switch config.NormalizeAuthMode(authMode) {
+	case config.AuthModeCodexTokenPool:
+		return storage.ProviderTypeCodex
+	case config.AuthModeClaudeOAuthTokenPool:
+		return storage.ProviderTypeClaudeOAuth
+	default:
+		return ""
+	}
+}
+
+func (p *Proxy) selectCredential(endpointName string, providerType string) (*storage.EndpointCredential, error) {
 	if p.storage == nil {
 		return nil, nil
 	}
+	if strings.TrimSpace(providerType) != "" {
+		return p.selectCredentialByProvider(endpointName, providerType)
+	}
 	return p.storage.GetUsableEndpointCredential(endpointName, time.Now().UTC())
+}
+
+func (p *Proxy) selectCredentialByProvider(endpointName string, providerType string) (*storage.EndpointCredential, error) {
+	return p.storage.GetUsableEndpointCredentialByProvider(endpointName, providerType, time.Now().UTC())
 }
 
 func (p *Proxy) markCredentialSuccess(credentialID int64) {
