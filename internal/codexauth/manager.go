@@ -653,7 +653,7 @@ func sanitizeError(message string, max int) string {
 			message = string(redacted)
 		}
 	}
-	for _, key := range []string{"access_token", "refresh_token", "id_token", "authorization_code", "code_verifier"} {
+	for _, key := range secretFieldNames() {
 		message = redactLooseKey(message, key)
 	}
 	if max > 0 && len(message) > max {
@@ -666,12 +666,11 @@ func redactJSON(value interface{}) {
 	switch typed := value.(type) {
 	case map[string]interface{}:
 		for key, child := range typed {
-			switch strings.ToLower(key) {
-			case "access_token", "refresh_token", "id_token", "authorization_code", "code_verifier":
+			if isSecretFieldName(key) {
 				typed[key] = "<redacted>"
-			default:
-				redactJSON(child)
+				continue
 			}
+			redactJSON(child)
 		}
 	case []interface{}:
 		for _, child := range typed {
@@ -680,25 +679,70 @@ func redactJSON(value interface{}) {
 	}
 }
 
+func secretFieldNames() []string {
+	return []string{
+		"access_token",
+		"refresh_token",
+		"id_token",
+		"authorization_code",
+		"code_verifier",
+		"ANTHROPIC_AUTH_TOKEN",
+		"CLAUDE_CODE_OAUTH_TOKEN",
+	}
+}
+
+func isSecretFieldName(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	for _, secretKey := range secretFieldNames() {
+		if normalized == strings.ToLower(secretKey) {
+			return true
+		}
+	}
+	return false
+}
+
 func redactLooseKey(message, key string) string {
-	needle := `"` + key + `":"`
-	idx := strings.Index(message, needle)
-	for idx >= 0 {
-		start := idx + len(needle)
-		end := start
-		for end < len(message) && message[end] != '"' {
-			end++
-		}
-		if end > start {
-			message = message[:start] + "<redacted>" + message[end:]
-		}
-		next := strings.Index(message[start:], needle)
-		if next < 0 {
+	normalizedKey := strings.ToLower(strings.TrimSpace(key))
+	searchStart := 0
+	for searchStart < len(message) {
+		idx := strings.Index(strings.ToLower(message[searchStart:]), normalizedKey)
+		if idx < 0 {
 			break
 		}
-		idx = start + next
+		keyStart := searchStart + idx
+		afterKey := keyStart + len(key)
+		separator := afterKey
+		for separator < len(message) && isLooseSecretJunk(message[separator]) {
+			separator++
+		}
+		if separator >= len(message) || (message[separator] != ':' && message[separator] != '=') {
+			searchStart = afterKey
+			continue
+		}
+		valueStart := separator + 1
+		for valueStart < len(message) && isLooseSecretJunk(message[valueStart]) {
+			valueStart++
+		}
+		valueEnd := valueStart
+		for valueEnd < len(message) && !isLooseSecretTerminator(message[valueEnd]) {
+			valueEnd++
+		}
+		if valueEnd > valueStart {
+			message = message[:valueStart] + "<redacted>" + message[valueEnd:]
+			searchStart = valueStart + len("<redacted>")
+		} else {
+			searchStart = afterKey
+		}
 	}
 	return message
+}
+
+func isLooseSecretJunk(ch byte) bool {
+	return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '"' || ch == '\'' || ch == '\\'
+}
+
+func isLooseSecretTerminator(ch byte) bool {
+	return ch == '"' || ch == '\'' || ch == '\\' || ch == ',' || ch == '}' || ch == ']' || ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n'
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

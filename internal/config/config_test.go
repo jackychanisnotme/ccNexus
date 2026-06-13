@@ -24,6 +24,37 @@ func TestNormalizeThinkingEffortPreservesProviderDefault(t *testing.T) {
 	}
 }
 
+func TestClaudeOAuthTokenPoolAuthModeRules(t *testing.T) {
+	if got := NormalizeAuthMode("CLAUDE_OAUTH_TOKEN_POOL"); got != AuthModeClaudeOAuthTokenPool {
+		t.Fatalf("NormalizeAuthMode returned %q, want %q", got, AuthModeClaudeOAuthTokenPool)
+	}
+	if !IsTokenPoolAuthMode(AuthModeClaudeOAuthTokenPool) {
+		t.Fatal("expected Claude OAuth token pool to be treated as token-pool auth mode")
+	}
+
+	ep := Endpoint{
+		Name:        "Claude OAuth",
+		APIUrl:      "https://example.invalid/custom",
+		APIKey:      "should-clear",
+		AuthMode:    AuthModeClaudeOAuthTokenPool,
+		Transformer: "openai2",
+	}
+	ApplyEndpointAuthModeRules(&ep)
+
+	if ep.APIUrl != ClaudeOAuthTokenPoolAPIURL {
+		t.Fatalf("APIUrl = %q, want %q", ep.APIUrl, ClaudeOAuthTokenPoolAPIURL)
+	}
+	if ep.Transformer != ClaudeOAuthTokenPoolTransformer {
+		t.Fatalf("Transformer = %q, want %q", ep.Transformer, ClaudeOAuthTokenPoolTransformer)
+	}
+	if ep.Model != ClaudeOAuthTokenPoolDefaultModel {
+		t.Fatalf("Model = %q, want %q", ep.Model, ClaudeOAuthTokenPoolDefaultModel)
+	}
+	if ep.APIKey != "" {
+		t.Fatalf("expected APIKey to be cleared, got %q", ep.APIKey)
+	}
+}
+
 type fakeConfigStorage struct {
 	endpoints []StorageEndpoint
 	configs   map[string]string

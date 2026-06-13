@@ -13,6 +13,7 @@ import (
 
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/storage"
 )
 
 func TestEnsureCodexResponsesPayload(t *testing.T) {
@@ -622,6 +623,36 @@ func TestBuildProxyRequestForcesClaudeUserAgent(t *testing.T) {
 		if got := proxyReq.Header.Get("anthropic-version"); got != "2023-06-01" {
 			t.Fatalf("%s: expected anthropic-version set, got %q", name, got)
 		}
+	}
+}
+
+func TestBuildProxyRequestUsesBearerOnlyForClaudeOAuthCredential(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:        "ClaudeOAuth",
+		APIUrl:      "https://api.anthropic.com",
+		AuthMode:    config.AuthModeClaudeOAuthTokenPool,
+		Transformer: "claude",
+		Model:       "opus",
+	}
+	body := []byte(`{"model":"opus","messages":[],"max_tokens":16}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
+	req.Header.Set("User-Agent", "OpenAI/JS")
+
+	proxyReq, err := buildProxyRequest(req, endpoint, "claude-oauth-token", body, "cc_claude", &storage.EndpointCredential{
+		ProviderType: "claude_oauth",
+		AccessToken:  "claude-oauth-token",
+	})
+	if err != nil {
+		t.Fatalf("buildProxyRequest failed: %v", err)
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "Bearer claude-oauth-token" {
+		t.Fatalf("Authorization = %q, want bearer OAuth token", got)
+	}
+	if got := proxyReq.Header.Get("x-api-key"); got != "" {
+		t.Fatalf("expected x-api-key to be omitted for Claude OAuth, got %q", got)
+	}
+	if got := proxyReq.Header.Get("anthropic-version"); got != "2023-06-01" {
+		t.Fatalf("anthropic-version = %q, want 2023-06-01", got)
 	}
 }
 

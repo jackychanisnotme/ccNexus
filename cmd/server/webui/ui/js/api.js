@@ -80,6 +80,14 @@ class APIClient {
         return this.request('POST', `/endpoints/${encodeURIComponent(name)}/credentials/import`, data);
     }
 
+    async discoverClaudeOAuthCredentials(name) {
+        return this.request('GET', `/endpoints/${encodeURIComponent(name)}/credentials/claude-oauth/discover`);
+    }
+
+    async importClaudeOAuthCredential(name, data) {
+        return this.request('POST', `/endpoints/${encodeURIComponent(name)}/credentials/claude-oauth/import`, data);
+    }
+
     async updateEndpointCredential(name, id, data) {
         return this.request('PATCH', `/endpoints/${encodeURIComponent(name)}/credentials/${id}`, data);
     }

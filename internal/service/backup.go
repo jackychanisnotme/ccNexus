@@ -87,6 +87,17 @@ func (b *BackupService) UpdateS3BackupConfig(endpoint, region, bucket, prefix, a
 	return b.saveConfig()
 }
 
+func (b *BackupService) UpdateBackupLoginCredentialOptIn(include bool) error {
+	backup := cloneBackupConfig(b.config.GetBackup())
+	if backup == nil {
+		backup = &config.BackupConfig{}
+	}
+	backup.IncludeLoginCredentials = include
+	b.config.UpdateBackup(backup)
+
+	return b.saveConfig()
+}
+
 func (b *BackupService) ListBackups(provider string) string {
 	provider = normalizeUserInput(provider)
 	if provider == "" {
@@ -134,6 +145,9 @@ func (b *BackupService) BackupToProvider(provider, filename string) error {
 	if provider == "" {
 		provider = string(BackupProviderWebDAV)
 	}
+	if err := b.ensureCloudBackupCredentialPolicy(BackupProvider(provider)); err != nil {
+		return err
+	}
 
 	switch BackupProvider(provider) {
 	case BackupProviderWebDAV:
@@ -148,6 +162,30 @@ func (b *BackupService) BackupToProvider(provider, filename string) error {
 	default:
 		return fmt.Errorf("backup_provider_invalid")
 	}
+}
+
+func (b *BackupService) ensureCloudBackupCredentialPolicy(provider BackupProvider) error {
+	if provider == BackupProviderLocal {
+		return nil
+	}
+	if provider != BackupProviderWebDAV && provider != BackupProviderS3 {
+		return nil
+	}
+	if b == nil || b.storage == nil {
+		return nil
+	}
+	backup := b.config.GetBackup()
+	if backup != nil && backup.IncludeLoginCredentials {
+		return nil
+	}
+	hasClaudeOAuth, err := b.storage.HasCredentialProviderType(storage.ProviderTypeClaudeOAuth)
+	if err != nil {
+		return fmt.Errorf("backup_credential_policy_check_failed")
+	}
+	if hasClaudeOAuth {
+		return fmt.Errorf("backup_login_credentials_opt_in_required")
+	}
+	return nil
 }
 
 func (b *BackupService) DetectBackupConflict(provider, filename string) string {
@@ -224,7 +262,10 @@ func cloneBackupConfig(src *config.BackupConfig) *config.BackupConfig {
 		return nil
 	}
 
-	dst := &config.BackupConfig{Provider: src.Provider}
+	dst := &config.BackupConfig{
+		Provider:                src.Provider,
+		IncludeLoginCredentials: src.IncludeLoginCredentials,
+	}
 	if src.Local != nil {
 		dst.Local = &config.LocalBackupConfig{Dir: src.Local.Dir}
 	}

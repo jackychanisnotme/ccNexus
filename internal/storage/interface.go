@@ -2,6 +2,11 @@ package storage
 
 import "time"
 
+const (
+	ProviderTypeCodex       = "codex"
+	ProviderTypeClaudeOAuth = "claude_oauth"
+)
+
 type Endpoint struct {
 	ID          int64     `json:"id"`
 	Name        string    `json:"name"`
@@ -148,6 +153,8 @@ type Storage interface {
 	SaveEndpointCredential(cred *EndpointCredential) error
 	UpdateEndpointCredential(cred *EndpointCredential) error
 	DeleteEndpointCredential(endpointName string, id int64) error
+	GetUsableEndpointCredentialByProvider(endpointName string, providerType string, now time.Time) (*EndpointCredential, error)
+	HasCredentialProviderType(providerType string) (bool, error)
 	GetTokenPoolStats(endpointName string) (TokenPoolStats, error)
 	GetAllTokenPoolStats() (map[string]TokenPoolStats, error)
 	GetCredentialRateLimitsByEndpoint(endpointName string) (map[int64]*CredentialRateLimits, error)

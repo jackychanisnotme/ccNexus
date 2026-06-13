@@ -212,7 +212,11 @@ func buildProxyRequest(r *http.Request, endpoint config.Endpoint, apiKey string,
 		proxyReq.URL.RawQuery = q.Encode()
 	default:
 		// Claude endpoints
-		proxyReq.Header.Set("x-api-key", apiKey)
+		if credential == nil || !isClaudeOAuthProviderType(credential.ProviderType) {
+			proxyReq.Header.Set("x-api-key", apiKey)
+		} else {
+			proxyReq.Header.Del("x-api-key")
+		}
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 		normalizeClaudeUpstreamHeaders(proxyReq.Header)
 	}
@@ -306,7 +310,11 @@ func isStreamingRequest(payload []byte) bool {
 
 func isCodexProviderType(providerType string) bool {
 	p := strings.ToLower(strings.TrimSpace(providerType))
-	return p == "" || p == "codex"
+	return p == "" || p == storage.ProviderTypeCodex
+}
+
+func isClaudeOAuthProviderType(providerType string) bool {
+	return strings.EqualFold(strings.TrimSpace(providerType), storage.ProviderTypeClaudeOAuth)
 }
 
 // normalizeTargetPathForBaseURL adjusts OpenAI Responses paths for Codex backend base URLs.

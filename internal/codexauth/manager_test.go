@@ -518,6 +518,16 @@ func TestManagerTokenExchangeFailureRedactsSensitiveValues(t *testing.T) {
 	}
 }
 
+func TestSanitizeErrorRedactsClaudeOAuthTokenNames(t *testing.T) {
+	message := `{"error":"bad","CLAUDE_CODE_OAUTH_TOKEN":"secret-claude","ANTHROPIC_AUTH_TOKEN":"secret-anthropic","details":"ANTHROPIC_AUTH_TOKEN=\"loose-secret\""}`
+	got := sanitizeError(message, 0)
+	for _, secret := range []string{"secret-claude", "secret-anthropic", "loose-secret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("sanitized error leaked %q: %s", secret, got)
+		}
+	}
+}
+
 func TestManagerCancelBeforePersistenceDoesNotSaveCredential(t *testing.T) {
 	store := newFakeCredentialStore()
 	getStarted := make(chan struct{})

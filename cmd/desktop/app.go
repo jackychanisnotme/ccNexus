@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lich0821/ccNexus/internal/claudeoauth"
 	"github.com/lich0821/ccNexus/internal/codexauth"
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
@@ -462,6 +463,9 @@ func (a *App) FetchCodexRateLimits(index int) string {
 	if err != nil {
 		return desktopErrorJSON(err)
 	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeCodexTokenPool {
+		return desktopErrorJSON(fmt.Errorf("Codex Token Pool endpoint required"))
+	}
 	if a.proxy == nil {
 		return desktopErrorJSON(fmt.Errorf("proxy unavailable"))
 	}
@@ -480,6 +484,9 @@ func (a *App) FetchCodexRateLimitsForCredential(index int, credentialID int64) s
 	if err != nil {
 		return desktopErrorJSON(err)
 	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeCodexTokenPool {
+		return desktopErrorJSON(fmt.Errorf("Codex Token Pool endpoint required"))
+	}
 	if a.proxy == nil {
 		return desktopErrorJSON(fmt.Errorf("proxy unavailable"))
 	}
@@ -497,6 +504,9 @@ func (a *App) RefreshEndpointCredential(index int, credentialID int64) string {
 	endpoint, err := a.getEndpointByIndex(index)
 	if err != nil {
 		return desktopErrorJSON(err)
+	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeCodexTokenPool {
+		return desktopErrorJSON(fmt.Errorf("Codex Token Pool endpoint required"))
 	}
 	if a.proxy == nil {
 		return desktopErrorJSON(fmt.Errorf("proxy unavailable"))
@@ -519,6 +529,9 @@ func (a *App) StartCodexCredentialAuth(index int) string {
 	endpoint, err := a.getEndpointByIndex(index)
 	if err != nil {
 		return desktopErrorJSON(err)
+	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeCodexTokenPool {
+		return desktopErrorJSON(fmt.Errorf("Codex Token Pool endpoint required"))
 	}
 	if a.codexAuth == nil {
 		return desktopErrorJSON(fmt.Errorf("Codex auth unavailable"))
@@ -599,7 +612,7 @@ func (a *App) GetEndpointCredentials(index int) string {
 }
 
 func (a *App) ImportEndpointCredentials(index int, payload string, overwrite bool) string {
-	endpointName, err := a.getEndpointNameByIndex(index)
+	endpoint, err := a.getEndpointByIndex(index)
 	if err != nil {
 		return desktopErrorJSON(err)
 	}
@@ -617,7 +630,7 @@ func (a *App) ImportEndpointCredentials(index int, payload string, overwrite boo
 		}
 	}
 
-	result, err := a.importDesktopCredentials(endpointName, items, overwrite, 0, nil)
+	result, err := a.importDesktopCredentials(endpoint, items, overwrite, 0, nil)
 	if err != nil {
 		return desktopErrorJSON(err)
 	}
@@ -625,7 +638,7 @@ func (a *App) ImportEndpointCredentials(index int, payload string, overwrite boo
 }
 
 func (a *App) ImportEndpointCredentialsFromFiles(index int, overwrite bool) string {
-	endpointName, err := a.getEndpointNameByIndex(index)
+	endpoint, err := a.getEndpointByIndex(index)
 	if err != nil {
 		return desktopErrorJSON(err)
 	}
@@ -682,14 +695,83 @@ func (a *App) ImportEndpointCredentialsFromFiles(index int, overwrite bool) stri
 		})
 	}
 
-	result, err := a.importDesktopCredentials(endpointName, items, overwrite, failedFiles, errors)
+	result, err := a.importDesktopCredentials(endpoint, items, overwrite, failedFiles, errors)
 	if err != nil {
 		return desktopErrorJSON(err)
 	}
 	return desktopSuccessJSON(result)
 }
 
-func (a *App) importDesktopCredentials(endpointName string, items []desktopImportCredentialItem, overwrite bool, seedFailed int, seedErrors []string) (map[string]interface{}, error) {
+func (a *App) DiscoverClaudeOAuthCredentials(index int) string {
+	endpoint, err := a.getEndpointByIndex(index)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeClaudeOAuthTokenPool {
+		return desktopErrorJSON(fmt.Errorf("Claude OAuth Token Pool endpoint required"))
+	}
+
+	candidates, err := claudeoauth.Discover(claudeoauth.DiscoverOptions{})
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	return desktopSuccessJSON(map[string]interface{}{
+		"credentials": claudeoauth.Preview(candidates),
+	})
+}
+
+func (a *App) ImportClaudeOAuthCredential(index int, tokenOrID string, fromDiscovery bool, remark string, overwrite bool) string {
+	endpoint, err := a.getEndpointByIndex(index)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeClaudeOAuthTokenPool {
+		return desktopErrorJSON(fmt.Errorf("Claude OAuth Token Pool endpoint required"))
+	}
+
+	token := strings.TrimSpace(tokenOrID)
+	if fromDiscovery {
+		token = ""
+		candidates, err := claudeoauth.Discover(claudeoauth.DiscoverOptions{})
+		if err != nil {
+			return desktopErrorJSON(err)
+		}
+		for _, candidate := range candidates {
+			if candidate.ID == strings.TrimSpace(tokenOrID) {
+				token = candidate.Token
+				break
+			}
+		}
+	} else if token != "" {
+		parsed, err := claudeoauth.ParseSetupToken(token)
+		if err != nil {
+			return desktopErrorJSON(err)
+		}
+		token = parsed
+	}
+	if strings.TrimSpace(token) == "" {
+		return desktopErrorJSON(fmt.Errorf("Claude OAuth token or discovery id is required"))
+	}
+
+	created, updated, skipped, err := a.saveDesktopClaudeOAuthCredential(endpoint.Name, token, strings.TrimSpace(remark), overwrite)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	return desktopSuccessJSON(map[string]interface{}{
+		"created":   created,
+		"updated":   updated,
+		"skipped":   skipped,
+		"failed":    0,
+		"processed": 1,
+		"errors":    []string{},
+	})
+}
+
+func (a *App) importDesktopCredentials(endpoint *config.Endpoint, items []desktopImportCredentialItem, overwrite bool, seedFailed int, seedErrors []string) (map[string]interface{}, error) {
+	if endpoint == nil {
+		return nil, fmt.Errorf("endpoint not found")
+	}
+	endpointName := endpoint.Name
 	existing, err := a.storage.GetEndpointCredentials(endpointName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get existing credentials: %w", err)
@@ -752,7 +834,7 @@ func (a *App) importDesktopCredentials(endpointName string, items []desktopImpor
 			Remark:       strings.TrimSpace(item.Remark),
 		}
 		if cred.ProviderType == "" {
-			cred.ProviderType = "codex"
+			cred.ProviderType = defaultDesktopCredentialProviderType(endpoint)
 		}
 
 		existingCredential := findDesktopExistingCredential(accountIndex, emailIndex, &cred)
@@ -813,6 +895,51 @@ func (a *App) importDesktopCredentials(endpointName string, items []desktopImpor
 		"processed": len(items),
 		"errors":    errors,
 	}, nil
+}
+
+func defaultDesktopCredentialProviderType(endpoint *config.Endpoint) string {
+	if endpoint != nil && config.NormalizeAuthMode(endpoint.AuthMode) == config.AuthModeClaudeOAuthTokenPool {
+		return storage.ProviderTypeClaudeOAuth
+	}
+	return storage.ProviderTypeCodex
+}
+
+func (a *App) saveDesktopClaudeOAuthCredential(endpointName string, token string, remark string, overwrite bool) (int, int, int, error) {
+	existing, err := a.storage.GetEndpointCredentials(endpointName)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to get existing credentials")
+	}
+	for _, cred := range existing {
+		if cred.ProviderType != storage.ProviderTypeClaudeOAuth || cred.AccessToken != token {
+			continue
+		}
+		if !overwrite {
+			return 0, 0, 1, nil
+		}
+		cred.Remark = remark
+		cred.Status = "active"
+		cred.Enabled = true
+		cred.FailureCount = 0
+		cred.CooldownUntil = nil
+		cred.LastError = ""
+		if err := a.storage.UpdateEndpointCredential(&cred); err != nil {
+			return 0, 0, 0, fmt.Errorf("failed to update credential")
+		}
+		return 0, 1, 0, nil
+	}
+
+	cred := storage.EndpointCredential{
+		EndpointName: endpointName,
+		ProviderType: storage.ProviderTypeClaudeOAuth,
+		AccessToken:  token,
+		Status:       "active",
+		Enabled:      true,
+		Remark:       remark,
+	}
+	if err := a.storage.SaveEndpointCredential(&cred); err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to save credential")
+	}
+	return 1, 0, 0, nil
 }
 
 func (a *App) SetEndpointCredentialEnabled(index int, credentialID int64, enabled bool) error {
@@ -974,7 +1101,9 @@ func (a *App) UpdateWebDAVConfig(url, username, password string) error {
 func (a *App) TestWebDAVConnection(url, username, password string) string {
 	return a.webdav.TestWebDAVConnection(url, username, password)
 }
-func (a *App) BackupToWebDAV(filename string) error { return a.webdav.BackupToWebDAV(filename) }
+func (a *App) BackupToWebDAV(filename string) error {
+	return a.backup.BackupToProvider(string(service.BackupProviderWebDAV), filename)
+}
 func (a *App) RestoreFromWebDAV(filename, choice string) error {
 	return a.webdav.RestoreFromWebDAV(filename, choice, func(cfg *config.Config) error {
 		return a.proxy.UpdateConfig(cfg)
@@ -996,6 +1125,9 @@ func (a *App) UpdateBackupProvider(provider string) error {
 func (a *App) UpdateLocalBackupDir(dir string) error { return a.backup.UpdateLocalBackupDir(dir) }
 func (a *App) UpdateS3BackupConfig(endpoint, region, bucket, prefix, accessKey, secretKey, sessionToken string, useSSL, forcePathStyle bool) error {
 	return a.backup.UpdateS3BackupConfig(endpoint, region, bucket, prefix, accessKey, secretKey, sessionToken, useSSL, forcePathStyle)
+}
+func (a *App) UpdateBackupLoginCredentialOptIn(include bool) error {
+	return a.backup.UpdateBackupLoginCredentialOptIn(include)
 }
 func (a *App) ListBackups(provider string) string { return a.backup.ListBackups(provider) }
 func (a *App) DeleteBackups(provider string, filenames []string) error {

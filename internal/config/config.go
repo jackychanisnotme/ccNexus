@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	AuthModeAPIKey         = "api_key"
-	AuthModeTokenPool      = "token_pool"
-	AuthModeCodexTokenPool = "codex_token_pool"
+	AuthModeAPIKey               = "api_key"
+	AuthModeTokenPool            = "token_pool"
+	AuthModeCodexTokenPool       = "codex_token_pool"
+	AuthModeClaudeOAuthTokenPool = "claude_oauth_token_pool"
 
 	RecoveredEndpointPolicyDeprioritize = "deprioritize"
 	RecoveredEndpointPolicyAutoReturn   = "auto_return"
@@ -31,6 +32,10 @@ const (
 
 	CodexTokenPoolAPIURL      = "https://chatgpt.com/backend-api/codex"
 	CodexTokenPoolTransformer = "openai2"
+
+	ClaudeOAuthTokenPoolAPIURL       = "https://api.anthropic.com"
+	ClaudeOAuthTokenPoolTransformer  = "claude"
+	ClaudeOAuthTokenPoolDefaultModel = "opus"
 )
 
 func NormalizeListenMode(mode string) string {
@@ -48,6 +53,8 @@ func NormalizeAuthMode(mode string) string {
 		return AuthModeTokenPool
 	case AuthModeCodexTokenPool:
 		return AuthModeCodexTokenPool
+	case AuthModeClaudeOAuthTokenPool:
+		return AuthModeClaudeOAuthTokenPool
 	default:
 		return AuthModeAPIKey
 	}
@@ -55,7 +62,7 @@ func NormalizeAuthMode(mode string) string {
 
 func IsTokenPoolAuthMode(mode string) bool {
 	normalized := NormalizeAuthMode(mode)
-	return normalized == AuthModeTokenPool || normalized == AuthModeCodexTokenPool
+	return normalized == AuthModeTokenPool || normalized == AuthModeCodexTokenPool || normalized == AuthModeClaudeOAuthTokenPool
 }
 
 func NormalizeThinkingEffort(effort string) string {
@@ -100,6 +107,16 @@ func ApplyEndpointAuthModeRules(ep *Endpoint) {
 		ep.Transformer = CodexTokenPoolTransformer
 		if strings.TrimSpace(ep.Model) == "" {
 			ep.Model = "gpt-5-codex"
+		}
+		ep.APIKey = ""
+		return
+	}
+
+	if ep.AuthMode == AuthModeClaudeOAuthTokenPool {
+		ep.APIUrl = ClaudeOAuthTokenPoolAPIURL
+		ep.Transformer = ClaudeOAuthTokenPoolTransformer
+		if strings.TrimSpace(ep.Model) == "" {
+			ep.Model = ClaudeOAuthTokenPoolDefaultModel
 		}
 		ep.APIKey = ""
 		return
@@ -193,9 +210,10 @@ type S3BackupConfig struct {
 
 // BackupConfig represents backup/sync configuration across providers
 type BackupConfig struct {
-	Provider string             `json:"provider"` // webdav | local | s3
-	Local    *LocalBackupConfig `json:"local,omitempty"`
-	S3       *S3BackupConfig    `json:"s3,omitempty"`
+	Provider                string             `json:"provider"` // webdav | local | s3
+	IncludeLoginCredentials bool               `json:"includeLoginCredentials,omitempty"`
+	Local                   *LocalBackupConfig `json:"local,omitempty"`
+	S3                      *S3BackupConfig    `json:"s3,omitempty"`
 }
 
 // UpdateConfig represents update configuration
@@ -985,6 +1003,9 @@ func LoadFromStorage(storage StorageAdapter) (*Config, error) {
 	provider, _ := storage.GetConfig("backup_provider")
 	if provider != "" {
 		config.Backup = &BackupConfig{Provider: provider}
+		if includeLoginStr, err := storage.GetConfig("backup_include_login_credentials"); err == nil {
+			config.Backup.IncludeLoginCredentials = includeLoginStr == "true"
+		}
 	}
 	if provider == "local" {
 		backupDir, _ := storage.GetConfig("backup_local_dir")
@@ -1272,6 +1293,9 @@ func (c *Config) SaveToStorage(storage StorageAdapter) error {
 	if c.Backup != nil {
 		if err := storage.SetConfig("backup_provider", c.Backup.Provider); err != nil {
 			return fmt.Errorf("failed to save backup_provider config: %w", err)
+		}
+		if err := storage.SetConfig("backup_include_login_credentials", strconv.FormatBool(c.Backup.IncludeLoginCredentials)); err != nil {
+			return fmt.Errorf("failed to save backup_include_login_credentials config: %w", err)
 		}
 		if c.Backup.Local != nil {
 			if err := storage.SetConfig("backup_local_dir", c.Backup.Local.Dir); err != nil {

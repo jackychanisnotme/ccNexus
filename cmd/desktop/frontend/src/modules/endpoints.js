@@ -544,6 +544,7 @@ function ensureTokenPoolModal() {
                         <div class="token-pool-command-row">
                             <button class="btn btn-primary" id="tokenPoolImportBtn">${t('tokenPool.import')}</button>
                             <button class="btn btn-secondary" id="tokenPoolImportFilesBtn">${t('tokenPool.importFiles')}</button>
+                            <button class="btn btn-secondary" id="tokenPoolClaudeDiscoverBtn" style="display: none;">${t('tokenPool.discoverClaude')}</button>
                             <button class="btn btn-secondary" id="tokenPoolAuthBtn" style="display: none;">${t('tokenPool.auth')}</button>
                             <button class="btn btn-secondary" id="tokenPoolRefreshBtn">${t('tokenPool.refresh')}</button>
                             <button class="btn btn-secondary" id="tokenPoolRateRefreshBtn">${t('tokenPool.refreshLimits')}</button>
@@ -591,6 +592,7 @@ function ensureTokenPoolModal() {
     modal.querySelector('#tokenPoolCloseBtn').addEventListener('click', closeModal);
     modal.querySelector('#tokenPoolImportBtn').addEventListener('click', handleTokenPoolImport);
     modal.querySelector('#tokenPoolImportFilesBtn').addEventListener('click', handleTokenPoolFileImport);
+    modal.querySelector('#tokenPoolClaudeDiscoverBtn').addEventListener('click', handleClaudeOAuthDiscover);
     modal.querySelector('#tokenPoolAuthBtn').addEventListener('click', handleTokenPoolAuthStart);
     modal.querySelector('#tokenPoolRefreshBtn').addEventListener('click', async () => {
         await loadTokenPoolData(tokenPoolCurrentIndex);
@@ -611,6 +613,11 @@ function ensureTokenPoolModal() {
 function isCodexTokenPoolEndpoint(index) {
     const allEndpoints = window.config?.endpoints || [];
     return index >= 0 && index < allEndpoints.length && allEndpoints[index]?.authMode === 'codex_token_pool';
+}
+
+function isClaudeOAuthTokenPoolEndpoint(index) {
+    const allEndpoints = window.config?.endpoints || [];
+    return index >= 0 && index < allEndpoints.length && allEndpoints[index]?.authMode === 'claude_oauth_token_pool';
 }
 
 async function loadTokenPoolProxySetting() {
@@ -1193,9 +1200,11 @@ function renderTokenPoolStats(stats = {}) {
     return `<div class="token-pool-stats-line">${parts.join('<span class="token-pool-stat-sep">·</span>')}</div>`;
 }
 
-function renderTokenPoolRows(credentials = []) {
+function renderTokenPoolRows(credentials = [], options = {}) {
+    const showCodexActions = options.showCodexActions !== false;
+    const columnCount = showCodexActions ? 7 : 6;
     if (!credentials.length) {
-        return `<tr><td colspan="7" style="padding: 16px; text-align: center; color: #6b7280;">${t('tokenPool.noCredentials')}</td></tr>`;
+        return `<tr><td colspan="${columnCount}" style="padding: 16px; text-align: center; color: #6b7280;">${t('tokenPool.noCredentials')}</td></tr>`;
     }
 
     const latestUsed = credentials.reduce((max, cred) => {
@@ -1219,7 +1228,7 @@ function renderTokenPoolRows(credentials = []) {
                 </div>
             </td>
             <td style="padding: 8px; white-space: nowrap;">${escapeHtml(formatTokenPoolTime(cred.expiresAt))}</td>
-            <td style="padding: 8px; width: 220px; max-width: 220px;">${renderTokenPoolRateLimits(cred.rateLimits)}</td>
+            ${showCodexActions ? `<td style="padding: 8px; width: 220px; max-width: 220px;">${renderTokenPoolRateLimits(cred.rateLimits)}</td>` : ''}
             <td style="padding: 8px;">
                 ${tokenPoolErrorCache.has(String(cred.id))
                     ? `<button type="button" class="btn btn-secondary token-pool-error-view" data-error-id="${cred.id}" style="padding: 4px 8px; font-size: 12px;">${t('tokenPool.view')}</button>`
@@ -1232,8 +1241,8 @@ function renderTokenPoolRows(credentials = []) {
                         <button type="button" class="btn btn-secondary token-pool-more-toggle" data-id="${cred.id}" style="padding: 4px 8px; font-size: 12px;">${t('tokenPool.more')}</button>
                         <div class="token-pool-more-menu">
                             <button type="button" class="token-pool-activate" data-id="${cred.id}">${t('tokenPool.activate')}</button>
-                            <button type="button" class="token-pool-rate-refresh" data-id="${cred.id}">${t('tokenPool.refreshLimitsAction')}</button>
-                            <button type="button" class="token-pool-refresh-token" data-id="${cred.id}">${t('tokenPool.refreshToken')}</button>
+                            ${showCodexActions ? `<button type="button" class="token-pool-rate-refresh" data-id="${cred.id}">${t('tokenPool.refreshLimitsAction')}</button>` : ''}
+                            ${showCodexActions ? `<button type="button" class="token-pool-refresh-token" data-id="${cred.id}">${t('tokenPool.refreshToken')}</button>` : ''}
                             <button type="button" class="token-pool-usage" data-id="${cred.id}">${t('tokenPool.usage')}</button>
                             <button type="button" class="token-pool-update" data-id="${cred.id}">${t('tokenPool.updateToken')}</button>
                             <button type="button" class="token-pool-delete" data-id="${cred.id}">${t('tokenPool.delete')}</button>
@@ -1399,7 +1408,7 @@ async function loadTokenPoolData(index) {
     const statsEl = modal.querySelector('#tokenPoolStats');
     const bodyEl = modal.querySelector('#tokenPoolTableBody');
     statsEl.innerHTML = renderTokenPoolStats(stats);
-    bodyEl.innerHTML = renderTokenPoolRows(credentials);
+    bodyEl.innerHTML = renderTokenPoolRows(credentials, { showCodexActions: isCodexTokenPoolEndpoint(index) });
     setTokenPoolHint(modal, '');
 
     bodyEl.querySelectorAll('.token-pool-toggle-action').forEach((button) => {
@@ -1684,14 +1693,18 @@ async function handleTokenPoolImport() {
     }
 
     try {
-        JSON.parse(raw);
-    } catch {
-        showNotification(t('tokenPool.invalidJson'), 'error');
-        return;
-    }
-
-    try {
-        const resultRaw = await window.go.main.App.ImportEndpointCredentials(tokenPoolCurrentIndex, raw, overwrite);
+        const isClaudeOAuth = isClaudeOAuthTokenPoolEndpoint(tokenPoolCurrentIndex);
+        let resultRaw = '';
+        try {
+            JSON.parse(raw);
+            resultRaw = await window.go.main.App.ImportEndpointCredentials(tokenPoolCurrentIndex, raw, overwrite);
+        } catch (parseError) {
+            if (!isClaudeOAuth) {
+                showNotification(t('tokenPool.invalidJson'), 'error');
+                return;
+            }
+            resultRaw = await window.go.main.App.ImportClaudeOAuthCredential(tokenPoolCurrentIndex, raw, false, '', overwrite);
+        }
         const result = parseAppJSON(resultRaw);
         if (!result.success) {
             throw new Error(result.error || t('tokenPool.importFailedFallback'));
@@ -1716,6 +1729,76 @@ async function handleTokenPoolImport() {
         const message = error?.message || String(error);
         showNotification(tt('tokenPool.importFailed', { error: message }), 'error');
     }
+}
+
+async function handleClaudeOAuthDiscover() {
+    if (!isClaudeOAuthTokenPoolEndpoint(tokenPoolCurrentIndex)) {
+        showNotification(t('tokenPool.claudeOnly'), 'warning');
+        return;
+    }
+    const modal = ensureTokenPoolModal();
+    const overwrite = modal.querySelector('#tokenPoolOverwrite')?.checked === true;
+    try {
+        setTokenPoolHint(modal, t('tokenPool.discoveringClaude'));
+        const raw = await window.go.main.App.DiscoverClaudeOAuthCredentials(tokenPoolCurrentIndex);
+        const result = parseAppJSON(raw);
+        if (!result.success) {
+            throw new Error(result.error || t('tokenPool.discoveryFailedFallback'));
+        }
+        const credentials = result.data?.credentials || [];
+        if (!credentials.length) {
+            setTokenPoolHint(modal, t('tokenPool.noClaudeCredentialsFound'));
+            showNotification(t('tokenPool.noClaudeCredentialsFound'), 'warning');
+            return;
+        }
+        const choice = chooseClaudeOAuthPreview(credentials);
+        if (!choice) {
+            setTokenPoolHint(modal, '');
+            return;
+        }
+        const importedRaw = await window.go.main.App.ImportClaudeOAuthCredential(tokenPoolCurrentIndex, choice.id, true, '', overwrite);
+        const imported = parseAppJSON(importedRaw);
+        if (!imported.success) {
+            throw new Error(imported.error || t('tokenPool.importFailedFallback'));
+        }
+        const data = imported.data || {};
+        const message = tt('tokenPool.importSummary', {
+            created: data.created || 0,
+            updated: data.updated || 0,
+            skipped: data.skipped || 0,
+            failed: data.failed || 0
+        });
+        showNotification(message, 'success');
+        setTokenPoolHint(modal, message);
+        await loadTokenPoolData(tokenPoolCurrentIndex);
+    } catch (error) {
+        const message = error?.message || String(error);
+        const localized = tt('tokenPool.discoveryFailed', { error: message });
+        showNotification(localized, 'error');
+        setTokenPoolHint(modal, localized);
+    }
+}
+
+function chooseClaudeOAuthPreview(credentials) {
+    if (credentials.length === 1) {
+        const item = credentials[0];
+        if (window.confirm(tt('tokenPool.importClaudeDiscoveredConfirm', {
+            label: item.label || item.source || item.id,
+            token: item.maskedToken || ''
+        }))) {
+            return item;
+        }
+        return null;
+    }
+    const options = credentials.map((item, index) =>
+        `${index + 1}. ${(item.label || item.source || item.id)} ${item.maskedToken || ''}`
+    ).join('\n');
+    const answer = window.prompt(`${t('tokenPool.importClaudeDiscoveredPrompt')}\n${options}`, '1');
+    const selected = Number(answer);
+    if (!Number.isInteger(selected) || selected < 1 || selected > credentials.length) {
+        return null;
+    }
+    return credentials[selected - 1];
 }
 
 async function handleTokenPoolFileImport() {
@@ -1772,10 +1855,28 @@ export async function openTokenPoolModal(index, endpointName = '') {
     const modal = ensureTokenPoolModal();
     const title = modal.querySelector('#tokenPoolTitle');
     const authBtn = modal.querySelector('#tokenPoolAuthBtn');
-    title.textContent = `🪪 ${t('tokenPool.title')}${endpointName ? `: ${endpointName}` : ''}`;
+    const claudeDiscoverBtn = modal.querySelector('#tokenPoolClaudeDiscoverBtn');
+    const rateRefreshBtn = modal.querySelector('#tokenPoolRateRefreshBtn');
+    const importInput = modal.querySelector('#tokenPoolImportInput');
+    const rateHeaders = modal.querySelectorAll('.token-pool-rate-header');
+    const isCodex = isCodexTokenPoolEndpoint(index);
+    const isClaudeOAuth = isClaudeOAuthTokenPoolEndpoint(index);
+    title.textContent = `🪪 ${isClaudeOAuth ? t('tokenPool.claudeOAuthTitle') : t('tokenPool.title')}${endpointName ? `: ${endpointName}` : ''}`;
     if (authBtn) {
-        authBtn.style.display = isCodexTokenPoolEndpoint(index) ? '' : 'none';
+        authBtn.style.display = isCodex ? '' : 'none';
     }
+    if (claudeDiscoverBtn) {
+        claudeDiscoverBtn.style.display = isClaudeOAuth ? '' : 'none';
+    }
+    if (rateRefreshBtn) {
+        rateRefreshBtn.style.display = isCodex ? '' : 'none';
+    }
+    if (importInput) {
+        importInput.placeholder = isClaudeOAuth ? t('tokenPool.claudeImportPlaceholder') : t('tokenPool.importPlaceholder');
+    }
+    rateHeaders.forEach((header) => {
+        header.style.display = isCodex ? '' : 'none';
+    });
     modal.classList.add('active');
     await loadTokenPoolProxySetting();
 
@@ -1817,7 +1918,7 @@ function copyEndpointConfig(index, button) {
         }
         clonedEndpoint.name = newName;
         
-        if (clonedEndpoint.authMode === "token_pool") {
+        if (clonedEndpoint.authMode === "token_pool" || clonedEndpoint.authMode === "codex_token_pool" || clonedEndpoint.authMode === "claude_oauth_token_pool") {
             delete clonedEndpoint.apiKey;
         }
         

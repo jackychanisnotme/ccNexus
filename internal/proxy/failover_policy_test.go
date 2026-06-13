@@ -386,6 +386,77 @@ func TestTokenPoolUnauthorizedStillRetriesNextToken(t *testing.T) {
 	}
 }
 
+func TestClaudeOAuthTokenPoolUsesOnlyClaudeOAuthCredentials(t *testing.T) {
+	var tokens []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		tokens = append(tokens, token)
+		if r.URL.Path != "/v1/messages" {
+			t.Fatalf("expected Claude OAuth upstream path /v1/messages, got %s", r.URL.Path)
+		}
+		if got := r.Header.Get("x-api-key"); got != "" {
+			t.Fatalf("expected no x-api-key for Claude OAuth token, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if token == "claude-token-a" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"OAuth token revoked"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"msg-claude","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"opus","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+
+	wrongProvider := storage.EndpointCredential{EndpointName: "ClaudeOAuth", ProviderType: "codex", AccessToken: "codex-token", Enabled: true}
+	credA := storage.EndpointCredential{EndpointName: "ClaudeOAuth", ProviderType: "claude_oauth", AccessToken: "claude-token-a", Enabled: true}
+	credB := storage.EndpointCredential{EndpointName: "ClaudeOAuth", ProviderType: "claude_oauth", AccessToken: "claude-token-b", Enabled: true}
+	for _, cred := range []*storage.EndpointCredential{&wrongProvider, &credA, &credB} {
+		if err := store.SaveEndpointCredential(cred); err != nil {
+			t.Fatalf("save credential %#v: %v", cred, err)
+		}
+	}
+
+	cfg := config.DefaultConfig()
+	endpoint := config.Endpoint{
+		Name:        "ClaudeOAuth",
+		APIUrl:      upstream.URL,
+		AuthMode:    config.AuthModeClaudeOAuthTokenPool,
+		Enabled:     true,
+		Transformer: "claude",
+		Model:       "opus",
+	}
+	cfg.UpdateEndpoints([]config.Endpoint{endpoint})
+	p := New(cfg, &noopStatsStorage{}, store, "test-device")
+	p.httpClient = upstream.Client()
+	p.retrySleep = func(time.Duration) {}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5-20250929","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected Claude OAuth retry to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if strings.Join(tokens, ",") != "claude-token-a,claude-token-b" {
+		t.Fatalf("expected only Claude OAuth credentials to be used, got tokens=%v", tokens)
+	}
+	updatedA, err := store.GetCredentialByID(credA.ID)
+	if err != nil {
+		t.Fatalf("load first Claude credential: %v", err)
+	}
+	if updatedA == nil || updatedA.Status != "invalid" {
+		t.Fatalf("expected first Claude OAuth credential to be invalidated, got %#v", updatedA)
+	}
+}
+
 func TestConnectionFailureUsesFastEndpointFailover(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
