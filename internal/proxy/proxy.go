@@ -60,7 +60,7 @@ type Proxy struct {
 	onCurrentEndpointChanged    func(EndpointCurrentEvent)
 	onEndpointRuntimeChanged    func(EndpointRuntimeEvent)
 	modelsCache                 *ModelsCache      // Cache for /v1/models endpoint
-	resolver                    *EndpointResolver // 端点解析器，用于解析客户端指定的端点
+	resolver                    *EndpointResolver // Resolves endpoints specified via header, e.g. X-Endpoint
 	inboundTracker              *InboundConnectionTracker
 	onInboundConnectionsChanged func(InboundConnectionsSnapshot)
 	retrySleep                  func(time.Duration)         // injectable sleep hook for retry backoff tests

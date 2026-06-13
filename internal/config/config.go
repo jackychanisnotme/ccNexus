@@ -31,7 +31,8 @@ const (
 	ThinkingXHigh  = "xhigh"
 
 	CodexTokenPoolAPIURL      = "https://chatgpt.com/backend-api/codex"
-	CodexTokenPoolTransformer = "openai2"
+	CodexTokenPoolTransformer  = "openai2"
+	CodexTokenPoolDefaultModel = "gpt-5-codex"
 
 	ClaudeOAuthTokenPoolAPIURL       = "https://api.anthropic.com"
 	ClaudeOAuthTokenPoolTransformer  = "claude"
@@ -106,7 +107,7 @@ func ApplyEndpointAuthModeRules(ep *Endpoint) {
 		ep.APIUrl = CodexTokenPoolAPIURL
 		ep.Transformer = CodexTokenPoolTransformer
 		if strings.TrimSpace(ep.Model) == "" {
-			ep.Model = "gpt-5-codex"
+			ep.Model = CodexTokenPoolDefaultModel
 		}
 		ep.APIKey = ""
 		return
@@ -1362,7 +1363,6 @@ func (c *Config) SaveToStorage(storage StorageAdapter) error {
 		if err := storage.SetConfig("terminal_claudeCommand", c.Terminal.ClaudeCommand); err != nil {
 			return fmt.Errorf("failed to save terminal_claudeCommand config: %w", err)
 		}
-		storage.SetConfig("terminal_claudeCommand", c.Terminal.ClaudeCommand)
 	}
 
 	// Save Proxy config
