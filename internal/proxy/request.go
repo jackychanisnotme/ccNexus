@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"github.com/lich0821/ccNexus/internal/storage"
 	"github.com/lich0821/ccNexus/internal/transformer"
 	"github.com/lich0821/ccNexus/internal/transformer/cc"
+	"github.com/lich0821/ccNexus/internal/transformer/convert"
 	"github.com/lich0821/ccNexus/internal/transformer/cx/chat"
 	"github.com/lich0821/ccNexus/internal/transformer/cx/responses"
 )
@@ -412,6 +414,37 @@ func writeInvalidRequestError(w http.ResponseWriter, err error) {
 	}
 	if jsonBytes, marshalErr := json.Marshal(errorResp); marshalErr == nil {
 		w.Write(jsonBytes)
+	}
+}
+
+func writeClientToolChainInvalidError(w http.ResponseWriter, obs requestObservability, endpointName string, attemptNumber int, err error) bool {
+	var toolChainErr *convert.InvalidToolChainError
+	if !errors.As(err, &toolChainErr) {
+		return false
+	}
+
+	logger.Warn(
+		"Invalid client tool chain: %v %s",
+		err,
+		requestLogFields(obs, endpointName, attemptNumber, http.StatusBadRequest, "client_tool_chain_invalid"),
+	)
+	writeInvalidRequestError(w, err)
+	return true
+}
+
+func validateClientToolChainForFormat(payload []byte, clientFormat ClientFormat) error {
+	switch clientFormat {
+	case ClientFormatClaude:
+		_, err := convert.NormalizeClaudeRequestForUpstream(payload, "client_claude")
+		return err
+	case ClientFormatOpenAIChat:
+		_, err := convert.NormalizeOpenAIChatRequestForUpstream(payload)
+		return err
+	case ClientFormatOpenAIResponses:
+		_, err := convert.NormalizeOpenAI2RequestForUpstream(payload)
+		return err
+	default:
+		return nil
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/lich0821/ccNexus/internal/transformer"
+	"github.com/lich0821/ccNexus/internal/transformer/convert"
 )
 
 // ClaudeTransformer is a passthrough transformer for Claude Code → Claude endpoint
@@ -30,13 +31,18 @@ func (t *ClaudeTransformer) Name() string {
 }
 
 func (t *ClaudeTransformer) TransformRequest(req []byte) ([]byte, error) {
+	normalized, err := convert.NormalizeClaudeRequestForUpstream(req, "claude_upstream")
+	if err != nil {
+		return nil, err
+	}
+
 	if t.model == "" {
-		return req, nil
+		return normalized, nil
 	}
 
 	var data map[string]interface{}
-	if err := json.Unmarshal(req, &data); err != nil {
-		return req, nil
+	if err := json.Unmarshal(normalized, &data); err != nil {
+		return normalized, nil
 	}
 
 	data["model"] = t.model

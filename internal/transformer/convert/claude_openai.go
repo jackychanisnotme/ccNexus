@@ -19,6 +19,11 @@ func ClaudeReqToOpenAIWithThinking(claudeReq []byte, model string, thinking stri
 	if err := json.Unmarshal(claudeReq, &req); err != nil {
 		return nil, err
 	}
+	normalizedMessages, err := normalizeClaudeTypedMessagesForToolChains(req.Messages, "claude_to_openai")
+	if err != nil {
+		return nil, err
+	}
+	req.Messages = normalizedMessages
 
 	var messages []transformer.OpenAIMessage
 
@@ -89,6 +94,17 @@ func ClaudeReqToOpenAIWithThinking(claudeReq []byte, model string, thinking stri
 						ToolCallID: callID,
 					})
 				}
+			}
+
+			if msg.Role == "user" && len(toolResults) > 0 {
+				messages = append(messages, toolResults...)
+				if len(textParts) > 0 {
+					messages = append(messages, transformer.OpenAIMessage{
+						Role:    msg.Role,
+						Content: strings.Join(textParts, ""),
+					})
+				}
+				continue
 			}
 
 			// Add main message if has text or tool_calls
@@ -248,6 +264,12 @@ func OpenAIReqToClaude(openaiReq []byte, model string) ([]byte, error) {
 
 		messages = append(messages, claudeMsg)
 	}
+
+	normalizedMessages, err := normalizeClaudeMapMessagesForToolChains(messages, "openai_to_claude")
+	if err != nil {
+		return nil, err
+	}
+	messages = normalizedMessages
 
 	if systemPrompt != "" {
 		claudeReq["system"] = strings.TrimSpace(systemPrompt)

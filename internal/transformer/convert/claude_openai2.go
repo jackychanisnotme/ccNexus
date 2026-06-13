@@ -20,6 +20,11 @@ func ClaudeReqToOpenAI2WithThinking(claudeReq []byte, model string, thinking str
 	if err := json.Unmarshal(claudeReq, &req); err != nil {
 		return nil, err
 	}
+	normalizedMessages, err := normalizeClaudeTypedMessagesForToolChains(req.Messages, "claude_to_openai2")
+	if err != nil {
+		return nil, err
+	}
+	req.Messages = normalizedMessages
 
 	openai2Req := map[string]interface{}{
 		"model":  model,
@@ -208,7 +213,11 @@ func OpenAI2ReqToClaude(openai2Req []byte, model string) ([]byte, error) {
 
 	// Convert input to messages
 	messages := convertOpenAI2InputToClaude(req.Input)
-	claudeReq["messages"] = messages
+	normalizedMessages, err := normalizeClaudeMapMessagesForToolChains(messages, "openai2_to_claude")
+	if err != nil {
+		return nil, err
+	}
+	claudeReq["messages"] = normalizedMessages
 
 	// Convert tools
 	if len(req.Tools) > 0 {

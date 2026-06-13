@@ -531,14 +531,23 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	var streamSession *downstreamStreamSession
 	if streamReq.Stream {
+		if err := validateClientToolChainForFormat(bodyBytes, clientFormat); err != nil {
+			if writeClientToolChainInvalidError(w, obs, "", 0, err) {
+				return
+			}
+		}
 		streamSession = newDownstreamStreamSession(w, p.streamHeartbeatIntervalOrDefault(), clientFormat)
 		if err := streamSession.Start(); err != nil {
 			logger.Error("Failed to start downstream stream: %v %s", err, requestLogFields(obs, "", 0, http.StatusInternalServerError, "downstream_stream_start_failed"))
 			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
 			return
 		}
-		defer streamSession.Close()
 	}
+	defer func() {
+		if streamSession != nil {
+			streamSession.Close()
+		}
+	}()
 
 	requestEndpoints := endpoints
 	currentEndpointName := p.GetCurrentEndpointName()
@@ -651,6 +660,10 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 		transformedBody, err := trans.TransformRequest(bodyBytes)
 		if err != nil {
+			if writeClientToolChainInvalidError(w, obs, endpoint.Name, attemptNumber, err) {
+				p.markRequestInactive(endpoint.Name)
+				return
+			}
 			logRequestAttemptError(obs, endpoint.Name, attemptNumber, 0, "transform_request_failed", "Failed to transform request: %v", err)
 			p.recordEndpointError(endpoint.Name, "transform_request_failed")
 			p.markRequestInactive(endpoint.Name)
