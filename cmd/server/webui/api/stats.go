@@ -2,9 +2,11 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/storage"
 )
 
 // handleStatsSummary returns overall statistics
@@ -14,7 +16,7 @@ func (h *Handler) handleStatsSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	totalRequests, endpointStats := h.proxy.GetStats().GetStats()
+	totalRequests, endpointStats := h.proxy.GetStats().GetStatsFiltered(statsFilterFromRequest(r))
 
 	// Calculate totals
 	totalErrors := 0
@@ -44,7 +46,7 @@ func (h *Handler) handleStatsDaily(w http.ResponseWriter, r *http.Request) {
 	}
 
 	today := time.Now().Format("2006-01-02")
-	stats, err := h.getStatsForPeriod(today, today)
+	stats, err := h.getStatsForPeriod(today, today, statsFilterFromRequest(r))
 	if err != nil {
 		logger.Error("Failed to get daily stats: %v", err)
 		WriteError(w, http.StatusInternalServerError, "Failed to get daily stats")
@@ -75,7 +77,7 @@ func (h *Handler) handleStatsWeekly(w http.ResponseWriter, r *http.Request) {
 	startDate := startOfWeek.Format("2006-01-02")
 	endDate := now.Format("2006-01-02")
 
-	stats, err := h.getStatsForPeriod(startDate, endDate)
+	stats, err := h.getStatsForPeriod(startDate, endDate, statsFilterFromRequest(r))
 	if err != nil {
 		logger.Error("Failed to get weekly stats: %v", err)
 		WriteError(w, http.StatusInternalServerError, "Failed to get weekly stats")
@@ -102,7 +104,7 @@ func (h *Handler) handleStatsMonthly(w http.ResponseWriter, r *http.Request) {
 	startDate := startOfMonth.Format("2006-01-02")
 	endDate := now.Format("2006-01-02")
 
-	stats, err := h.getStatsForPeriod(startDate, endDate)
+	stats, err := h.getStatsForPeriod(startDate, endDate, statsFilterFromRequest(r))
 	if err != nil {
 		logger.Error("Failed to get monthly stats: %v", err)
 		WriteError(w, http.StatusInternalServerError, "Failed to get monthly stats")
@@ -129,7 +131,8 @@ func (h *Handler) handleStatsTrends(w http.ResponseWriter, r *http.Request) {
 	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
 
 	// Get today's stats
-	todayStats, err := h.getStatsForPeriod(today, today)
+	filter := statsFilterFromRequest(r)
+	todayStats, err := h.getStatsForPeriod(today, today, filter)
 	if err != nil {
 		logger.Error("Failed to get today's stats: %v", err)
 		WriteError(w, http.StatusInternalServerError, "Failed to get trend stats")
@@ -137,7 +140,7 @@ func (h *Handler) handleStatsTrends(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get yesterday's stats
-	yesterdayStats, err := h.getStatsForPeriod(yesterday, yesterday)
+	yesterdayStats, err := h.getStatsForPeriod(yesterday, yesterday, filter)
 	if err != nil {
 		logger.Error("Failed to get yesterday's stats: %v", err)
 		WriteError(w, http.StatusInternalServerError, "Failed to get trend stats")
@@ -173,9 +176,50 @@ func (h *Handler) handleStatsTrends(w http.ResponseWriter, r *http.Request) {
 	WriteSuccess(w, trends)
 }
 
+func (h *Handler) handleStatsFilters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	endpoints := h.config.GetEndpoints()
+	currentNames := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if strings.TrimSpace(endpoint.Name) != "" {
+			currentNames = append(currentNames, endpoint.Name)
+		}
+	}
+
+	options, err := h.storage.GetStatsFilterOptions(currentNames)
+	if err != nil {
+		logger.Error("Failed to get stats filter options: %v", err)
+		WriteError(w, http.StatusInternalServerError, "Failed to get stats filter options")
+		return
+	}
+	WriteSuccess(w, options)
+}
+
+func statsFilterFromRequest(r *http.Request) storage.StatsFilter {
+	query := r.URL.Query()
+	return storage.StatsFilter{
+		EndpointName:  strings.TrimSpace(firstQueryValue(query.Get("endpoint"), query.Get("endpointName"))),
+		ClientIP:      strings.TrimSpace(firstQueryValue(query.Get("clientIp"), query.Get("clientIP"))),
+		ClientIPQuery: strings.TrimSpace(firstQueryValue(query.Get("clientIpQuery"), query.Get("clientIPQuery"))),
+	}
+}
+
+func firstQueryValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // getStatsForPeriod retrieves statistics for a date range
-func (h *Handler) getStatsForPeriod(startDate, endDate string) (map[string]interface{}, error) {
-	allStats, err := h.storage.GetAllStats()
+func (h *Handler) getStatsForPeriod(startDate, endDate string, filter storage.StatsFilter) (map[string]interface{}, error) {
+	allStats, err := h.storage.GetPeriodStatsAggregatedFiltered(startDate, endDate, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -187,32 +231,18 @@ func (h *Handler) getStatsForPeriod(startDate, endDate string) (map[string]inter
 	endpointStats := make(map[string]interface{})
 
 	for endpointName, stats := range allStats {
-		epRequests := 0
-		epErrors := 0
-		var epInputTokens int64 = 0
-		var epOutputTokens int64 = 0
-
-		for _, stat := range stats {
-			if stat.Date >= startDate && stat.Date <= endDate {
-				epRequests += stat.Requests
-				epErrors += stat.Errors
-				epInputTokens += int64(stat.InputTokens)
-				epOutputTokens += int64(stat.OutputTokens)
-			}
-		}
-
-		if epRequests > 0 {
+		if stats.Requests > 0 {
 			endpointStats[endpointName] = map[string]interface{}{
-				"requests":     epRequests,
-				"errors":       epErrors,
-				"inputTokens":  epInputTokens,
-				"outputTokens": epOutputTokens,
+				"requests":     stats.Requests,
+				"errors":       stats.Errors,
+				"inputTokens":  stats.InputTokens,
+				"outputTokens": stats.OutputTokens,
 			}
 
-			totalRequests += epRequests
-			totalErrors += epErrors
-			totalInputTokens += epInputTokens
-			totalOutputTokens += epOutputTokens
+			totalRequests += stats.Requests
+			totalErrors += stats.Errors
+			totalInputTokens += stats.InputTokens
+			totalOutputTokens += stats.OutputTokens
 		}
 	}
 

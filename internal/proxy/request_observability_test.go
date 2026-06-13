@@ -4,11 +4,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/storage"
 )
 
 func TestHandleProxyAddsRequestObservabilityHeadersAndLogs(t *testing.T) {
@@ -86,6 +89,62 @@ func TestHandleProxyAddsRequestObservabilityHeadersAndLogs(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected logs to contain %q; logs:\n%s", want, joined)
 		}
+	}
+}
+
+func TestHandleProxyRecordsStatsByForwardedClientIP(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-test","usage":{"input_tokens":3,"output_tokens":4},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	defer upstream.Close()
+
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{
+		{
+			Name:        "EndpointA",
+			APIUrl:      upstream.URL,
+			APIKey:      "test-key",
+			AuthMode:    config.AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "openai2",
+			Model:       "gpt-5.5",
+		},
+	})
+
+	p := New(cfg, storage.NewStatsStorageAdapter(store), store, "test-device")
+	p.httpClient = upstream.Client()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "192.0.2.44, 10.0.0.2")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected upstream success, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	today := time.Now().Format("2006-01-02")
+	stats, err := store.GetPeriodStatsAggregatedFiltered(today, today, storage.StatsFilter{ClientIP: "192.0.2.44"})
+	if err != nil {
+		t.Fatalf("get stats by forwarded IP: %v", err)
+	}
+	if got := stats["EndpointA"]; got == nil || got.Requests != 1 || got.InputTokens != 3 || got.OutputTokens != 4 {
+		t.Fatalf("forwarded IP stats = %#v, want EndpointA request with usage", stats)
+	}
+	otherIP, err := store.GetPeriodStatsAggregatedFiltered(today, today, storage.StatsFilter{ClientIP: "10.0.0.2"})
+	if err != nil {
+		t.Fatalf("get stats by second forwarded IP: %v", err)
+	}
+	if len(otherIP) != 0 {
+		t.Fatalf("expected second forwarded IP not to be recorded, got %#v", otherIP)
 	}
 }
 

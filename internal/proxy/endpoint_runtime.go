@@ -115,7 +115,11 @@ func (p *Proxy) recordEndpointFailure(endpointName, reason string, statusCodes .
 }
 
 func (p *Proxy) recordEndpointError(endpointName, reason string, statusCodes ...int) {
-	p.stats.RecordError(endpointName)
+	p.recordEndpointErrorForClient(endpointName, reason, "unknown", statusCodes...)
+}
+
+func (p *Proxy) recordEndpointErrorForClient(endpointName, reason, clientIP string, statusCodes ...int) {
+	p.stats.RecordErrorForClient(endpointName, clientIP)
 	status := p.recordEndpointFailure(endpointName, reason, statusCodes...)
 	p.emitEndpointRuntimeEvent(endpointName, "failure", status)
 }

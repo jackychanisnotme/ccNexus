@@ -5,7 +5,7 @@ import '../wailsjs/runtime/runtime.js'
 import { setLanguage } from './i18n/index.js'
 import { initUI, changeLanguage } from './modules/ui.js'
 import { loadConfig } from './modules/config.js'
-import { loadStats, switchStatsPeriod, loadStatsByPeriod, getCurrentPeriod, updateStatsIncremental, updateEndpointStatsCache, updateTotalStatsCache } from './modules/stats.js'
+import { loadStats, switchStatsPeriod, loadStatsByPeriod, getCurrentPeriod, updateStatsIncremental, updateEndpointStatsCache, updateTotalStatsCache, initStatsFilters, hasActiveStatsFilters, refreshStatsForCurrentFilter } from './modules/stats.js'
 import { renderEndpoints, toggleEndpointPanel, initEndpointSuccessListener, checkAllEndpointsOnStartup, switchEndpointViewMode, initEndpointViewMode, isDropdownOpen, updateEndpointStatsIncremental } from './modules/endpoints.js'
 import { loadLogs, toggleLogPanel, changeLogLevel, copyLogs, clearLogs } from './modules/logs.js'
 import { showDataSyncDialog } from './modules/webdav.js'
@@ -54,6 +54,10 @@ import {
 // Handle real-time stats update events from backend (4-period data)
 function handleStatsUpdate(data) {
     if (!data || !data.endpointName) {
+        return;
+    }
+    if (hasActiveStatsFilters()) {
+        refreshStatsForCurrentFilter();
         return;
     }
 
@@ -114,6 +118,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     // Initialize filter dropdowns
     initFilterDropdowns();
+    await initStatsFilters();
 
     // Initialize terminal module
     initTerminal();

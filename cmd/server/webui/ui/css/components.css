@@ -177,6 +177,20 @@
     background-color: var(--bg-secondary);
 }
 
+.stats-filter-row {
+    display: grid;
+    grid-template-columns: minmax(150px, 1fr) minmax(130px, 0.8fr) minmax(160px, 1fr) auto;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+@media (max-width: 768px) {
+    .stats-filter-row {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* Badges */
 .badge {
     display: inline-flex;

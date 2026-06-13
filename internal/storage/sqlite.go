@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -175,8 +176,9 @@ func (s *SQLiteStorage) initSchema() error {
 		input_tokens INTEGER DEFAULT 0,
 		output_tokens INTEGER DEFAULT 0,
 		device_id TEXT DEFAULT 'default',
+		client_ip TEXT NOT NULL DEFAULT 'unknown',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		UNIQUE(endpoint_name, date, device_id)
+		UNIQUE(endpoint_name, date, device_id, client_ip)
 	);
 
 	CREATE TABLE IF NOT EXISTS app_config (
@@ -220,6 +222,12 @@ func (s *SQLiteStorage) initSchema() error {
 		return err
 	}
 	if err := s.migrateEndpointRuntimeFailureStatusCode(); err != nil {
+		return err
+	}
+	if err := s.migrateDailyStatsClientIP(); err != nil {
+		return err
+	}
+	if err := s.ensureDailyStatsIndexes(); err != nil {
 		return err
 	}
 
@@ -361,6 +369,76 @@ func (s *SQLiteStorage) migrateEndpointRuntimeFailureStatusCode() error {
 
 	_, err = s.db.Exec(`UPDATE endpoint_runtime_status SET last_failure_status_code=0 WHERE last_failure_status_code IS NULL`)
 	return err
+}
+
+func (s *SQLiteStorage) migrateDailyStatsClientIP() error {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('daily_stats') WHERE name='client_ip'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		_, err = s.db.Exec(`UPDATE daily_stats SET client_ip='unknown' WHERE client_ip IS NULL OR TRIM(client_ip)=''`)
+		return err
+	}
+
+	if _, err := s.db.Exec(`ALTER TABLE daily_stats RENAME TO daily_stats_old`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`
+		CREATE TABLE daily_stats (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			endpoint_name TEXT NOT NULL,
+			date TEXT NOT NULL,
+			requests INTEGER DEFAULT 0,
+			errors INTEGER DEFAULT 0,
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			device_id TEXT DEFAULT 'default',
+			client_ip TEXT NOT NULL DEFAULT 'unknown',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(endpoint_name, date, device_id, client_ip)
+		)
+	`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`
+		INSERT INTO daily_stats (
+			endpoint_name, date, requests, errors, input_tokens, output_tokens, device_id, client_ip, created_at
+		)
+		SELECT
+			endpoint_name,
+			date,
+			SUM(requests),
+			SUM(errors),
+			SUM(input_tokens),
+			SUM(output_tokens),
+			COALESCE(NULLIF(TRIM(device_id), ''), 'default'),
+			'unknown',
+			MIN(created_at)
+		FROM daily_stats_old
+		GROUP BY endpoint_name, date, COALESCE(NULLIF(TRIM(device_id), ''), 'default')
+	`); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`DROP TABLE daily_stats_old`)
+	return err
+}
+
+func (s *SQLiteStorage) ensureDailyStatsIndexes() error {
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON daily_stats(date)`,
+		`CREATE INDEX IF NOT EXISTS idx_daily_stats_endpoint ON daily_stats(endpoint_name)`,
+		`CREATE INDEX IF NOT EXISTS idx_daily_stats_device ON daily_stats(device_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_daily_stats_client_ip ON daily_stats(client_ip)`,
+		`CREATE INDEX IF NOT EXISTS idx_daily_stats_date_endpoint_ip ON daily_stats(date, endpoint_name, client_ip)`,
+	}
+	for _, query := range indexes {
+		if _, err := s.db.Exec(query); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteStorage) GetEndpoints() ([]Endpoint, error) {
@@ -544,27 +622,36 @@ func (s *SQLiteStorage) RecordDailyStat(stat *DailyStat) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	stat.DeviceID = normalizeStatDimension(stat.DeviceID, "default")
+	stat.ClientIP = normalizeStatDimension(stat.ClientIP, "unknown")
+
 	_, err := s.db.Exec(`
-		INSERT INTO daily_stats (endpoint_name, date, requests, errors, input_tokens, output_tokens, device_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(endpoint_name, date, device_id) DO UPDATE SET
+		INSERT INTO daily_stats (endpoint_name, date, requests, errors, input_tokens, output_tokens, device_id, client_ip)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(endpoint_name, date, device_id, client_ip) DO UPDATE SET
 			requests = requests + excluded.requests,
 			errors = errors + excluded.errors,
 			input_tokens = input_tokens + excluded.input_tokens,
 			output_tokens = output_tokens + excluded.output_tokens
-	`, stat.EndpointName, stat.Date, stat.Requests, stat.Errors, stat.InputTokens, stat.OutputTokens, stat.DeviceID)
+	`, stat.EndpointName, stat.Date, stat.Requests, stat.Errors, stat.InputTokens, stat.OutputTokens, stat.DeviceID, stat.ClientIP)
 
 	return err
 }
 
 func (s *SQLiteStorage) GetDailyStats(endpointName, startDate, endDate string) ([]DailyStat, error) {
+	return s.GetDailyStatsFiltered(endpointName, startDate, endDate, StatsFilter{})
+}
+
+func (s *SQLiteStorage) GetDailyStatsFiltered(endpointName, startDate, endDate string, filter StatsFilter) ([]DailyStat, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT id, endpoint_name, date, SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens), device_id, created_at
-		FROM daily_stats WHERE endpoint_name=? AND date>=? AND date<=? GROUP BY date ORDER BY date DESC`
+	filter.EndpointName = firstNonEmpty(filter.EndpointName, endpointName)
+	where, args := buildStatsWhereClause(filter, "date>=? AND date<=?", startDate, endDate)
+	query := `SELECT MIN(id), endpoint_name, date, SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens), '' AS device_id, '' AS client_ip
+		FROM daily_stats ` + where + ` GROUP BY endpoint_name, date ORDER BY date DESC`
 
-	rows, err := s.db.Query(query, endpointName, startDate, endDate)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -573,7 +660,7 @@ func (s *SQLiteStorage) GetDailyStats(endpointName, startDate, endDate string) (
 	var stats []DailyStat
 	for rows.Next() {
 		var stat DailyStat
-		if err := rows.Scan(&stat.ID, &stat.EndpointName, &stat.Date, &stat.Requests, &stat.Errors, &stat.InputTokens, &stat.OutputTokens, &stat.DeviceID, &stat.CreatedAt); err != nil {
+		if err := rows.Scan(&stat.ID, &stat.EndpointName, &stat.Date, &stat.Requests, &stat.Errors, &stat.InputTokens, &stat.OutputTokens, &stat.DeviceID, &stat.ClientIP); err != nil {
 			return nil, err
 		}
 		stats = append(stats, stat)
@@ -586,7 +673,7 @@ func (s *SQLiteStorage) GetAllStats() (map[string][]DailyStat, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query(`SELECT id, endpoint_name, date, SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens), device_id, created_at
+	rows, err := s.db.Query(`SELECT MIN(id), endpoint_name, date, SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens), '' AS device_id, '' AS client_ip
 		FROM daily_stats GROUP BY endpoint_name, date ORDER BY date DESC`)
 	if err != nil {
 		return nil, err
@@ -596,13 +683,60 @@ func (s *SQLiteStorage) GetAllStats() (map[string][]DailyStat, error) {
 	result := make(map[string][]DailyStat)
 	for rows.Next() {
 		var stat DailyStat
-		if err := rows.Scan(&stat.ID, &stat.EndpointName, &stat.Date, &stat.Requests, &stat.Errors, &stat.InputTokens, &stat.OutputTokens, &stat.DeviceID, &stat.CreatedAt); err != nil {
+		if err := rows.Scan(&stat.ID, &stat.EndpointName, &stat.Date, &stat.Requests, &stat.Errors, &stat.InputTokens, &stat.OutputTokens, &stat.DeviceID, &stat.ClientIP); err != nil {
 			return nil, err
 		}
 		result[stat.EndpointName] = append(result[stat.EndpointName], stat)
 	}
 
 	return result, rows.Err()
+}
+
+func normalizeStatDimension(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func buildStatsWhereClause(filter StatsFilter, base string, baseArgs ...interface{}) (string, []interface{}) {
+	clauses := make([]string, 0, 4)
+	args := make([]interface{}, 0, len(baseArgs)+3)
+	if strings.TrimSpace(base) != "" {
+		clauses = append(clauses, base)
+		args = append(args, baseArgs...)
+	}
+	if endpointName := strings.TrimSpace(filter.EndpointName); endpointName != "" {
+		clauses = append(clauses, "endpoint_name=?")
+		args = append(args, endpointName)
+	}
+	if clientIP := strings.TrimSpace(filter.ClientIP); clientIP != "" {
+		clauses = append(clauses, "COALESCE(NULLIF(TRIM(client_ip), ''), 'unknown')=?")
+		args = append(args, clientIP)
+	}
+	if clientIPQuery := strings.TrimSpace(filter.ClientIPQuery); clientIPQuery != "" {
+		clauses = append(clauses, "COALESCE(NULLIF(TRIM(client_ip), ''), 'unknown') LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLikePattern(clientIPQuery)+"%")
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func escapeLikePattern(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(value)
 }
 
 func (s *SQLiteStorage) GetConfig(key string) (string, error) {
@@ -630,13 +764,18 @@ func (s *SQLiteStorage) Close() error {
 }
 
 func (s *SQLiteStorage) GetTotalStats() (int, map[string]*EndpointStats, error) {
+	return s.GetTotalStatsFiltered(StatsFilter{})
+}
+
+func (s *SQLiteStorage) GetTotalStatsFiltered(filter StatsFilter) (int, map[string]*EndpointStats, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT endpoint_name, SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens)
-		FROM daily_stats GROUP BY endpoint_name`
+	where, args := buildStatsWhereClause(filter, "")
+	query := `SELECT endpoint_name, COALESCE(SUM(requests), 0), COALESCE(SUM(errors), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
+		FROM daily_stats ` + where + ` GROUP BY endpoint_name`
 
-	rows, err := s.db.Query(query)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -670,7 +809,7 @@ func (s *SQLiteStorage) GetEndpointTotalStats(endpointName string) (*EndpointSta
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens)
+	query := `SELECT COALESCE(SUM(requests), 0), COALESCE(SUM(errors), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
 		FROM daily_stats WHERE endpoint_name=?`
 
 	var requests, errors int
@@ -694,15 +833,19 @@ func (s *SQLiteStorage) GetEndpointTotalStats(endpointName string) (*EndpointSta
 
 // GetPeriodStatsAggregated returns aggregated statistics for all endpoints in a time period using a single query
 func (s *SQLiteStorage) GetPeriodStatsAggregated(startDate, endDate string) (map[string]*EndpointStats, error) {
+	return s.GetPeriodStatsAggregatedFiltered(startDate, endDate, StatsFilter{})
+}
+
+func (s *SQLiteStorage) GetPeriodStatsAggregatedFiltered(startDate, endDate string, filter StatsFilter) (map[string]*EndpointStats, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT endpoint_name, SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens)
-		FROM daily_stats
-		WHERE date >= ? AND date <= ?
+	where, args := buildStatsWhereClause(filter, "date >= ? AND date <= ?", startDate, endDate)
+	query := `SELECT endpoint_name, COALESCE(SUM(requests), 0), COALESCE(SUM(errors), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
+		FROM daily_stats ` + where + `
 		GROUP BY endpoint_name`
 
-	rows, err := s.db.Query(query, startDate, endDate)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -727,6 +870,76 @@ func (s *SQLiteStorage) GetPeriodStatsAggregated(startDate, endDate string) (map
 	}
 
 	return result, rows.Err()
+}
+
+func (s *SQLiteStorage) GetStatsFilterOptions(currentEndpointNames []string) (*StatsFilterOptions, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	currentSet := make(map[string]bool, len(currentEndpointNames))
+	options := make([]StatsEndpointFilterOption, 0, len(currentEndpointNames))
+	for _, name := range currentEndpointNames {
+		name = strings.TrimSpace(name)
+		if name == "" || currentSet[name] {
+			continue
+		}
+		currentSet[name] = true
+		options = append(options, StatsEndpointFilterOption{Name: name, Deleted: false})
+	}
+
+	rows, err := s.db.Query(`SELECT DISTINCT endpoint_name FROM daily_stats WHERE TRIM(endpoint_name) != '' ORDER BY endpoint_name COLLATE NOCASE`)
+	if err != nil {
+		return nil, err
+	}
+	var deletedOptions []StatsEndpointFilterOption
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		name = strings.TrimSpace(name)
+		if name == "" || currentSet[name] {
+			continue
+		}
+		deletedOptions = append(deletedOptions, StatsEndpointFilterOption{Name: name, Deleted: true})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	sort.Slice(deletedOptions, func(i, j int) bool {
+		return strings.ToLower(deletedOptions[i].Name) < strings.ToLower(deletedOptions[j].Name)
+	})
+	options = append(options, deletedOptions...)
+
+	ipRows, err := s.db.Query(`SELECT DISTINCT COALESCE(NULLIF(TRIM(client_ip), ''), 'unknown') FROM daily_stats ORDER BY 1 COLLATE NOCASE`)
+	if err != nil {
+		return nil, err
+	}
+	defer ipRows.Close()
+
+	var clientIPs []string
+	for ipRows.Next() {
+		var clientIP string
+		if err := ipRows.Scan(&clientIP); err != nil {
+			return nil, err
+		}
+		clientIP = strings.TrimSpace(clientIP)
+		if clientIP == "" {
+			clientIP = "unknown"
+		}
+		clientIPs = append(clientIPs, clientIP)
+	}
+	if err := ipRows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &StatsFilterOptions{
+		Endpoints: options,
+		ClientIPs: clientIPs,
+	}, nil
 }
 
 // GetOrCreateDeviceID returns the device ID, creating one if it doesn't exist
@@ -1186,46 +1399,81 @@ func (s *SQLiteStorage) mergeDailyStats(tx *sql.Tx, strategy MergeStrategy) erro
 	if err != nil {
 		localDeviceID = "default"
 	}
+	backupHasClientIP, err := backupTableHasColumn(tx, "daily_stats", "client_ip")
+	if err != nil {
+		return err
+	}
+	selectClientIP := "'unknown'"
+	selectClientIPForDelete := "'unknown'"
+	if backupHasClientIP {
+		selectClientIP = "COALESCE(NULLIF(TRIM(client_ip), ''), 'unknown')"
+		selectClientIPForDelete = "COALESCE(NULLIF(TRIM(b.client_ip), ''), 'unknown')"
+	}
 
 	switch strategy {
 	case MergeStrategyKeepLocal:
 		// 保留本地数据，只插入本地不存在的记录
-		// 使用本地 device_id 替代备份的 device_id，并按 endpoint_name 和 date 聚合避免冲突
-		_, err := tx.Exec(`
+		// 使用本地 device_id 替代备份的 device_id，并按 endpoint_name、date 和 client_ip 聚合避免冲突
+		_, err := tx.Exec(fmt.Sprintf(`
 			INSERT OR IGNORE INTO daily_stats
-			(endpoint_name, date, requests, errors, input_tokens, output_tokens, device_id)
-			SELECT endpoint_name, date, SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens), ?
+			(endpoint_name, date, requests, errors, input_tokens, output_tokens, device_id, client_ip)
+			SELECT endpoint_name, date, SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens), ?, %s
 			FROM backup.daily_stats
-			GROUP BY endpoint_name, date
-		`, localDeviceID)
+			GROUP BY endpoint_name, date, %s
+		`, selectClientIP, selectClientIP), localDeviceID)
 		return err
 	case MergeStrategyOverwriteLocal:
 		// 用备份数据覆盖本地数据
-		// 步骤1：删除主数据库中的冲突记录（只匹配 endpoint_name 和 date）
-		_, err := tx.Exec(`
+		// 步骤1：删除主数据库中的冲突记录（匹配 endpoint_name、date 和 client_ip）
+		_, err := tx.Exec(fmt.Sprintf(`
 			DELETE FROM daily_stats
 			WHERE EXISTS (
 				SELECT 1 FROM backup.daily_stats b
 				WHERE b.endpoint_name = daily_stats.endpoint_name
 				AND b.date = daily_stats.date
+				AND %s = COALESCE(NULLIF(TRIM(daily_stats.client_ip), ''), 'unknown')
 			)
-		`)
+		`, selectClientIPForDelete))
 		if err != nil {
 			return err
 		}
 
-		// 步骤2：使用本地 device_id 插入备份数据（按 endpoint_name 和 date 聚合，避免多设备数据冲突）
-		_, err = tx.Exec(`
+		// 步骤2：使用本地 device_id 插入备份数据（按 endpoint_name、date 和 client_ip 聚合）
+		_, err = tx.Exec(fmt.Sprintf(`
 			INSERT INTO daily_stats
-			(endpoint_name, date, requests, errors, input_tokens, output_tokens, device_id)
-			SELECT endpoint_name, date, SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens), ?
+			(endpoint_name, date, requests, errors, input_tokens, output_tokens, device_id, client_ip)
+			SELECT endpoint_name, date, SUM(requests), SUM(errors), SUM(input_tokens), SUM(output_tokens), ?, %s
 			FROM backup.daily_stats
-			GROUP BY endpoint_name, date
-		`, localDeviceID)
+			GROUP BY endpoint_name, date, %s
+		`, selectClientIP, selectClientIP), localDeviceID)
 		return err
 	default:
 		return fmt.Errorf("unknown merge strategy: %s", strategy)
 	}
+}
+
+func backupTableHasColumn(tx *sql.Tx, tableName, columnName string) (bool, error) {
+	rows, err := tx.Query(fmt.Sprintf(`PRAGMA backup.table_info(%s)`, tableName))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(strings.TrimSpace(name), columnName) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // mergeAppConfig 根据策略合并安全的 app_config 配置项

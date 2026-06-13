@@ -6,6 +6,16 @@ import { t } from '../utils/i18n.js';
 class Stats {
     constructor() {
         this.container = document.getElementById('view-container');
+        this.currentPeriod = 'daily';
+        this.filters = {
+            endpoint: '',
+            clientIp: '',
+            clientIpQuery: ''
+        };
+        this.filterOptions = {
+            endpoints: [],
+            clientIps: []
+        };
         // 监听语言切换
         window.addEventListener('languageChanged', () => {
             if (state.get('currentView') === 'stats') {
@@ -15,6 +25,7 @@ class Stats {
     }
 
     async render() {
+        await this.loadFilterOptions();
         this.container.innerHTML = `
             <div class="stats">
                 <h1>${t('stats.title')}</h1>
@@ -23,6 +34,25 @@ class Stats {
                     <button class="btn btn-sm btn-primary period-btn active" data-period="daily">${t('stats.daily')}</button>
                     <button class="btn btn-sm btn-secondary period-btn" data-period="weekly">${t('stats.weekly')}</button>
                     <button class="btn btn-sm btn-secondary period-btn" data-period="monthly">${t('stats.monthly')}</button>
+                </div>
+
+                <div class="stats-filter-row">
+                    <select id="stats-endpoint-filter" class="form-select">
+                        <option value="">${t('stats.allEndpoints')}</option>
+                        ${this.filterOptions.endpoints.map(option => `
+                            <option value="${this.escapeHtml(option.name)}" ${option.name === this.filters.endpoint ? 'selected' : ''}>
+                                ${this.escapeHtml(option.name)}${option.deleted ? ` ${t('stats.deletedEndpointSuffix')}` : ''}
+                            </option>
+                        `).join('')}
+                    </select>
+                    <select id="stats-ip-filter" class="form-select">
+                        <option value="">${t('stats.allIPs')}</option>
+                        ${this.filterOptions.clientIps.map(ip => `
+                            <option value="${this.escapeHtml(ip)}" ${ip === this.filters.clientIp ? 'selected' : ''}>${this.escapeHtml(ip)}</option>
+                        `).join('')}
+                    </select>
+                    <input id="stats-ip-query-filter" class="form-input" type="text" placeholder="${t('stats.ipSearchPlaceholder')}" value="${this.escapeHtml(this.filters.clientIpQuery)}">
+                    <button id="stats-clear-filters" class="btn btn-sm btn-secondary">${t('stats.clearFilters')}</button>
                 </div>
 
                 <div id="stats-content"></div>
@@ -40,22 +70,25 @@ class Stats {
                 this.loadStats(btn.dataset.period);
             });
         });
+        this.bindFilterControls();
 
-        await this.loadStats('daily');
+        await this.loadStats(this.currentPeriod);
     }
 
     async loadStats(period) {
         try {
+            this.currentPeriod = period;
             let data;
+            const params = this.requestFilters();
             switch (period) {
                 case 'daily':
-                    data = await api.getStatsDaily();
+                    data = await api.getStatsDaily(params);
                     break;
                 case 'weekly':
-                    data = await api.getStatsWeekly();
+                    data = await api.getStatsWeekly(params);
                     break;
                 case 'monthly':
-                    data = await api.getStatsMonthly();
+                    data = await api.getStatsMonthly(params);
                     break;
             }
 
@@ -63,6 +96,69 @@ class Stats {
         } catch (error) {
             notifications.error(`${t('stats.failedToLoad')}: ${error.message}`);
         }
+    }
+
+    async loadFilterOptions() {
+        try {
+            const data = await api.getStatsFilters();
+            this.filterOptions = {
+                endpoints: Array.isArray(data.endpoints) ? data.endpoints : [],
+                clientIps: Array.isArray(data.clientIps) ? data.clientIps : []
+            };
+        } catch (error) {
+            console.error('Failed to load stats filter options:', error);
+            this.filterOptions = { endpoints: [], clientIps: [] };
+        }
+    }
+
+    bindFilterControls() {
+        const endpointSelect = document.getElementById('stats-endpoint-filter');
+        const ipSelect = document.getElementById('stats-ip-filter');
+        const ipQuery = document.getElementById('stats-ip-query-filter');
+        const clearButton = document.getElementById('stats-clear-filters');
+        if (!endpointSelect || !ipSelect || !ipQuery || !clearButton) {
+            return;
+        }
+
+        endpointSelect.addEventListener('change', () => {
+            this.filters.endpoint = endpointSelect.value;
+            this.loadStats(this.currentPeriod);
+        });
+        ipSelect.addEventListener('change', () => {
+            this.filters.clientIp = ipSelect.value;
+            if (this.filters.clientIp) {
+                this.filters.clientIpQuery = '';
+                ipQuery.value = '';
+            }
+            this.loadStats(this.currentPeriod);
+        });
+        ipQuery.addEventListener('input', this.debounce(() => {
+            this.filters.clientIpQuery = ipQuery.value.trim();
+            this.loadStats(this.currentPeriod);
+        }, 300));
+        clearButton.addEventListener('click', () => {
+            this.filters = { endpoint: '', clientIp: '', clientIpQuery: '' };
+            endpointSelect.value = '';
+            ipSelect.value = '';
+            ipQuery.value = '';
+            this.loadStats(this.currentPeriod);
+        });
+    }
+
+    requestFilters() {
+        return {
+            endpoint: this.filters.endpoint,
+            clientIp: this.filters.clientIp,
+            clientIpQuery: this.filters.clientIp ? '' : this.filters.clientIpQuery
+        };
+    }
+
+    debounce(fn, delay) {
+        let timer;
+        return (...args) => {
+            clearTimeout(timer);
+            timer = setTimeout(() => fn(...args), delay);
+        };
     }
 
     renderStats(data) {

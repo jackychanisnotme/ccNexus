@@ -169,7 +169,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// Initialize services
 	version := a.GetVersion()
-	a.stats = service.NewStatsService(a.proxy, a.config)
+	a.stats = service.NewStatsService(a.proxy, a.config, a.storage)
 	a.endpoint = service.NewEndpointService(a.config, a.proxy, a.storage)
 	a.settings = service.NewSettingsService(a.config, a.storage)
 	a.webdav = service.NewWebDAVService(a.config, a.storage, version)
@@ -408,10 +408,17 @@ func (a *App) GetStatsDaily() string     { return a.stats.GetStatsDaily() }
 func (a *App) GetStatsYesterday() string { return a.stats.GetStatsYesterday() }
 func (a *App) GetStatsWeekly() string    { return a.stats.GetStatsWeekly() }
 func (a *App) GetStatsMonthly() string   { return a.stats.GetStatsMonthly() }
-func (a *App) GetStatsTrend() string     { return a.stats.GetStatsTrend() }
+func (a *App) GetStatsByPeriod(period, endpointName, clientIP, clientIPQuery string) string {
+	return a.stats.GetStatsByPeriod(period, endpointName, clientIP, clientIPQuery)
+}
+func (a *App) GetStatsTrend() string { return a.stats.GetStatsTrend() }
 func (a *App) GetStatsTrendByPeriod(period string) string {
 	return a.stats.GetStatsTrendByPeriod(period)
 }
+func (a *App) GetStatsTrendByPeriodFiltered(period, endpointName, clientIP, clientIPQuery string) string {
+	return a.stats.GetStatsTrendByPeriodFiltered(period, endpointName, clientIP, clientIPQuery)
+}
+func (a *App) GetStatsFilters() string { return a.stats.GetStatsFilters() }
 
 // ========== Endpoint Bindings ==========
 
@@ -900,7 +907,7 @@ func (a *App) GetConfig() string { return a.settings.GetConfig() }
 func (a *App) UpdateConfig(configJSON string) error {
 	return a.settings.UpdateConfig(configJSON, a.proxy)
 }
-func (a *App) UpdatePort(port int) error { return a.settings.UpdatePort(port) }
+func (a *App) UpdatePort(port int) error { return a.settings.UpdatePort(port, a.proxy) }
 func (a *App) GetNetworkStatus() string {
 	if a.proxy == nil {
 		data, _ := json.Marshal(proxy.BuildNetworkStatus(a.config, proxy.InboundConnectionsSnapshot{}))
@@ -909,7 +916,7 @@ func (a *App) GetNetworkStatus() string {
 	data, _ := json.Marshal(a.proxy.GetNetworkStatus())
 	return string(data)
 }
-func (a *App) UpdateListenMode(mode string) error   { return a.settings.UpdateListenMode(mode) }
+func (a *App) UpdateListenMode(mode string) error   { return a.settings.UpdateListenMode(mode, a.proxy) }
 func (a *App) GetSystemLanguage() string            { return a.settings.GetSystemLanguage() }
 func (a *App) GetLanguage() string                  { return a.settings.GetLanguage() }
 func (a *App) SetLanguage(language string) error    { return a.settings.SetLanguage(language) }

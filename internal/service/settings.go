@@ -18,6 +18,10 @@ type SettingsService struct {
 	storage *storage.SQLiteStorage
 }
 
+type listenerRebinder interface {
+	RebindListener() error
+}
+
 // NewSettingsService creates a new SettingsService
 func NewSettingsService(cfg *config.Config, s *storage.SQLiteStorage) *SettingsService {
 	return &SettingsService{config: cfg, storage: s}
@@ -55,41 +59,60 @@ func (s *SettingsService) UpdateConfig(configJSON string, proxy interface{ Updat
 	return nil
 }
 
-// UpdatePort updates the proxy port
-func (s *SettingsService) UpdatePort(port int) error {
+// UpdatePort updates the proxy port and applies the listener change immediately.
+func (s *SettingsService) UpdatePort(port int, rebinder listenerRebinder) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("invalid port: %d", port)
 	}
+	if s.config.IsPortLocked() && port != s.config.GetPort() {
+		return fmt.Errorf("port is locked and cannot be changed")
+	}
 
+	return s.applyNetworkAccessConfig(s.config.GetListenMode(), port, rebinder)
+}
+
+// UpdateListenMode updates the proxy listener mode and applies it immediately.
+func (s *SettingsService) UpdateListenMode(mode string, rebinder listenerRebinder) error {
+	cleanMode := strings.ToLower(strings.TrimSpace(mode))
+	if cleanMode != config.ListenModeLocal && cleanMode != config.ListenModeLAN {
+		return fmt.Errorf("invalid listen mode: %s", mode)
+	}
+
+	return s.applyNetworkAccessConfig(cleanMode, s.config.GetPort(), rebinder)
+}
+
+func (s *SettingsService) applyNetworkAccessConfig(listenMode string, port int, rebinder listenerRebinder) error {
+	oldMode := s.config.GetListenMode()
+	oldPort := s.config.GetPort()
+
+	s.config.UpdateListenMode(listenMode)
 	s.config.UpdatePort(port)
+
+	if rebinder != nil {
+		if err := rebinder.RebindListener(); err != nil {
+			s.restoreNetworkAccessConfig(oldMode, oldPort)
+			_ = rebinder.RebindListener()
+			return fmt.Errorf("failed to apply listener change: %w", err)
+		}
+	}
 
 	if s.storage != nil {
 		configAdapter := storage.NewConfigStorageAdapter(s.storage)
 		if err := s.config.SaveToStorage(configAdapter); err != nil {
-			return fmt.Errorf("failed to save config: %w", err)
+			s.restoreNetworkAccessConfig(oldMode, oldPort)
+			if rebinder != nil {
+				_ = rebinder.RebindListener()
+			}
+			return fmt.Errorf("failed to save network access config: %w", err)
 		}
 	}
 
 	return nil
 }
 
-// UpdateListenMode updates the proxy listener mode. The active listener changes after restart.
-func (s *SettingsService) UpdateListenMode(mode string) error {
-	cleanMode := strings.ToLower(strings.TrimSpace(mode))
-	if cleanMode != config.ListenModeLocal && cleanMode != config.ListenModeLAN {
-		return fmt.Errorf("invalid listen mode: %s", mode)
-	}
-
-	s.config.UpdateListenMode(cleanMode)
-
-	if s.storage != nil {
-		configAdapter := storage.NewConfigStorageAdapter(s.storage)
-		if err := s.config.SaveToStorage(configAdapter); err != nil {
-			return fmt.Errorf("failed to save listen mode: %w", err)
-		}
-	}
-
-	return nil
+func (s *SettingsService) restoreNetworkAccessConfig(listenMode string, port int) {
+	s.config.UpdateListenMode(listenMode)
+	s.config.UpdatePort(port)
 }
 
 // GetSystemLanguage detects the system language

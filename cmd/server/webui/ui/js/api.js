@@ -105,16 +105,29 @@ class APIClient {
         return this.request('GET', '/stats/summary');
     }
 
-    async getStatsDaily() {
-        return this.request('GET', '/stats/daily');
+    statsQuery(params = {}) {
+        const query = new URLSearchParams();
+        if (params.endpoint) query.set('endpoint', params.endpoint);
+        if (params.clientIp) query.set('clientIp', params.clientIp);
+        if (params.clientIpQuery && !params.clientIp) query.set('clientIpQuery', params.clientIpQuery);
+        const encoded = query.toString();
+        return encoded ? `?${encoded}` : '';
     }
 
-    async getStatsWeekly() {
-        return this.request('GET', '/stats/weekly');
+    async getStatsDaily(params = {}) {
+        return this.request('GET', `/stats/daily${this.statsQuery(params)}`);
     }
 
-    async getStatsMonthly() {
-        return this.request('GET', '/stats/monthly');
+    async getStatsWeekly(params = {}) {
+        return this.request('GET', `/stats/weekly${this.statsQuery(params)}`);
+    }
+
+    async getStatsMonthly(params = {}) {
+        return this.request('GET', `/stats/monthly${this.statsQuery(params)}`);
+    }
+
+    async getStatsFilters() {
+        return this.request('GET', '/stats/filters');
     }
 
     async getStatsTrends() {
@@ -150,8 +163,12 @@ class APIClient {
         return this.request('GET', '/network');
     }
 
-    async updateNetwork(listenMode) {
-        return this.request('PUT', '/network', { listenMode });
+    async updateNetwork(listenMode, port) {
+        const payload = { listenMode };
+        if (port !== undefined && port !== null) {
+            payload.port = port;
+        }
+        return this.request('PUT', '/network', payload);
     }
 }
 

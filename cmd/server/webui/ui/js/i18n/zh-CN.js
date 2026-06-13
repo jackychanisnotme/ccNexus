@@ -65,9 +65,9 @@ export default {
         riskWarning: '开启局域网访问后，同网段设备可访问主代理 API。当前版本不强制入站访问密钥。',
         activeConnections: '使用中的连接',
         noActiveConnections: '暂无活动连接',
-        restartRequired: '访问设置将在重启 ccNexus 后生效',
-        saveAccess: '保存访问模式',
-        saved: '网络访问设置已保存，重启 ccNexus 后监听变更生效。',
+        restartRequired: '访问设置已立即生效',
+        saveAccess: '保存并生效',
+        saved: '网络访问设置已保存并生效。',
         failedToLoad: '加载网络状态失败',
         failedToSave: '保存网络设置失败',
         categories: {
@@ -213,7 +213,12 @@ export default {
         inputTokens: '输入令牌',
         outputTokens: '输出令牌',
         noDataAvailable: '暂无数据',
-        failedToLoad: '加载统计数据失败'
+        failedToLoad: '加载统计数据失败',
+        allEndpoints: '全部端点',
+        allIPs: '全部 IP',
+        ipSearchPlaceholder: '搜索 IP',
+        clearFilters: '清除筛选',
+        deletedEndpointSuffix: '（已删除）'
     },
     testing: {
         title: '端点测试',

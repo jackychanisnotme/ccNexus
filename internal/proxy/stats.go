@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/storage"
 )
 
 // DailyStats represents statistics for a single day
@@ -33,6 +34,8 @@ type StatsStorage interface {
 	GetTotalStats() (int, map[string]interface{}, error)
 	GetDailyStats(endpointName, startDate, endDate string) ([]interface{}, error)
 	GetPeriodStatsAggregated(startDate, endDate string) (map[string]interface{}, error)
+	GetDailyStatsFiltered(endpointName, startDate, endDate string, filter storage.StatsFilter) ([]interface{}, error)
+	GetPeriodStatsAggregatedFiltered(startDate, endDate string, filter storage.StatsFilter) (map[string]interface{}, error)
 }
 
 // StatRecord represents a stat record for storage
@@ -44,6 +47,7 @@ type StatRecord struct {
 	InputTokens  int
 	OutputTokens int
 	DeviceID     string
+	ClientIP     string
 }
 
 // StatsData represents aggregated stats data
@@ -96,6 +100,10 @@ func (s *Stats) SetOnStatsUpdated(callback func(endpointName string, endpointPer
 
 // RecordRequest records a request for an endpoint
 func (s *Stats) RecordRequest(endpointName string) {
+	s.RecordRequestForClient(endpointName, "unknown")
+}
+
+func (s *Stats) RecordRequestForClient(endpointName, clientIP string) {
 	date := time.Now().Format("2006-01-02")
 
 	stat := &StatRecord{
@@ -106,6 +114,7 @@ func (s *Stats) RecordRequest(endpointName string) {
 		InputTokens:  0,
 		OutputTokens: 0,
 		DeviceID:     s.deviceID,
+		ClientIP:     clientIP,
 	}
 
 	if err := s.storage.RecordDailyStat(stat); err != nil {
@@ -116,6 +125,10 @@ func (s *Stats) RecordRequest(endpointName string) {
 
 // RecordError records an error for an endpoint
 func (s *Stats) RecordError(endpointName string) {
+	s.RecordErrorForClient(endpointName, "unknown")
+}
+
+func (s *Stats) RecordErrorForClient(endpointName, clientIP string) {
 	date := time.Now().Format("2006-01-02")
 
 	stat := &StatRecord{
@@ -126,6 +139,7 @@ func (s *Stats) RecordError(endpointName string) {
 		InputTokens:  0,
 		OutputTokens: 0,
 		DeviceID:     s.deviceID,
+		ClientIP:     clientIP,
 	}
 
 	if err := s.storage.RecordDailyStat(stat); err != nil {
@@ -138,6 +152,12 @@ func (s *Stats) RecordError(endpointName string) {
 
 // RecordTokens records token usage for an endpoint
 func (s *Stats) RecordTokens(endpointName string, inputTokens, outputTokens int) {
+	s.RecordTokensForClient(endpointName, clientIPDefault, inputTokens, outputTokens)
+}
+
+const clientIPDefault = "unknown"
+
+func (s *Stats) RecordTokensForClient(endpointName, clientIP string, inputTokens, outputTokens int) {
 	date := time.Now().Format("2006-01-02")
 
 	stat := &StatRecord{
@@ -148,6 +168,7 @@ func (s *Stats) RecordTokens(endpointName string, inputTokens, outputTokens int)
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 		DeviceID:     s.deviceID,
+		ClientIP:     clientIP,
 	}
 
 	if err := s.storage.RecordDailyStat(stat); err != nil {
@@ -227,7 +248,11 @@ func (s *Stats) scheduleSave() {
 
 // GetStats returns a copy of current statistics (thread-safe)
 func (s *Stats) GetStats() (int, map[string]*EndpointStats) {
-	totalRequests, statsData, err := s.storage.GetTotalStats()
+	return s.GetStatsFiltered(storage.StatsFilter{})
+}
+
+func (s *Stats) GetStatsFiltered(filter storage.StatsFilter) (int, map[string]*EndpointStats) {
+	totalRequests, statsData, err := s.getTotalStats(filter)
 	if err != nil {
 		logger.Error("Failed to get stats: %v", err)
 		return 0, make(map[string]*EndpointStats)
@@ -251,6 +276,18 @@ func (s *Stats) GetStats() (int, map[string]*EndpointStats) {
 	}
 
 	return totalRequests, result
+}
+
+func (s *Stats) getTotalStats(filter storage.StatsFilter) (int, map[string]interface{}, error) {
+	if isEmptyStatsFilter(filter) {
+		return s.storage.GetTotalStats()
+	}
+	if filtered, ok := s.storage.(interface {
+		GetTotalStatsFiltered(storage.StatsFilter) (int, map[string]interface{}, error)
+	}); ok {
+		return filtered.GetTotalStatsFiltered(filter)
+	}
+	return s.storage.GetTotalStats()
 }
 
 // extractStatsData safely extracts stats data using type assertion instead of reflection
@@ -375,8 +412,12 @@ func (s *Stats) Load() error {
 
 // GetPeriodStats returns aggregated statistics for a time period
 func (s *Stats) GetPeriodStats(startDate, endDate string) map[string]*DailyStats {
+	return s.GetPeriodStatsFiltered(startDate, endDate, storage.StatsFilter{})
+}
+
+func (s *Stats) GetPeriodStatsFiltered(startDate, endDate string, filter storage.StatsFilter) map[string]*DailyStats {
 	// Use single aggregated query instead of N+1 queries
-	endpointStats, err := s.storage.GetPeriodStatsAggregated(startDate, endDate)
+	endpointStats, err := s.getPeriodStatsAggregated(startDate, endDate, filter)
 	if err != nil {
 		logger.Error("Failed to get period stats: %v", err)
 		return make(map[string]*DailyStats)
@@ -400,10 +441,21 @@ func (s *Stats) GetPeriodStats(startDate, endDate string) map[string]*DailyStats
 	return result
 }
 
+func (s *Stats) getPeriodStatsAggregated(startDate, endDate string, filter storage.StatsFilter) (map[string]interface{}, error) {
+	if isEmptyStatsFilter(filter) {
+		return s.storage.GetPeriodStatsAggregated(startDate, endDate)
+	}
+	return s.storage.GetPeriodStatsAggregatedFiltered(startDate, endDate, filter)
+}
+
 // GetDailyStats returns statistics for a specific date
 func (s *Stats) GetDailyStats(date string) map[string]*DailyStats {
+	return s.GetDailyStatsFiltered(date, storage.StatsFilter{})
+}
+
+func (s *Stats) GetDailyStatsFiltered(date string, filter storage.StatsFilter) map[string]*DailyStats {
 	// Get all endpoints from storage
-	totalRequests, statsData, err := s.storage.GetTotalStats()
+	totalRequests, statsData, err := s.getTotalStats(filter)
 	if err != nil {
 		logger.Error("Failed to get stats: %v", err)
 		return make(map[string]*DailyStats)
@@ -414,7 +466,7 @@ func (s *Stats) GetDailyStats(date string) map[string]*DailyStats {
 
 	// For each endpoint, get stats for the specific date
 	for endpointName := range statsData {
-		dailyRecords, err := s.storage.GetDailyStats(endpointName, date, date)
+		dailyRecords, err := s.getDailyStats(endpointName, date, date, filter)
 		if err != nil {
 			logger.Error("Failed to get daily stats for %s: %v", endpointName, err)
 			continue
@@ -430,6 +482,17 @@ func (s *Stats) GetDailyStats(date string) map[string]*DailyStats {
 	}
 
 	return result
+}
+
+func (s *Stats) getDailyStats(endpointName, startDate, endDate string, filter storage.StatsFilter) ([]interface{}, error) {
+	if isEmptyStatsFilter(filter) {
+		return s.storage.GetDailyStats(endpointName, startDate, endDate)
+	}
+	return s.storage.GetDailyStatsFiltered(endpointName, startDate, endDate, filter)
+}
+
+func isEmptyStatsFilter(filter storage.StatsFilter) bool {
+	return filter.EndpointName == "" && filter.ClientIP == "" && filter.ClientIPQuery == ""
 }
 
 // extractDailyRecord safely extracts a daily record using type assertion instead of reflection

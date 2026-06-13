@@ -176,19 +176,15 @@ func (h *Handler) handleConfigPort(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.config.UpdatePort(req.Port)
-
-		// Save to storage
-		adapter := storage.NewConfigStorageAdapter(h.storage)
-		if err := h.config.SaveToStorage(adapter); err != nil {
-			logger.Error("Failed to save config: %v", err)
-			WriteError(w, http.StatusInternalServerError, "Failed to save configuration")
+		if err := h.applyNetworkAccessConfig(h.config.GetListenMode(), req.Port); err != nil {
+			logger.Error("Failed to update port: %v", err)
+			WriteError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
 		WriteSuccess(w, map[string]interface{}{
 			"port":    req.Port,
-			"message": "Port updated successfully (restart required)",
+			"message": "Port updated successfully",
 		})
 	default:
 		WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")

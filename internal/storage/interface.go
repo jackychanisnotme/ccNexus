@@ -127,6 +127,7 @@ type DailyStat struct {
 	InputTokens  int
 	OutputTokens int
 	DeviceID     string
+	ClientIP     string
 	CreatedAt    time.Time
 }
 
@@ -135,6 +136,22 @@ type EndpointStats struct {
 	Errors       int
 	InputTokens  int64
 	OutputTokens int64
+}
+
+type StatsFilter struct {
+	EndpointName  string
+	ClientIP      string
+	ClientIPQuery string
+}
+
+type StatsEndpointFilterOption struct {
+	Name    string `json:"name"`
+	Deleted bool   `json:"deleted"`
+}
+
+type StatsFilterOptions struct {
+	Endpoints []StatsEndpointFilterOption `json:"endpoints"`
+	ClientIPs []string                    `json:"clientIps"`
 }
 
 type Storage interface {
@@ -163,8 +180,11 @@ type Storage interface {
 	GetDailyStats(endpointName, startDate, endDate string) ([]DailyStat, error)
 	GetAllStats() (map[string][]DailyStat, error)
 	GetTotalStats() (int, map[string]*EndpointStats, error)
+	GetTotalStatsFiltered(filter StatsFilter) (int, map[string]*EndpointStats, error)
 	GetEndpointTotalStats(endpointName string) (*EndpointStats, error)
 	GetPeriodStatsAggregated(startDate, endDate string) (map[string]*EndpointStats, error)
+	GetPeriodStatsAggregatedFiltered(startDate, endDate string, filter StatsFilter) (map[string]*EndpointStats, error)
+	GetStatsFilterOptions(currentEndpointNames []string) (*StatsFilterOptions, error)
 
 	// Config
 	GetConfig(key string) (string, error)

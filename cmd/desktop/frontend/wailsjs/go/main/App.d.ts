@@ -99,6 +99,10 @@ export function GetSessions(arg1:string):Promise<string>;
 
 export function GetStats():Promise<string>;
 
+export function GetStatsByPeriod(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
+
+export function GetStatsFilters():Promise<string>;
+
 export function GetNetworkStatus():Promise<string>;
 
 export function GetStatsDaily():Promise<string>;
@@ -108,6 +112,8 @@ export function GetStatsMonthly():Promise<string>;
 export function GetStatsTrend():Promise<string>;
 
 export function GetStatsTrendByPeriod(arg1:string):Promise<string>;
+
+export function GetStatsTrendByPeriodFiltered(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function GetStatsWeekly():Promise<string>;
 

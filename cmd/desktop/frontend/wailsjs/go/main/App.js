@@ -198,6 +198,14 @@ export function GetStats() {
   return window['go']['main']['App']['GetStats']();
 }
 
+export function GetStatsByPeriod(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetStatsByPeriod'](arg1, arg2, arg3, arg4);
+}
+
+export function GetStatsFilters() {
+  return window['go']['main']['App']['GetStatsFilters']();
+}
+
 export function GetNetworkStatus() {
   return window['go']['main']['App']['GetNetworkStatus']();
 }
@@ -216,6 +224,10 @@ export function GetStatsTrend() {
 
 export function GetStatsTrendByPeriod(arg1) {
   return window['go']['main']['App']['GetStatsTrendByPeriod'](arg1);
+}
+
+export function GetStatsTrendByPeriodFiltered(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetStatsTrendByPeriodFiltered'](arg1, arg2, arg3, arg4);
 }
 
 export function GetStatsWeekly() {

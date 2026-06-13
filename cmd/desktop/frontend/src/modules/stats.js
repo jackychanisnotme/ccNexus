@@ -1,9 +1,15 @@
 import { formatTokens } from '../utils/format.js';
+import { t } from '../i18n/index.js';
 
 let endpointStats = {}; // Backward compatibility - stores current period only
 let endpointStatsCache = {}; // { endpoint1: { daily: {...}, yesterday: {...}, weekly: {...}, monthly: {...} } }
 let totalStatsCache = {}; // { daily: {...}, yesterday: {...}, weekly: {...}, monthly: {...} }
 let currentPeriod = 'daily'; // 'daily', 'weekly', 'monthly'
+let statsFilters = {
+    endpointName: '',
+    clientIp: '',
+    clientIpQuery: ''
+};
 
 export function getEndpointStats() {
     // Dynamically build endpoint stats from 4-period cache for current period
@@ -20,6 +26,14 @@ export function getEndpointStats() {
 
 export function getCurrentPeriod() {
     return currentPeriod;
+}
+
+export function hasActiveStatsFilters() {
+    return !!(statsFilters.endpointName || statsFilters.clientIp || statsFilters.clientIpQuery);
+}
+
+export function getStatsFilters() {
+    return { ...statsFilters };
 }
 
 // Update 4-period cache for a single endpoint
@@ -90,21 +104,30 @@ export async function loadStatsByPeriod(period = 'daily') {
         currentPeriod = period;
 
         let statsStr;
-        switch (period) {
-            case 'daily':
-                statsStr = await window.go.main.App.GetStatsDaily();
-                break;
-            case 'yesterday':
-                statsStr = await window.go.main.App.GetStatsYesterday();
-                break;
-            case 'weekly':
-                statsStr = await window.go.main.App.GetStatsWeekly();
-                break;
-            case 'monthly':
-                statsStr = await window.go.main.App.GetStatsMonthly();
-                break;
-            default:
-                statsStr = await window.go.main.App.GetStatsDaily();
+        if (hasActiveStatsFilters() && window.go.main.App.GetStatsByPeriod) {
+            statsStr = await window.go.main.App.GetStatsByPeriod(
+                period,
+                statsFilters.endpointName,
+                statsFilters.clientIp,
+                statsFilters.clientIp ? '' : statsFilters.clientIpQuery
+            );
+        } else {
+            switch (period) {
+                case 'daily':
+                    statsStr = await window.go.main.App.GetStatsDaily();
+                    break;
+                case 'yesterday':
+                    statsStr = await window.go.main.App.GetStatsYesterday();
+                    break;
+                case 'weekly':
+                    statsStr = await window.go.main.App.GetStatsWeekly();
+                    break;
+                case 'monthly':
+                    statsStr = await window.go.main.App.GetStatsMonthly();
+                    break;
+                default:
+                    statsStr = await window.go.main.App.GetStatsDaily();
+            }
         }
 
         const stats = JSON.parse(statsStr);
@@ -128,21 +151,23 @@ export async function loadStatsByPeriod(period = 'daily') {
         // Load and display trend for current period
         await loadTrend(period);
 
-        // Store endpoint stats in 4-period cache structure
-        for (const [name, periodStats] of Object.entries(stats.endpoints || {})) {
-            if (!endpointStatsCache[name]) {
-                endpointStatsCache[name] = {};
+        if (!hasActiveStatsFilters()) {
+            // Store endpoint stats in 4-period cache structure
+            for (const [name, periodStats] of Object.entries(stats.endpoints || {})) {
+                if (!endpointStatsCache[name]) {
+                    endpointStatsCache[name] = {};
+                }
+                endpointStatsCache[name][period] = periodStats;
             }
-            endpointStatsCache[name][period] = periodStats;
-        }
 
-        // Store aggregated totals in 4-period cache
-        totalStatsCache[period] = {
-            requests: stats.totalRequests || 0,
-            errors: stats.totalErrors || 0,
-            inputTokens: stats.totalInputTokens || 0,
-            outputTokens: stats.totalOutputTokens || 0
-        };
+            // Store aggregated totals in 4-period cache
+            totalStatsCache[period] = {
+                requests: stats.totalRequests || 0,
+                errors: stats.totalErrors || 0,
+                inputTokens: stats.totalInputTokens || 0,
+                outputTokens: stats.totalOutputTokens || 0
+            };
+        }
 
         // Backward compatibility: update old single-period cache
         endpointStats = stats.endpoints || {};
@@ -157,7 +182,14 @@ export async function loadStatsByPeriod(period = 'daily') {
 // Load trend comparison data for specified period
 async function loadTrend(period = 'daily') {
     try {
-        const trendStr = await window.go.main.App.GetStatsTrendByPeriod(period);
+        const trendStr = hasActiveStatsFilters() && window.go.main.App.GetStatsTrendByPeriodFiltered
+            ? await window.go.main.App.GetStatsTrendByPeriodFiltered(
+                period,
+                statsFilters.endpointName,
+                statsFilters.clientIp,
+                statsFilters.clientIp ? '' : statsFilters.clientIpQuery
+            )
+            : await window.go.main.App.GetStatsTrendByPeriod(period);
         const trend = JSON.parse(trendStr);
 
         const requestsTrend = formatTrend(trend.trend);
@@ -236,7 +268,7 @@ export async function switchStatsPeriod(period) {
 
     // Check if cache has data for this period
     const cachedTotals = totalStatsCache[period];
-    const hasCache = cachedTotals && Object.keys(endpointStatsCache).length > 0;
+    const hasCache = !hasActiveStatsFilters() && cachedTotals && Object.keys(endpointStatsCache).length > 0;
 
     if (hasCache) {
         // Fast path: update DOM from cache
@@ -251,6 +283,112 @@ export async function switchStatsPeriod(period) {
     if (window.loadConfig) {
         window.loadConfig();
     }
+}
+
+export async function initStatsFilters() {
+    await loadStatsFilterOptions();
+    bindStatsFilterControls();
+}
+
+export async function refreshStatsForCurrentFilter() {
+    await loadStatsByPeriod(currentPeriod);
+    if (window.loadConfig) {
+        window.loadConfig();
+    }
+}
+
+async function loadStatsFilterOptions() {
+    const endpointSelect = document.getElementById('statsEndpointFilter');
+    const ipSelect = document.getElementById('statsIpFilter');
+    if (!endpointSelect || !ipSelect || !window.go?.main?.App?.GetStatsFilters) {
+        return;
+    }
+
+    try {
+        const raw = await window.go.main.App.GetStatsFilters();
+        const data = JSON.parse(raw || '{}');
+        const endpoints = Array.isArray(data.endpoints) ? data.endpoints : [];
+        const clientIps = Array.isArray(data.clientIps) ? data.clientIps : [];
+
+        endpointSelect.innerHTML = [
+            `<option value="">${t('statistics.allEndpoints')}</option>`,
+            ...endpoints.map(option => {
+                const name = option.name || '';
+                const deleted = option.deleted ? ` ${t('statistics.deletedEndpointSuffix')}` : '';
+                return `<option value="${escapeOption(name)}">${escapeHtml(name)}${deleted}</option>`;
+            })
+        ].join('');
+        ipSelect.innerHTML = [
+            `<option value="">${t('statistics.allIPs')}</option>`,
+            ...clientIps.map(ip => `<option value="${escapeOption(ip)}">${escapeHtml(ip)}</option>`)
+        ].join('');
+
+        endpointSelect.value = statsFilters.endpointName;
+        ipSelect.value = statsFilters.clientIp;
+    } catch (error) {
+        console.error('Failed to load stats filter options:', error);
+    }
+}
+
+function bindStatsFilterControls() {
+    const endpointSelect = document.getElementById('statsEndpointFilter');
+    const ipSelect = document.getElementById('statsIpFilter');
+    const ipQuery = document.getElementById('statsIpQueryFilter');
+    const clearBtn = document.getElementById('statsClearFilters');
+    if (!endpointSelect || !ipSelect || !ipQuery || !clearBtn) {
+        return;
+    }
+
+    endpointSelect.onchange = async () => {
+        clearStatsCaches();
+        statsFilters.endpointName = endpointSelect.value;
+        await refreshStatsForCurrentFilter();
+    };
+    ipSelect.onchange = async () => {
+        clearStatsCaches();
+        statsFilters.clientIp = ipSelect.value;
+        if (statsFilters.clientIp) {
+            statsFilters.clientIpQuery = '';
+            ipQuery.value = '';
+        }
+        await refreshStatsForCurrentFilter();
+    };
+    ipQuery.oninput = debounce(async () => {
+        clearStatsCaches();
+        statsFilters.clientIpQuery = ipQuery.value.trim();
+        await refreshStatsForCurrentFilter();
+    }, 300);
+    clearBtn.onclick = async () => {
+        clearStatsCaches();
+        statsFilters = { endpointName: '', clientIp: '', clientIpQuery: '' };
+        endpointSelect.value = '';
+        ipSelect.value = '';
+        ipQuery.value = '';
+        await refreshStatsForCurrentFilter();
+    };
+}
+
+function clearStatsCaches() {
+    endpointStatsCache = {};
+    totalStatsCache = {};
+}
+
+function debounce(fn, delay) {
+    let timer;
+    return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), delay);
+    };
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
+}
+
+function escapeOption(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;');
 }
 
 // Update DOM elements from cached data (zero-delay switching)

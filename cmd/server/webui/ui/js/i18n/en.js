@@ -65,9 +65,9 @@ export default {
         riskWarning: 'LAN access exposes the proxy API to devices on your network. This version does not enforce an inbound proxy access key.',
         activeConnections: 'Active Connections',
         noActiveConnections: 'No active connections',
-        restartRequired: 'Restart required for access changes to take effect',
-        saveAccess: 'Save access mode',
-        saved: 'Network access settings saved. Restart ccNexus to apply listener changes.',
+        restartRequired: 'Access changes are active now',
+        saveAccess: 'Save and apply',
+        saved: 'Network access settings saved and applied.',
         failedToLoad: 'Failed to load network status',
         failedToSave: 'Failed to save network settings',
         categories: {
@@ -213,7 +213,12 @@ export default {
         inputTokens: 'Input Tokens',
         outputTokens: 'Output Tokens',
         noDataAvailable: 'No data available',
-        failedToLoad: 'Failed to load statistics'
+        failedToLoad: 'Failed to load statistics',
+        allEndpoints: 'All endpoints',
+        allIPs: 'All IPs',
+        ipSearchPlaceholder: 'Search IP',
+        clearFilters: 'Clear filters',
+        deletedEndpointSuffix: '(deleted)'
     },
     testing: {
         title: 'Endpoint Testing',

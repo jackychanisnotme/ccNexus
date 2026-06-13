@@ -45,6 +45,7 @@ func proxyStatToStorageStat(stat interface{}) (*DailyStat, error) {
 			InputTokens:  v["InputTokens"].(int),
 			OutputTokens: v["OutputTokens"].(int),
 			DeviceID:     v["DeviceID"].(string),
+			ClientIP:     stringFromMap(v, "ClientIP", "unknown"),
 		}, nil
 	default:
 		// For struct types, we'll create a conversion helper
@@ -57,6 +58,7 @@ func proxyStatToStorageStat(stat interface{}) (*DailyStat, error) {
 			InputTokens  int
 			OutputTokens int
 			DeviceID     string
+			ClientIP     string
 		}
 
 		// Use type assertion to extract fields safely
@@ -69,6 +71,7 @@ func proxyStatToStorageStat(stat interface{}) (*DailyStat, error) {
 			InputTokens() int
 			OutputTokens() int
 			DeviceID() string
+			ClientIP() string
 		})
 
 		if ok {
@@ -80,6 +83,7 @@ func proxyStatToStorageStat(stat interface{}) (*DailyStat, error) {
 				InputTokens:  statPtr.InputTokens(),
 				OutputTokens: statPtr.OutputTokens(),
 				DeviceID:     statPtr.DeviceID(),
+				ClientIP:     statPtr.ClientIP(),
 			}, nil
 		}
 
@@ -93,6 +97,7 @@ func proxyStatToStorageStat(stat interface{}) (*DailyStat, error) {
 			InputTokens  int
 			OutputTokens int
 			DeviceID     string
+			ClientIP     string
 		}
 
 		// Try direct conversion if it's a compatible struct
@@ -105,6 +110,7 @@ func proxyStatToStorageStat(stat interface{}) (*DailyStat, error) {
 				InputTokens:  statVal.InputTokens,
 				OutputTokens: statVal.OutputTokens,
 				DeviceID:     statVal.DeviceID,
+				ClientIP:     statVal.ClientIP,
 			}, nil
 		}
 
@@ -185,6 +191,13 @@ func extractStatUsingReflectionSafe(stat interface{}) (*DailyStat, error) {
 	if err != nil {
 		return nil, fmt.Errorf("DeviceID: %w", err)
 	}
+	clientIP := "unknown"
+	if field := v.FieldByName("ClientIP"); field.IsValid() {
+		if field.Kind() != reflect.String {
+			return nil, fmt.Errorf("ClientIP is not a string")
+		}
+		clientIP = field.String()
+	}
 
 	return &DailyStat{
 		EndpointName: endpointName,
@@ -194,7 +207,15 @@ func extractStatUsingReflectionSafe(stat interface{}) (*DailyStat, error) {
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 		DeviceID:     deviceID,
+		ClientIP:     clientIP,
 	}, nil
+}
+
+func stringFromMap(values map[string]interface{}, key, fallback string) string {
+	if value, ok := values[key].(string); ok && value != "" {
+		return value
+	}
+	return fallback
 }
 
 // RecordDailyStat records a daily stat
@@ -210,6 +231,25 @@ func (a *StatsStorageAdapter) RecordDailyStat(stat interface{}) error {
 // GetTotalStats gets total stats for all endpoints
 func (a *StatsStorageAdapter) GetTotalStats() (int, map[string]interface{}, error) {
 	totalRequests, endpointStats, err := a.storage.GetTotalStats()
+	if err != nil {
+		return 0, nil, err
+	}
+
+	result := make(map[string]interface{})
+	for name, stats := range endpointStats {
+		result[name] = &StatsDataCompat{
+			Requests:     stats.Requests,
+			Errors:       stats.Errors,
+			InputTokens:  stats.InputTokens,
+			OutputTokens: stats.OutputTokens,
+		}
+	}
+
+	return totalRequests, result, nil
+}
+
+func (a *StatsStorageAdapter) GetTotalStatsFiltered(filter StatsFilter) (int, map[string]interface{}, error) {
+	totalRequests, endpointStats, err := a.storage.GetTotalStatsFiltered(filter)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -256,6 +296,26 @@ func (a *StatsStorageAdapter) GetDailyStats(endpointName, startDate, endDate str
 	return result, nil
 }
 
+func (a *StatsStorageAdapter) GetDailyStatsFiltered(endpointName, startDate, endDate string, filter StatsFilter) ([]interface{}, error) {
+	dailyStats, err := a.storage.GetDailyStatsFiltered(endpointName, startDate, endDate, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]interface{}, len(dailyStats))
+	for i, stat := range dailyStats {
+		result[i] = &DailyRecordCompat{
+			Date:         stat.Date,
+			Requests:     stat.Requests,
+			Errors:       stat.Errors,
+			InputTokens:  stat.InputTokens,
+			OutputTokens: stat.OutputTokens,
+		}
+	}
+
+	return result, nil
+}
+
 // DailyRecordCompat is a compatible daily record structure
 type DailyRecordCompat struct {
 	Date         string
@@ -268,6 +328,25 @@ type DailyRecordCompat struct {
 // GetPeriodStatsAggregated gets aggregated stats for all endpoints in a time period
 func (a *StatsStorageAdapter) GetPeriodStatsAggregated(startDate, endDate string) (map[string]interface{}, error) {
 	endpointStats, err := a.storage.GetPeriodStatsAggregated(startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]interface{})
+	for name, stats := range endpointStats {
+		result[name] = &StatsDataCompat{
+			Requests:     stats.Requests,
+			Errors:       stats.Errors,
+			InputTokens:  stats.InputTokens,
+			OutputTokens: stats.OutputTokens,
+		}
+	}
+
+	return result, nil
+}
+
+func (a *StatsStorageAdapter) GetPeriodStatsAggregatedFiltered(startDate, endDate string, filter StatsFilter) (map[string]interface{}, error) {
+	endpointStats, err := a.storage.GetPeriodStatsAggregatedFiltered(startDate, endDate, filter)
 	if err != nil {
 		return nil, err
 	}

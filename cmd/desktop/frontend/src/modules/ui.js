@@ -53,6 +53,16 @@ export function initUI() {
 
                 <!-- Current Stats View -->
                 <div id="currentStatsView">
+                    <div class="stats-filter-bar">
+                        <select id="statsEndpointFilter" class="stats-filter-select" aria-label="${t('statistics.endpointFilter')}">
+                            <option value="">${t('statistics.allEndpoints')}</option>
+                        </select>
+                        <select id="statsIpFilter" class="stats-filter-select" aria-label="${t('statistics.ipFilter')}">
+                            <option value="">${t('statistics.allIPs')}</option>
+                        </select>
+                        <input id="statsIpQueryFilter" class="stats-filter-input" type="text" placeholder="${t('statistics.ipSearchPlaceholder')}" aria-label="${t('statistics.ipSearchPlaceholder')}">
+                        <button id="statsClearFilters" class="stats-filter-clear" type="button">${t('statistics.clearFilters')}</button>
+                    </div>
                     <div class="stats-grid">
                     <div class="stat-box">
                         <div class="stat-header">
