@@ -26,6 +26,13 @@ class Settings {
     constructor() {
         this.container = document.getElementById('view-container');
         this.currentFailover = defaultFailover;
+        this.currentNetwork = null;
+        state.subscribe('networkConnections', (connections) => {
+            if (state.get('currentView') === 'settings' && this.currentNetwork) {
+                this.currentNetwork.connections = connections;
+                this.renderNetworkStatus(this.currentNetwork);
+            }
+        });
         window.addEventListener('languageChanged', () => {
             if (state.get('currentView') === 'settings') {
                 this.render();
@@ -37,6 +44,25 @@ class Settings {
         this.container.innerHTML = `
             <div class="settings">
                 <h1>${t('settings.title')}</h1>
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h3 class="card-title">${t('network.title')}</h3>
+                    </div>
+                    <div class="card-body">
+                        <form id="network-form">
+                            <div class="form-group">
+                                <label class="form-label">${t('network.listenMode')}</label>
+                                <select class="form-select" name="listenMode">
+                                    <option value="local">${t('network.localOnly')}</option>
+                                    <option value="lan">${t('network.lanAccess')}</option>
+                                </select>
+                            </div>
+                            <div id="network-risk-warning" class="network-warning" style="display: none;">${t('network.riskWarning')}</div>
+                            <div id="network-status" class="mt-2"></div>
+                            <button type="submit" class="btn btn-primary mt-3">${t('network.saveAccess')}</button>
+                        </form>
+                    </div>
+                </div>
                 <div class="card mt-3">
                     <div class="card-header">
                         <h3 class="card-title">${t('settings.failoverTitle')}</h3>
@@ -66,7 +92,12 @@ class Settings {
         `;
 
         document.getElementById('settings-form').addEventListener('submit', (event) => this.save(event));
+        document.getElementById('network-form').addEventListener('submit', (event) => this.saveNetwork(event));
+        document.querySelector('#network-form select[name="listenMode"]').addEventListener('change', (event) => {
+            this.toggleNetworkWarning(event.currentTarget.value);
+        });
         await this.load();
+        await this.loadNetwork();
     }
 
     renderCooldownInput(name, label) {
@@ -92,6 +123,65 @@ class Settings {
             });
         } catch (error) {
             notifications.error(`${t('settings.failedToLoad')}: ${error.message}`);
+        }
+    }
+
+    async loadNetwork() {
+        try {
+            const network = await api.getNetwork();
+            this.currentNetwork = network;
+            const form = document.getElementById('network-form');
+            if (form?.elements.listenMode) {
+                form.elements.listenMode.value = network.listenMode || 'local';
+            }
+            this.toggleNetworkWarning(network.listenMode);
+            this.renderNetworkStatus(network);
+        } catch (error) {
+            notifications.error(`${t('network.failedToLoad')}: ${error.message}`);
+        }
+    }
+
+    async saveNetwork(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        try {
+            const network = await api.updateNetwork(form.elements.listenMode.value);
+            this.currentNetwork = network;
+            this.renderNetworkStatus(network);
+            this.toggleNetworkWarning(network.listenMode);
+            notifications.success(t('network.saved'));
+        } catch (error) {
+            notifications.error(`${t('network.failedToSave')}: ${error.message}`);
+        }
+    }
+
+    renderNetworkStatus(network) {
+        const container = document.getElementById('network-status');
+        if (!container || !network) {
+            return;
+        }
+        const lanURLs = Array.isArray(network.lanURLs) ? network.lanURLs : [];
+        container.innerHTML = `
+            <div class="network-summary-grid">
+                <div>
+                    <div class="network-label">${t('network.localAddress')}</div>
+                    <code class="network-code">${this.escapeHtml(network.localURL || '')}</code>
+                </div>
+                <div>
+                    <div class="network-label">${t('network.lanAddresses')}</div>
+                    ${lanURLs.length > 0
+                        ? lanURLs.map(url => `<code class="network-code">${this.escapeHtml(url)}</code>`).join('')
+                        : `<div class="text-muted">${t('network.noLanAddresses')}</div>`}
+                </div>
+            </div>
+            ${network.restartRequired ? `<div class="network-restart mt-2">${t('network.restartRequired')}</div>` : ''}
+        `;
+    }
+
+    toggleNetworkWarning(mode) {
+        const warning = document.getElementById('network-risk-warning');
+        if (warning) {
+            warning.style.display = mode === 'lan' ? 'block' : 'none';
         }
     }
 
@@ -146,6 +236,12 @@ class Settings {
                 cooldownSec: Number.isFinite(Number(circuitBreaker.cooldownSec)) ? Number(circuitBreaker.cooldownSec) : defaultFailover.circuitBreaker.cooldownSec
             }
         };
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
     }
 }
 

@@ -99,6 +99,8 @@ export function GetSessions(arg1:string):Promise<string>;
 
 export function GetStats():Promise<string>;
 
+export function GetNetworkStatus():Promise<string>;
+
 export function GetStatsDaily():Promise<string>;
 
 export function GetStatsMonthly():Promise<string>;
@@ -226,6 +228,8 @@ export function UpdateEndpointCredentialToken(arg1:number,arg2:number,arg3:strin
 export function SetEndpointProxyURL(arg1:number,arg2:string):Promise<void>;
 
 export function UpdateLocalBackupDir(arg1:string):Promise<void>;
+
+export function UpdateListenMode(arg1:string):Promise<void>;
 
 export function UpdatePort(arg1:number):Promise<void>;
 

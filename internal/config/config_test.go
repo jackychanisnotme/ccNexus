@@ -203,3 +203,46 @@ func TestEndpointProxyURLPersistsThroughStorageRoundTrip(t *testing.T) {
 		t.Fatalf("expected proxy URL to round-trip, got %q", got)
 	}
 }
+
+func TestListenModeDefaultsToLocalAndBuildsListenAddr(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if got := cfg.GetListenMode(); got != ListenModeLocal {
+		t.Fatalf("default listen mode = %q, want %q", got, ListenModeLocal)
+	}
+	if got := cfg.GetListenAddr(); got != "127.0.0.1:3000" {
+		t.Fatalf("default listen addr = %q, want 127.0.0.1:3000", got)
+	}
+
+	cfg.UpdateListenMode(ListenModeLAN)
+	if got := cfg.GetListenAddr(); got != "0.0.0.0:3000" {
+		t.Fatalf("LAN listen addr = %q, want 0.0.0.0:3000", got)
+	}
+}
+
+func TestListenModePersistsAndNormalizes(t *testing.T) {
+	store := newFakeConfigStorage()
+	cfg := DefaultConfig()
+	cfg.UpdateEndpoints(nil)
+	cfg.UpdateListenMode(ListenModeLAN)
+
+	if err := cfg.SaveToStorage(store); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	reloaded, err := LoadFromStorage(store)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if got := reloaded.GetListenMode(); got != ListenModeLAN {
+		t.Fatalf("reloaded listen mode = %q, want %q", got, ListenModeLAN)
+	}
+
+	store.configs["listenMode"] = "bad-mode"
+	reloaded, err = LoadFromStorage(store)
+	if err != nil {
+		t.Fatalf("reload invalid config: %v", err)
+	}
+	if got := reloaded.GetListenMode(); got != ListenModeLocal {
+		t.Fatalf("invalid listen mode = %q, want %q", got, ListenModeLocal)
+	}
+}

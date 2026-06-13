@@ -700,6 +700,25 @@ body {
     color: #333;
 }
 
+.form-group .endpoint-option-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    width: fit-content;
+    max-width: 100%;
+    margin-bottom: 0;
+    line-height: 1.4;
+    white-space: normal;
+    word-break: keep-all;
+}
+
+.form-group .endpoint-option-label input[type="checkbox"] {
+    width: auto;
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0;
+}
+
 /* CLI Type Switcher */
 .form-label-row {
     display: flex;
@@ -1109,6 +1128,10 @@ body {
     backdrop-filter: blur(4px);
 }
 
+#portModal .modal-content {
+    max-width: min(640px, 92vw);
+}
+
 #portModal .modal-header {
     display: flex;
     justify-content: space-between;
@@ -1161,6 +1184,109 @@ body {
 
 #portModal .modal-body {
     padding: 25px 30px 10px 30px;
+}
+
+#portModal .network-warning {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.08);
+    color: #b91c1c;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+#portModal .network-status-panel,
+#portModal .network-connections-panel {
+    margin-top: 14px;
+    padding: 12px;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 8px;
+    background: var(--bg-secondary, #fafafa);
+}
+
+#portModal .network-section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary, #6b7280);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0;
+}
+
+#portModal .network-address-group + .network-address-group {
+    margin-top: 10px;
+}
+
+#portModal .network-address {
+    display: block;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    border-radius: 6px;
+    background: rgba(99, 102, 241, 0.08);
+    color: var(--text-primary, #111827);
+    word-break: break-all;
+    white-space: pre-wrap;
+}
+
+#portModal .network-empty {
+    font-size: 13px;
+    color: var(--text-secondary, #6b7280);
+}
+
+#portModal .network-restart {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(245, 158, 11, 0.12);
+    color: #92400e;
+    font-size: 13px;
+}
+
+#portModal .network-category-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+#portModal .network-count-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(59, 130, 246, 0.1);
+    color: #1d4ed8;
+    font-size: 12px;
+    line-height: 1;
+}
+
+#portModal .network-connection-list {
+    display: grid;
+    gap: 6px;
+}
+
+#portModal .network-connection-row {
+    display: grid;
+    grid-template-columns: 92px 120px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.08);
+    font-size: 12px;
+}
+
+#portModal .network-connection-category {
+    font-weight: 600;
+    color: var(--text-secondary, #6b7280);
+}
+
+@media (max-width: 640px) {
+    #portModal .network-connection-row {
+        grid-template-columns: 1fr;
+    }
 }
 
 .modal-content {
@@ -1734,6 +1860,45 @@ body {
 }
 
 /* Token Pool Modal */
+.endpoint-token-pool-action {
+    margin-top: -6px;
+    margin-bottom: 16px;
+}
+
+.endpoint-token-pool-action .btn {
+    width: 100%;
+}
+
+.token-pool-modal-content {
+    max-width: min(1100px, 96vw);
+    width: 96vw;
+    height: min(86vh, 800px);
+    min-height: 560px;
+}
+
+.token-pool-modal-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 6px 20px 12px 20px;
+    overflow: hidden;
+}
+
+.token-pool-toolbar {
+    flex: 0 0 auto;
+}
+
+.token-pool-hint {
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 8px;
+}
+
+.token-pool-stats {
+    display: block;
+    margin-bottom: 10px;
+}
+
 .token-pool-proxy-bar {
     display: flex;
     align-items: center;
@@ -1747,10 +1912,76 @@ body {
     min-width: 280px;
 }
 
+.token-pool-proxy-label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
 .token-pool-proxy-help {
     font-size: 12px;
     color: var(--text-secondary, #6b7280);
     margin-bottom: 12px;
+}
+
+.token-pool-import-group {
+    margin-bottom: 10px;
+}
+
+.token-pool-import-input {
+    width: 100%;
+    min-height: 72px;
+    max-height: 96px;
+    resize: vertical;
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+}
+
+.token-pool-command-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.token-pool-table-wrap {
+    flex: 1 1 auto;
+    min-height: 240px;
+    overflow: auto;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 8px;
+}
+
+.token-pool-table {
+    width: 100%;
+    min-width: 980px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+}
+
+.token-pool-table th,
+.token-pool-table td {
+    padding: 8px;
+    text-align: center;
+}
+
+.token-pool-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--modal-bg, #fff);
+    box-shadow: inset 0 -1px 0 rgba(148, 163, 184, 0.35);
+}
+
+.token-pool-table thead tr {
+    background: rgba(148, 163, 184, 0.15);
+}
+
+.token-pool-rate-header {
+    width: 220px;
+    max-width: 220px;
 }
 
 .token-pool-status-cell {

@@ -387,6 +387,9 @@ export function initUI() {
                             ${t('modal.authModeHelp')}
                         </p>
                     </div>
+                    <div class="form-group endpoint-token-pool-action">
+                        <button class="btn btn-secondary" id="manageTokenPoolBtn" style="display: none;" onclick="window.openEndpointTokenPoolFromModal()">🪪 ${t('modal.manageTokenPool')}</button>
+                    </div>
                     <div class="form-group">
                         <label><span class="required">*</span>${t('modal.apiUrl')}</label>
                         <input type="text" id="endpointUrl" placeholder="${t('modal.apiUrlPlaceholder')}">
@@ -446,7 +449,7 @@ export function initUI() {
                         </p>
                     </div>
                     <div class="form-group">
-                        <label style="display: flex; align-items: center; gap: 8px;">
+                        <label class="endpoint-option-label">
                             <input type="checkbox" id="endpointThinkingEnabled" onchange="window.handleThinkingControlChange && window.handleThinkingControlChange()">
                             ${t('modal.thinking')}
                         </label>
@@ -461,7 +464,7 @@ export function initUI() {
                         </p>
                     </div>
                     <div class="form-group">
-                        <label style="display: flex; align-items: center; gap: 8px;">
+                        <label class="endpoint-option-label">
                             <input type="checkbox" id="endpointForceStream">
                             ${t('modal.forceStream')}
                         </label>
@@ -475,7 +478,6 @@ export function initUI() {
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" id="manageTokenPoolBtn" style="display: none;" onclick="window.openEndpointTokenPoolFromModal()">🪪 ${t('modal.manageTokenPool')}</button>
                     <button class="btn btn-secondary" onclick="window.closeModal()">${t('modal.cancel')}</button>
                     <button class="btn btn-primary" onclick="window.saveEndpoint()">${t('modal.save')}</button>
                 </div>
@@ -557,6 +559,21 @@ export function initUI() {
                     <div class="form-group">
                         <label><span class="required">*</span>${t('modal.portLabel')}</label>
                         <input type="number" id="portInput" min="1" max="65535" placeholder="3000">
+                    </div>
+                    <div class="form-group">
+                        <label>${t('modal.listenMode')}</label>
+                        <select id="listenModeInput" class="form-input">
+                            <option value="local">${t('modal.listenModeLocal')}</option>
+                            <option value="lan">${t('modal.listenModeLan')}</option>
+                        </select>
+                    </div>
+                    <div id="networkRiskWarning" class="network-warning" style="display: none;">
+                        ${t('modal.lanRiskWarning')}
+                    </div>
+                    <div id="networkStatusPanel" class="network-status-panel"></div>
+                    <div class="network-connections-panel">
+                        <div class="network-section-title">${t('modal.activeConnections')}</div>
+                        <div id="networkConnectionsPanel"></div>
                     </div>
                     <p style="color: #666; font-size: 14px; margin-top: 10px;">
                         ⚠️ ${t('modal.portNote')}

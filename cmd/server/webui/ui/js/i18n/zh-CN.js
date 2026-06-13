@@ -54,6 +54,30 @@ export default {
         noEndpoints: '未配置端点',
         noEnabledEndpoints: '无启用端点'
     },
+    network: {
+        title: '网络访问',
+        listenMode: '访问模式',
+        localOnly: '仅本机',
+        lanAccess: '开放局域网',
+        localAddress: '本机地址',
+        lanAddresses: '局域网地址',
+        noLanAddresses: '未检测到局域网 IPv4 地址',
+        riskWarning: '开启局域网访问后，同网段设备可访问主代理 API。当前版本不强制入站访问密钥。',
+        activeConnections: '使用中的连接',
+        noActiveConnections: '暂无活动连接',
+        restartRequired: '访问设置将在重启 ccNexus 后生效',
+        saveAccess: '保存访问模式',
+        saved: '网络访问设置已保存，重启 ccNexus 后监听变更生效。',
+        failedToLoad: '加载网络状态失败',
+        failedToSave: '保存网络设置失败',
+        categories: {
+            proxy: '代理',
+            admin_ui: '管理界面',
+            api: 'API',
+            health: '健康检查',
+            events: '事件流'
+        }
+    },
     endpoints: {
         title: '端点管理',
         addEndpoint: '添加端点',

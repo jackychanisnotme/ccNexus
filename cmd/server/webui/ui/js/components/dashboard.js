@@ -7,6 +7,11 @@ import { t } from '../utils/i18n.js';
 class Dashboard {
     constructor() {
         this.container = document.getElementById('view-container');
+        state.subscribe('networkConnections', (connections) => {
+            if (state.get('currentView') === 'dashboard') {
+                this.updateNetworkConnections(connections);
+            }
+        });
         // 监听语言切换
         window.addEventListener('languageChanged', () => {
             if (state.get('currentView') === 'dashboard') {
@@ -35,6 +40,17 @@ class Dashboard {
                     <div class="stat-card">
                         <div class="stat-label">${t('dashboard.outputTokens')}</div>
                         <div class="stat-value" id="stat-output-tokens">-</div>
+                    </div>
+                </div>
+
+                <div class="card mt-4">
+                    <div class="card-header">
+                        <h3 class="card-title">${t('network.title')}</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="network-status"></div>
+                        <div class="network-connections-title mt-3">${t('network.activeConnections')}</div>
+                        <div id="network-connections"></div>
                     </div>
                 </div>
 
@@ -73,12 +89,88 @@ class Dashboard {
             const endpointsData = await api.getEndpoints();
             this.updateEndpoints(endpointsData.endpoints);
 
+            const network = await api.getNetwork();
+            this.updateNetwork(network);
+
             // Load daily stats for chart
             const dailyStats = await api.getStatsDaily();
             this.renderChart(dailyStats);
         } catch (error) {
             notifications.error('Failed to load dashboard data: ' + error.message);
         }
+    }
+
+    updateNetwork(network) {
+        const container = document.getElementById('network-status');
+        if (!container || !network) {
+            return;
+        }
+        const lanURLs = Array.isArray(network.lanURLs) ? network.lanURLs : [];
+        const modeLabel = network.listenMode === 'lan' ? t('network.lanAccess') : t('network.localOnly');
+        container.innerHTML = `
+            <div class="network-summary-grid">
+                <div>
+                    <div class="network-label">${t('network.listenMode')}</div>
+                    <div class="network-value">${this.escapeHtml(modeLabel)}</div>
+                </div>
+                <div>
+                    <div class="network-label">${t('network.localAddress')}</div>
+                    <code class="network-code">${this.escapeHtml(network.localURL || '')}</code>
+                </div>
+                <div class="network-span">
+                    <div class="network-label">${t('network.lanAddresses')}</div>
+                    ${lanURLs.length > 0
+                        ? lanURLs.map(url => `<code class="network-code">${this.escapeHtml(url)}</code>`).join('')
+                        : `<div class="text-muted">${t('network.noLanAddresses')}</div>`}
+                </div>
+            </div>
+            ${network.listenMode === 'lan' ? `<div class="network-warning mt-2">${t('network.riskWarning')}</div>` : ''}
+        `;
+        this.updateNetworkConnections(network.connections);
+    }
+
+    updateNetworkConnections(connections) {
+        const container = document.getElementById('network-connections');
+        if (!container) {
+            return;
+        }
+        const snapshot = connections || {};
+        const active = Array.isArray(snapshot.connections) ? snapshot.connections : [];
+        const byCategory = snapshot.byCategory || {};
+        const categories = ['proxy', 'admin_ui', 'api', 'health', 'events'];
+        const summary = categories.map(category => `
+            <span class="network-count">${t(`network.categories.${category}`)} ${Number(byCategory[category] || 0)}</span>
+        `).join('');
+
+        if (active.length === 0) {
+            container.innerHTML = `
+                <div class="network-counts">${summary}</div>
+                <div class="empty-state">${t('network.noActiveConnections')}</div>
+            `;
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="network-counts">${summary}</div>
+            <div class="network-connection-table">
+                ${active.map(conn => `
+                    <div class="network-connection-row">
+                        <span>${t(`network.categories.${conn.category}`)}</span>
+                        <span>${this.escapeHtml(conn.clientIp || 'unknown')}</span>
+                        <span title="${this.escapeHtml(conn.path || '')}">${this.escapeHtml(conn.method || '')} ${this.escapeHtml(conn.path || '')}</span>
+                        <span>${this.formatDuration(conn.durationMillis)}</span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    formatDuration(ms) {
+        const seconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+        if (seconds < 60) {
+            return `${seconds}s`;
+        }
+        return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
     }
 
     updateStats(stats) {

@@ -198,6 +198,10 @@ export function GetStats() {
   return window['go']['main']['App']['GetStats']();
 }
 
+export function GetNetworkStatus() {
+  return window['go']['main']['App']['GetNetworkStatus']();
+}
+
 export function GetStatsDaily() {
   return window['go']['main']['App']['GetStatsDaily']();
 }
@@ -456,6 +460,10 @@ export function UpdateLocalBackupDir(arg1) {
 
 export function UpdatePort(arg1) {
   return window['go']['main']['App']['UpdatePort'](arg1);
+}
+
+export function UpdateListenMode(arg1) {
+  return window['go']['main']['App']['UpdateListenMode'](arg1);
 }
 
 export function UpdateS3BackupConfig(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {

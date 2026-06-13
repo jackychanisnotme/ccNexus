@@ -154,6 +154,9 @@ func (a *App) startup(ctx context.Context) {
 	a.proxy.SetOnEndpointRuntimeChanged(func(event proxy.EndpointRuntimeEvent) {
 		runtime.EventsEmit(ctx, "endpoint:runtime", event)
 	})
+	a.proxy.SetOnInboundConnectionsChanged(func(snapshot proxy.InboundConnectionsSnapshot) {
+		runtime.EventsEmit(ctx, "network:updated", a.proxy.GetNetworkStatus())
+	})
 
 	// Set callback for stats updates to emit real-time events with 4-period data
 	a.proxy.GetStats().SetOnStatsUpdated(func(endpointName string, endpointPeriods, totalPeriods map[string]interface{}) {
@@ -897,7 +900,16 @@ func (a *App) GetConfig() string { return a.settings.GetConfig() }
 func (a *App) UpdateConfig(configJSON string) error {
 	return a.settings.UpdateConfig(configJSON, a.proxy)
 }
-func (a *App) UpdatePort(port int) error            { return a.settings.UpdatePort(port) }
+func (a *App) UpdatePort(port int) error { return a.settings.UpdatePort(port) }
+func (a *App) GetNetworkStatus() string {
+	if a.proxy == nil {
+		data, _ := json.Marshal(proxy.BuildNetworkStatus(a.config, proxy.InboundConnectionsSnapshot{}))
+		return string(data)
+	}
+	data, _ := json.Marshal(a.proxy.GetNetworkStatus())
+	return string(data)
+}
+func (a *App) UpdateListenMode(mode string) error   { return a.settings.UpdateListenMode(mode) }
 func (a *App) GetSystemLanguage() string            { return a.settings.GetSystemLanguage() }
 func (a *App) GetLanguage() string                  { return a.settings.GetLanguage() }
 func (a *App) SetLanguage(language string) error    { return a.settings.SetLanguage(language) }
