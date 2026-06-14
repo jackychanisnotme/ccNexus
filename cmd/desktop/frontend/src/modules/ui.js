@@ -398,8 +398,15 @@ export function initUI() {
                             ${t('modal.authModeHelp')}
                         </p>
                     </div>
-                    <div class="form-group endpoint-token-pool-action">
-                        <button class="btn btn-secondary" id="manageTokenPoolBtn" style="display: none;" onclick="window.openEndpointTokenPoolFromModal()">🪪 ${t('modal.manageTokenPool')}</button>
+                    <div class="form-group endpoint-token-pool-action" style="display: none;">
+                        <div class="endpoint-token-pool-card">
+                            <div class="endpoint-token-pool-copy">
+                                <strong>${t('modal.tokenPoolCredentialSectionTitle')}</strong>
+                                <p id="tokenPoolCredentialHelp">${t('modal.tokenPoolCredentialHelp')}</p>
+                                <p id="tokenPoolCredentialModeHelp">${t('modal.genericTokenPoolCredentialHelp')}</p>
+                            </div>
+                            <button class="btn btn-secondary" id="manageTokenPoolBtn" style="display: none;" onclick="window.openEndpointTokenPoolFromModal()">🪪 ${t('modal.manageTokenPool')}</button>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label><span class="required">*</span>${t('modal.apiUrl')}</label>

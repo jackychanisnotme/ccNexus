@@ -1063,3 +1063,45 @@ func extractOpenAI2Text(content interface{}) string {
 	}
 	return strings.Join(parts, "")
 }
+
+// AdaptOpenAI2FunctionCallArgumentsToObjects rewrites string-typed
+// "arguments" values in the top-level input array to objects when the
+// string represents a valid JSON object. It is a narrow compatibility
+// adapter for gateways (not the standard OpenAI Responses API) that
+// reject function_call.arguments that are JSON-encoded strings.
+//
+// The function returns the adapted payload and a boolean indicating
+// whether any item was changed. If the payload is unchanged the
+// original byte slice is returned.
+func AdaptOpenAI2FunctionCallArgumentsToObjects(openai2Req []byte) ([]byte, bool) {
+	var body map[string]interface{}
+	if err := json.Unmarshal(openai2Req, &body); err != nil {
+		return openai2Req, false
+	}
+	rawInput, ok := body["input"].([]interface{})
+	if !ok {
+		return openai2Req, false
+	}
+	changed := false
+	for _, raw := range rawInput {
+		item, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		argsStr, isStr := item["arguments"].(string)
+		if !isStr {
+			continue
+		}
+		var parsed map[string]interface{}
+		if json.Unmarshal([]byte(argsStr), &parsed) != nil || parsed == nil {
+			continue
+		}
+		item["arguments"] = parsed
+		changed = true
+	}
+	if !changed {
+		return openai2Req, false
+	}
+	adapted, _ := json.Marshal(body)
+	return adapted, true
+}

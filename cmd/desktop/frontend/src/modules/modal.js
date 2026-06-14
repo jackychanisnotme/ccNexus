@@ -220,19 +220,198 @@ function isClaudeOAuthTokenPoolMode(mode) {
     return mode === AUTH_MODE_CLAUDE_OAUTH_TOKEN_POOL;
 }
 
+function readEndpointDraftFromModal() {
+    const authMode = getEndpointAuthMode();
+    let url = document.getElementById('endpointUrl')?.value?.trim() || '';
+    let key = document.getElementById('endpointKey')?.value?.trim() || '';
+    let transformer = document.getElementById('endpointTransformer')?.value || 'claude';
+    const model = document.getElementById('endpointModel')?.value?.trim() || '';
+    const isCodexTokenPool = isCodexTokenPoolMode(authMode);
+    const isClaudeOAuthTokenPool = isClaudeOAuthTokenPoolMode(authMode);
+
+    if (isCodexTokenPool) {
+        url = CODEX_FIXED_API_URL;
+        transformer = CODEX_FIXED_TRANSFORMER;
+        key = '';
+    } else if (isClaudeOAuthTokenPool) {
+        url = CLAUDE_OAUTH_FIXED_API_URL;
+        transformer = CLAUDE_OAUTH_FIXED_TRANSFORMER;
+        key = '';
+    }
+
+    return {
+        name: document.getElementById('endpointName')?.value?.trim() || '',
+        url,
+        key,
+        authMode,
+        transformer,
+        model: isClaudeOAuthTokenPool && !model ? CLAUDE_OAUTH_DEFAULT_MODEL : model,
+        thinking: getThinkingControlValue(),
+        proxyUrl: document.getElementById('endpointProxyUrl')?.value?.trim() || '',
+        forceStream: !!document.getElementById('endpointForceStream')?.checked,
+        remark: document.getElementById('endpointRemark')?.value?.trim() || ''
+    };
+}
+
+function draftValue(value) {
+    return String(value ?? '').trim();
+}
+
+function getSavedEndpointForCurrentIndex() {
+    const endpoints = window.config?.endpoints || [];
+    if (currentEditIndex < 0 || currentEditIndex >= endpoints.length) {
+        return null;
+    }
+    return endpoints[currentEditIndex] || null;
+}
+
+function endpointDraftHasUnsavedChanges(draft) {
+    const saved = getSavedEndpointForCurrentIndex();
+    if (!saved) {
+        return currentEditIndex >= 0;
+    }
+    return (
+        draftValue(saved.name) !== draft.name ||
+        draftValue(saved.apiUrl) !== draft.url ||
+        draftValue(saved.apiKey) !== draft.key ||
+        draftValue(saved.authMode || AUTH_MODE_API_KEY) !== draft.authMode ||
+        draftValue(saved.transformer || 'claude') !== draft.transformer ||
+        draftValue(saved.model) !== draft.model ||
+        draftValue(saved.thinking) !== draft.thinking ||
+        draftValue(saved.proxyUrl) !== draft.proxyUrl ||
+        !!saved.forceStream !== draft.forceStream ||
+        draftValue(saved.remark) !== draft.remark
+    );
+}
+
+async function loadFreshEndpointConfig() {
+    const configStr = await window.go.main.App.GetConfig();
+    const config = JSON.parse(configStr);
+    window.config = config;
+    return config;
+}
+
+function validateEndpointDraft(draft, config) {
+    if (!draft.name || !draft.url) {
+        showError(t('modal.requiredFields'));
+        return false;
+    }
+    if (draft.authMode === AUTH_MODE_API_KEY && !draft.key) {
+        showError(t('modal.requiredApiKey'));
+        return false;
+    }
+
+    const endpoints = Array.isArray(config?.endpoints) ? config.endpoints : [];
+    const existingEndpoint = endpoints.find((ep, idx) =>
+        ep.name === draft.name && idx !== currentEditIndex
+    );
+    if (existingEndpoint) {
+        showError(`Endpoint name "${draft.name}" already exists. Please use a different name.`);
+        return false;
+    }
+    return true;
+}
+
+async function persistEndpointDraftFromModal() {
+    const draft = readEndpointDraftFromModal();
+    const config = await loadFreshEndpointConfig();
+    if (!validateEndpointDraft(draft, config)) {
+        return null;
+    }
+
+    try {
+        if (currentEditIndex === -1) {
+            await addEndpoint(draft.name, draft.url, draft.key, draft.authMode, draft.transformer, draft.model, draft.thinking, draft.proxyUrl, draft.forceStream, draft.remark);
+        } else {
+            await updateEndpoint(currentEditIndex, draft.name, draft.url, draft.key, draft.authMode, draft.transformer, draft.model, draft.thinking, draft.proxyUrl, draft.forceStream, draft.remark);
+        }
+
+        const freshConfig = await loadFreshEndpointConfig();
+        const savedIndex = (freshConfig.endpoints || []).findIndex((ep) => ep.name === draft.name);
+        if (savedIndex < 0) {
+            showError(t('modal.saveFailed').replace('{error}', t('modal.savedEndpointNotFound')));
+            return null;
+        }
+        currentEditIndex = savedIndex;
+        return { index: savedIndex, name: draft.name, draft, config: freshConfig };
+    } catch (error) {
+        const message = error?.message || String(error);
+        showError(t('modal.saveFailed').replace('{error}', message));
+        return null;
+    }
+}
+
+async function persistEndpointDraftForTokenPoolManagement() {
+    const draft = readEndpointDraftFromModal();
+    if (!isTokenPoolMode(draft.authMode)) {
+        showNotification(t('modal.tokenPoolOnlyForTokenMode'), 'warning');
+        return null;
+    }
+    return persistEndpointDraftFromModal();
+}
+
 function updateManageTokenPoolButton() {
     const btn = document.getElementById('manageTokenPoolBtn');
+    const actionGroup = document.querySelector('.endpoint-token-pool-action');
+    const help = document.getElementById('tokenPoolCredentialHelp');
+    const modeHelp = document.getElementById('tokenPoolCredentialModeHelp');
+    const isTokenPool = isTokenPoolMode(getEndpointAuthMode());
+
+    if (actionGroup) {
+        actionGroup.style.display = isTokenPool ? 'block' : 'none';
+    }
     if (!btn) {
         return;
     }
-    const actionGroup = btn.closest('.endpoint-token-pool-action');
-    const isEditMode = currentEditIndex >= 0;
-    const isTokenPool = isTokenPoolMode(getEndpointAuthMode());
-    const shouldShow = isEditMode && isTokenPool;
-    btn.style.display = shouldShow ? 'inline-flex' : 'none';
-    if (actionGroup) {
-        actionGroup.style.display = shouldShow ? 'block' : 'none';
+
+    btn.style.display = isTokenPool ? 'inline-flex' : 'none';
+    if (!isTokenPool) {
+        return;
     }
+
+    const authMode = getEndpointAuthMode();
+    const draft = readEndpointDraftFromModal();
+    const label = currentEditIndex < 0
+        ? t('modal.manageTokenPoolNewEndpoint')
+        : (endpointDraftHasUnsavedChanges(draft) ? t('modal.manageTokenPoolApplyChanges') : t('modal.manageTokenPool'));
+    btn.textContent = `🪪 ${label}`;
+
+    if (help) {
+        help.textContent = t('modal.tokenPoolCredentialHelp');
+    }
+    if (modeHelp) {
+        if (isCodexTokenPoolMode(authMode)) {
+            modeHelp.textContent = t('modal.codexTokenPoolCredentialHelp');
+        } else if (isClaudeOAuthTokenPoolMode(authMode)) {
+            modeHelp.textContent = t('modal.claudeOAuthTokenPoolCredentialHelp');
+        } else {
+            modeHelp.textContent = t('modal.genericTokenPoolCredentialHelp');
+        }
+    }
+}
+
+function bindEndpointDraftChangeHandlers() {
+    const fieldIds = [
+        'endpointName',
+        'endpointAuthMode',
+        'endpointUrl',
+        'endpointProxyUrl',
+        'endpointKey',
+        'endpointTransformer',
+        'endpointModel',
+        'endpointForceStream',
+        'endpointRemark'
+    ];
+
+    fieldIds.forEach((id) => {
+        const element = document.getElementById(id);
+        if (!element || element.dataset.tokenPoolDraftBound === 'true') {
+            return;
+        }
+        element.addEventListener('input', updateManageTokenPoolButton);
+        element.addEventListener('change', updateManageTokenPoolButton);
+        element.dataset.tokenPoolDraftBound = 'true';
+    });
 }
 
 export function handleAuthModeChange() {
@@ -317,6 +496,8 @@ export function showAddEndpointModal() {
     updateManageTokenPoolButton();
     handleTransformerChange();
     setThinkingControlValue('');
+    bindEndpointDraftChangeHandlers();
+    updateManageTokenPoolButton();
     document.getElementById('endpointModal').classList.add('active');
 }
 
@@ -339,6 +520,8 @@ export function showAddEndpointModalWithPreset(presetData) {
 	updateManageTokenPoolButton();
 	handleTransformerChange();
 	setThinkingControlValue(presetData.thinking ?? '');
+	bindEndpointDraftChangeHandlers();
+	updateManageTokenPoolButton();
 	document.getElementById('endpointModal').classList.add('active');
 }
 
@@ -346,6 +529,7 @@ export async function editEndpoint(index) {
 	currentEditIndex = index;
 	const configStr = await window.go.main.App.GetConfig();
 	const config = JSON.parse(configStr);
+    window.config = config;
 	const ep = config.endpoints[index];
 
 	document.getElementById('modalTitle').textContent = '✏️ ' + t('modal.editEndpoint');
@@ -365,91 +549,28 @@ export async function editEndpoint(index) {
     updateManageTokenPoolButton();
     handleTransformerChange();
     setThinkingControlValue(ep.thinking ?? '');
+    bindEndpointDraftChangeHandlers();
+    updateManageTokenPoolButton();
     document.getElementById('endpointModal').classList.add('active');
 }
 
 export async function openEndpointTokenPoolFromModal() {
-    if (currentEditIndex < 0) {
+    const savedEndpoint = await persistEndpointDraftForTokenPoolManagement();
+    if (!savedEndpoint) {
         return;
     }
-    if (!isTokenPoolMode(getEndpointAuthMode())) {
-        showNotification(t('modal.tokenPoolOnlyForTokenMode'), 'warning');
-        return;
-    }
-    const endpointName = document.getElementById('endpointName')?.value?.trim() || '';
-    const proxyUrl = document.getElementById('endpointProxyUrl')?.value?.trim() || '';
-    try {
-        await window.go.main.App.SetEndpointProxyURL(currentEditIndex, proxyUrl);
-        if (Array.isArray(window.config?.endpoints) && window.config.endpoints[currentEditIndex]) {
-            window.config.endpoints[currentEditIndex].proxyUrl = proxyUrl;
-        }
-    } catch (error) {
-        const message = error?.message || String(error);
-        showNotification(t('modal.syncProxyFailed').replace('{error}', message), 'error');
-        return;
-    }
-    await openTokenPoolModal(currentEditIndex, endpointName);
+    await openTokenPoolModal(savedEndpoint.index, savedEndpoint.name);
 }
 
 export async function saveEndpoint() {
-	const name = document.getElementById('endpointName').value.trim();
-	let url = document.getElementById('endpointUrl').value.trim();
-	let key = document.getElementById('endpointKey').value.trim();
-	const authMode = getEndpointAuthMode();
-	let transformer = document.getElementById('endpointTransformer').value;
-    const model = document.getElementById('endpointModel').value.trim();
-    const thinking = getThinkingControlValue();
-    const proxyUrl = document.getElementById('endpointProxyUrl').value.trim();
-    const forceStream = document.getElementById('endpointForceStream').checked;
-    const remark = document.getElementById('endpointRemark').value.trim();
-    const isCodexTokenPool = isCodexTokenPoolMode(authMode);
-    const isClaudeOAuthTokenPool = isClaudeOAuthTokenPoolMode(authMode);
-
-    if (isCodexTokenPool) {
-        url = CODEX_FIXED_API_URL;
-        transformer = CODEX_FIXED_TRANSFORMER;
-        key = '';
-    } else if (isClaudeOAuthTokenPool) {
-        url = CLAUDE_OAUTH_FIXED_API_URL;
-        transformer = CLAUDE_OAUTH_FIXED_TRANSFORMER;
-        key = '';
-    }
-    const finalModel = isClaudeOAuthTokenPool && !model ? CLAUDE_OAUTH_DEFAULT_MODEL : model;
-
-    if (!name || !url) {
-        showError(t('modal.requiredFields'));
-        return;
-    }
-    if (authMode === AUTH_MODE_API_KEY && !key) {
-        showError(t('modal.requiredApiKey'));
+    const savedEndpoint = await persistEndpointDraftFromModal();
+    if (!savedEndpoint) {
         return;
     }
 
-    // Model is optional: only override when provided.
-
-    // Check for duplicate endpoint name
-    const configStr = await window.go.main.App.GetConfig();
-    const config = JSON.parse(configStr);
-    const existingEndpoint = config.endpoints.find((ep, idx) =>
-        ep.name === name && idx !== currentEditIndex
-    );
-
-    if (existingEndpoint) {
-        showError(`Endpoint name "${name}" already exists. Please use a different name.`);
-        return;
-    }
-
-    try {
-        if (currentEditIndex === -1) {
-            await addEndpoint(name, url, key, authMode, transformer, finalModel, thinking, proxyUrl, forceStream, remark);
-        } else {
-            await updateEndpoint(currentEditIndex, name, url, key, authMode, transformer, finalModel, thinking, proxyUrl, forceStream, remark);
-        }
-
-        closeModal();
-        window.loadConfig();
-    } catch (error) {
-        showError(t('modal.saveFailed').replace('{error}', error));
+    closeModal();
+    if (window.loadConfig) {
+        await window.loadConfig();
     }
 }
 

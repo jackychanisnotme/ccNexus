@@ -233,3 +233,95 @@ func TestHandleProxyTreatsWrappedInvalidRequest500AsClientError(t *testing.T) {
 		t.Fatalf("expected no endpoint cooldown for client invalid request, got %d", cooldowns)
 	}
 }
+
+func TestHandleProxyRetriesOpenAI2WhenFunctionCallArgumentsMustBeObjects(t *testing.T) {
+	var upstreamHits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode upstream request: %v", err)
+		}
+		input, ok := body["input"].([]interface{})
+		if !ok {
+			t.Fatalf("expected input array, got %#v", body["input"])
+		}
+		functionCall := input[1].(map[string]interface{})
+		if upstreamHits == 1 {
+			if _, ok := functionCall["arguments"].(string); !ok {
+				t.Fatalf("first attempt should preserve standard string arguments, got %#v", functionCall["arguments"])
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Invalid type for 'input[58].arguments': expected an object, but got a string instead.","type":"invalid_request_error","param":"input[58].arguments","code":"invalid_type"}}`))
+			return
+		}
+		arguments, ok := functionCall["arguments"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("compat retry should send object arguments, got %#v", functionCall["arguments"])
+		}
+		if arguments["symbol"] != "002714" {
+			t.Fatalf("expected parsed symbol argument, got %#v", arguments)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-upstream","usage":{"input_tokens":1,"output_tokens":1},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+
+	body := `{
+		"model":"gpt-5.5",
+		"stream":false,
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"lookup"}]},
+			{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"symbol\":\"002714\"}"},
+			{"type":"function_call_output","call_id":"call_1","output":"ok"}
+		]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected compatibility retry to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 2 {
+		t.Fatalf("expected one compatibility retry, got upstream hits=%d", upstreamHits)
+	}
+	if !strings.Contains(rec.Body.String(), `"id":"resp-upstream"`) {
+		t.Fatalf("expected upstream response body, got %q", rec.Body.String())
+	}
+}
+
+func TestHandleProxyDoesNotRetryOpenAI2ArgumentsObjectCompatForUnrelatedBadRequest(t *testing.T) {
+	var upstreamHits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"bad request","type":"invalid_request_error"}}`))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected upstream bad request to be returned, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("did not expect compatibility retry for unrelated 400, got upstream hits=%d", upstreamHits)
+	}
+}

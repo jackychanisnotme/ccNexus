@@ -15,6 +15,7 @@ import (
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/storage"
+	"github.com/lich0821/ccNexus/internal/transformer/convert"
 )
 
 // SSEEvent represents a Server-Sent Event
@@ -708,6 +709,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	forceStreamRetryEndpoints := make(map[string]bool)
 	endpointAttempts := 0
+	compatRetryEndpoints := make(map[string]bool)
 	advanceForFailure := func(current config.Endpoint, reason string, attemptNumber int, headers http.Header) {
 		p.markEndpointCooldownForReason(current.Name, reason, headers, obs, attemptNumber)
 		if !useSpecificEndpoint {
@@ -833,6 +835,13 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if clientFormat != ClientFormatClaude {
 			transformedBody = injectEndpointThinkingInPayload(transformedBody, transformerName, endpoint.Thinking)
 		}
+		if compatRetryEndpoints[endpoint.Name] {
+			if adaptedBody, changed := convert.AdaptOpenAI2FunctionCallArgumentsToObjects(transformedBody); changed {
+				transformedBody = adaptedBody
+				logger.DebugLog("[%s] Arguments object compatibility enabled for upstream request", endpoint.Name)
+			}
+		}
+
 		transformedBody = enforceEndpointModelInPayload(transformedBody, endpoint, transformerName)
 		logger.DebugLog("[%s] Final upstream request: %s", endpoint.Name, string(transformedBody))
 
@@ -1196,6 +1205,13 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				endpointAttempts = 0
 				continue
 			}
+			if shouldCompatRetryOnArgumentsTypeError(resp.StatusCode, errMsg, transformerName) && !compatRetryEndpoints[endpoint.Name] {
+				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "arguments_object_required", "Upstream requires Responses function_call arguments as objects, retrying same endpoint with compatibility payload: %s", logMsg)
+				p.markRequestInactive(endpoint.Name)
+				compatRetryEndpoints[endpoint.Name] = true
+				endpointAttempts = 0
+				continue
+			}
 			if isUpstreamInvalidRequestHTTPFailure(resp.StatusCode, errMsg) {
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "upstream_invalid_request", "Upstream returned invalid request error, not retrying endpoint: %s", logMsg)
 				p.markRequestInactive(endpoint.Name)
@@ -1286,6 +1302,13 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "force_stream_required", "Upstream requires stream=true, retrying same endpoint with forced streaming: %s", respLogMsg)
 			p.markRequestInactive(endpoint.Name)
 			forceStreamRetryEndpoints[endpoint.Name] = true
+			endpointAttempts = 0
+			continue
+		}
+		if shouldCompatRetryOnArgumentsTypeError(resp.StatusCode, respMsg, transformerName) && !compatRetryEndpoints[endpoint.Name] {
+			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "arguments_object_required", "Upstream requires Responses function_call arguments as objects, retrying same endpoint with compatibility payload: %s", respLogMsg)
+			p.markRequestInactive(endpoint.Name)
+			compatRetryEndpoints[endpoint.Name] = true
 			endpointAttempts = 0
 			continue
 		}

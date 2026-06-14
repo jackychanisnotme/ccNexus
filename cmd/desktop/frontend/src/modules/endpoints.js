@@ -158,31 +158,12 @@ function formatRuntimeTime(value) {
     });
 }
 
-/**
- * Returns a short label for the failure badge (e.g. "HTTP 502" or "Err").
- * The full English reason+code lives in the tooltip.
- */
 function formatFailureCode(status) {
-    const statusCode = Number(status.lastFailureStatusCode || 0);
-    if (statusCode > 0) {
-        return `HTTP ${statusCode}`;
-    }
-    const reason = String(status.lastFailureReason || '').trim();
-    if (reason) {
-        return 'Err';
-    }
-    return 'Err';
-}
-
-/**
- * Returns the full tooltip string for the failure badge.
- */
-function formatFailureTooltip(status) {
     const reason = String(status.lastFailureReason || '').trim();
     const statusCode = Number(status.lastFailureStatusCode || 0);
 
     if (reason && statusCode > 0) {
-        return `${reason} (HTTP ${statusCode})`;
+        return `${reason}/${statusCode}`;
     }
     if (reason) {
         return reason;
@@ -217,7 +198,7 @@ function renderCompactDefaultEndpointControl(endpointName, enabled) {
     return '<span class="btn btn-primary compact-badge-btn compact-badge-disabled">' + t('endpoints.disabled') + '</span>';
 }
 
-function renderEndpointRuntimeBadges(endpointName, viewMode) {
+function renderEndpointRuntimeBadges(endpointName, viewMode = 'detail') {
     const status = endpointRuntimeStatuses[endpointName] || {};
     const activeCount = endpointActiveCounts[endpointName] || 0;
     const isCompact = viewMode === 'compact';
@@ -237,9 +218,11 @@ function renderEndpointRuntimeBadges(endpointName, viewMode) {
 
     const failureTime = formatRuntimeTime(status.lastFailureAt);
     if (failureTime) {
-        const shortLabel = formatFailureCode(status);
-        const tooltip = formatFailureTooltip(status);
-        badges.push(`<span class="runtime-badge runtime-badge-failure" title="${escapeHtml(tooltip)}">${shortLabel} ${failureTime}</span>`);
+        const failureCode = formatFailureCode(status);
+        const title = failureCode ? `${t('endpoints.failureReason')}: ${failureCode}` : t('endpoints.recentFailure');
+        const labelPrefix = isCompact ? t('endpoints.failureShort') : t('endpoints.recentFailure');
+        const codeLabel = failureCode ? ` · ${escapeHtml(failureCode)}` : '';
+        badges.push(`<span class="runtime-badge runtime-badge-failure" title="${escapeHtml(title)}">${labelPrefix} ${failureTime}${codeLabel}</span>`);
     }
 
     return badges.join('');
@@ -425,20 +408,20 @@ export async function renderEndpoints(endpoints) {
 
         // 获取测试状态：true=成功显示✅，false=失败显示❌，undefined/unknown=未测试/未知显示⚠️
         const testStatus = getEndpointTestStatus(ep.name);
-        let testStatusClass = 'status-dot-unknown';
+        let testStatusIcon = '⚠️';
         let testStatusTip = t('endpoints.testTipUnknown');
         if (testStatus === true) {
-            testStatusClass = 'status-dot-success';
+            testStatusIcon = '✅';
             testStatusTip = t('endpoints.testTipSuccess');
         } else if (testStatus === false) {
-            testStatusClass = 'status-dot-failure';
+            testStatusIcon = '❌';
             testStatusTip = t('endpoints.testTipFailed');
         }
 
         item.innerHTML = `
             <div class="endpoint-info">
                 <h3>
-                    <span class="status-dot ${testStatusClass}" title="${testStatusTip}" style="cursor: help"></span>
+                    <span title="${testStatusTip}" style="cursor: help">${testStatusIcon}</span>
                     ${ep.name}
                     ${!enabled ? '<span class="disabled-badge">' + t('endpoints.disabled') + '</span>' : ''}
                     <span class="endpoint-default-slot" data-name="${escapeHtml(ep.name)}" data-enabled="${enabled ? 'true' : 'false'}" data-view="detail">${renderDefaultEndpointControl(ep.name, enabled)}</span>
@@ -532,8 +515,15 @@ function ensureTokenPoolModal() {
     modal.dataset.language = getLanguage();
     modal.innerHTML = `
         <div class="modal-content token-pool-modal-content">
-            <div class="modal-header">
-                <h2 id="tokenPoolTitle">🪪 ${t('tokenPool.title')}</h2>
+            <div class="modal-header token-pool-modal-header">
+                <div class="token-pool-title-block">
+                    <h2 id="tokenPoolTitle">🪪 ${t('tokenPool.title')}</h2>
+                    <div class="token-pool-mode-strip">
+                        <span id="tokenPoolModeBadge" class="token-pool-mode-badge"></span>
+                        <span id="tokenPoolEndpointName" class="token-pool-endpoint-name"></span>
+                    </div>
+                    <p id="tokenPoolModeDescription" class="token-pool-mode-description"></p>
+                </div>
             </div>
             <div class="modal-body token-pool-modal-body">
                 <div class="token-pool-toolbar">
@@ -548,7 +538,7 @@ function ensureTokenPoolModal() {
 
                     <div class="form-group token-pool-import-group">
                         <div class="token-pool-import-header">
-                            <label>${t('tokenPool.batchImportJson')}</label>
+                            <label id="tokenPoolImportLabel">${t('tokenPool.batchImportJson')}</label>
                             <div class="token-pool-overwrite">
                                 <label class="toggle-switch" style="margin: 0;">
                                     <input type="checkbox" id="tokenPoolOverwrite">
@@ -571,15 +561,24 @@ function ensureTokenPoolModal() {
 
                 <div class="token-pool-table-wrap">
                     <table class="token-pool-table">
+                        <colgroup>
+                            <col class="token-pool-col-account">
+                            <col class="token-pool-col-email">
+                            <col class="token-pool-col-status">
+                            <col class="token-pool-col-expires">
+                            <col class="token-pool-col-rate token-pool-rate-header">
+                            <col class="token-pool-col-error">
+                            <col class="token-pool-col-actions">
+                        </colgroup>
                         <thead>
                             <tr>
-                                <th>${t('tokenPool.account')}</th>
-                                <th>${t('tokenPool.email')}</th>
-                                <th>${t('tokenPool.status')}</th>
-                                <th>${t('tokenPool.expiresAt')}</th>
+                                <th class="token-pool-col-account">${t('tokenPool.account')}</th>
+                                <th class="token-pool-col-email">${t('tokenPool.email')}</th>
+                                <th class="token-pool-col-status">${t('tokenPool.status')}</th>
+                                <th class="token-pool-col-expires">${t('tokenPool.expiresAt')}</th>
                                 <th class="token-pool-rate-header">${t('tokenPool.rateLimits')}</th>
-                                <th>${t('tokenPool.lastError')}</th>
-                                <th>${t('tokenPool.actions')}</th>
+                                <th class="token-pool-col-error">${t('tokenPool.lastError')}</th>
+                                <th class="token-pool-col-actions">${t('tokenPool.actions')}</th>
                             </tr>
                         </thead>
                         <tbody id="tokenPoolTableBody"></tbody>
@@ -635,6 +634,67 @@ function isCodexTokenPoolEndpoint(index) {
 function isClaudeOAuthTokenPoolEndpoint(index) {
     const allEndpoints = window.config?.endpoints || [];
     return index >= 0 && index < allEndpoints.length && allEndpoints[index]?.authMode === 'claude_oauth_token_pool';
+}
+
+function getTokenPoolManagerMode(index) {
+    if (isCodexTokenPoolEndpoint(index)) {
+        return 'codex';
+    }
+    if (isClaudeOAuthTokenPoolEndpoint(index)) {
+        return 'claude';
+    }
+    return 'api';
+}
+
+function getTokenPoolManagerMeta(mode) {
+    if (mode === 'codex') {
+        return {
+            title: t('tokenPool.codexTitle'),
+            badge: t('tokenPool.codexBadge'),
+            description: t('tokenPool.codexDescription'),
+            importLabel: t('tokenPool.codexImportLabel'),
+            placeholder: t('tokenPool.importPlaceholder')
+        };
+    }
+    if (mode === 'claude') {
+        return {
+            title: t('tokenPool.claudeOAuthTitle'),
+            badge: t('tokenPool.claudeOAuthBadge'),
+            description: t('tokenPool.claudeOAuthDescription'),
+            importLabel: t('tokenPool.claudeOAuthImportLabel'),
+            placeholder: t('tokenPool.claudeImportPlaceholder')
+        };
+    }
+    return {
+        title: t('tokenPool.apiTokenPoolTitle'),
+        badge: t('tokenPool.apiTokenPoolBadge'),
+        description: t('tokenPool.apiTokenPoolDescription'),
+        importLabel: t('tokenPool.apiTokenPoolImportLabel'),
+        placeholder: t('tokenPool.importPlaceholder')
+    };
+}
+
+function findEndpointIndexByName(endpointName) {
+    const allEndpoints = window.config?.endpoints || [];
+    if (!endpointName) {
+        return -1;
+    }
+    return allEndpoints.findIndex((endpoint) => endpoint?.name === endpointName);
+}
+
+async function refreshTokenPoolEndpointConfig() {
+    if (!window.go?.main?.App?.GetConfig) {
+        return window.config || {};
+    }
+    try {
+        const configStr = await window.go.main.App.GetConfig();
+        const config = parseAppJSON(configStr);
+        window.config = config;
+        return config;
+    } catch (error) {
+        console.error('Failed to refresh token pool endpoint config:', error);
+        return window.config || {};
+    }
 }
 
 async function loadTokenPoolProxySetting() {
@@ -1218,7 +1278,8 @@ function renderTokenPoolStats(stats = {}) {
 }
 
 function renderTokenPoolRows(credentials = [], options = {}) {
-    const showCodexActions = options.showCodexActions !== false;
+    const mode = options.mode || (options.showCodexActions === false ? 'api' : 'codex');
+    const showCodexActions = mode === 'codex';
     const columnCount = showCodexActions ? 7 : 6;
     if (!credentials.length) {
         return `<tr><td colspan="${columnCount}" style="padding: 16px; text-align: center; color: #6b7280;">${t('tokenPool.noCredentials')}</td></tr>`;
@@ -1237,21 +1298,21 @@ function renderTokenPoolRows(credentials = [], options = {}) {
 
     return credentials.map((cred) => `
         <tr class="${latestUsed && cred.lastUsedAt && Date.parse(cred.lastUsedAt) === latestUsed ? 'token-pool-row-active' : ''}" style="border-top: 1px solid rgba(148, 163, 184, 0.2);">
-            <td style="padding: 8px;"><code title="${escapeHtml(cred.accountId || '')}">${escapeHtml(maskTokenPoolAccountID(cred.accountId))}</code></td>
-            <td style="padding: 8px;"><span title="${escapeHtml(cred.email || '')}">${escapeHtml(maskTokenPoolEmail(cred.email))}</span></td>
-            <td style="padding: 8px;">
+            <td class="token-pool-cell-account"><code title="${escapeHtml(cred.accountId || '')}">${escapeHtml(maskTokenPoolAccountID(cred.accountId))}</code></td>
+            <td class="token-pool-cell-email"><span title="${escapeHtml(cred.email || '')}">${escapeHtml(maskTokenPoolEmail(cred.email))}</span></td>
+            <td class="token-pool-cell-status">
                 <div class="token-pool-status-cell">
                     ${renderTokenPoolStatus(cred.status, cred.enabled, cred.rateLimits)}
                 </div>
             </td>
-            <td style="padding: 8px; white-space: nowrap;">${escapeHtml(formatTokenPoolTime(cred.expiresAt))}</td>
-            ${showCodexActions ? `<td style="padding: 8px; width: 220px; max-width: 220px;">${renderTokenPoolRateLimits(cred.rateLimits)}</td>` : ''}
-            <td style="padding: 8px;">
+            <td class="token-pool-cell-expires" title="${escapeHtml(formatTokenPoolTime(cred.expiresAt))}">${escapeHtml(formatTokenPoolTime(cred.expiresAt))}</td>
+            ${showCodexActions ? `<td class="token-pool-cell-rate token-pool-rate-header">${renderTokenPoolRateLimits(cred.rateLimits)}</td>` : ''}
+            <td class="token-pool-cell-error">
                 ${tokenPoolErrorCache.has(String(cred.id))
                     ? `<button type="button" class="btn btn-secondary token-pool-error-view" data-error-id="${cred.id}" style="padding: 4px 8px; font-size: 12px;">${t('tokenPool.view')}</button>`
                     : '-'}
             </td>
-            <td style="padding: 8px;">
+            <td class="token-pool-cell-actions">
                 <div class="token-pool-actions">
                     <button type="button" class="btn btn-secondary token-pool-toggle-action" data-id="${cred.id}" data-enabled="${cred.enabled ? '1' : '0'}" style="padding: 4px 8px; font-size: 12px;">${cred.enabled ? t('tokenPool.disable') : t('tokenPool.enable')}</button>
                     <div class="token-pool-more-wrap">
@@ -1424,8 +1485,9 @@ async function loadTokenPoolData(index) {
 
     const statsEl = modal.querySelector('#tokenPoolStats');
     const bodyEl = modal.querySelector('#tokenPoolTableBody');
+    const mode = getTokenPoolManagerMode(index);
     statsEl.innerHTML = renderTokenPoolStats(stats);
-    bodyEl.innerHTML = renderTokenPoolRows(credentials, { showCodexActions: isCodexTokenPoolEndpoint(index) });
+    bodyEl.innerHTML = renderTokenPoolRows(credentials, { mode });
     setTokenPoolHint(modal, '');
 
     bodyEl.querySelectorAll('.token-pool-toggle-action').forEach((button) => {
@@ -1868,17 +1930,47 @@ async function handleTokenPoolFileImport() {
 }
 
 export async function openTokenPoolModal(index, endpointName = '') {
-    tokenPoolCurrentIndex = index;
+    const config = await refreshTokenPoolEndpointConfig();
+    const endpoints = config.endpoints || [];
+    const namedIndex = findEndpointIndexByName(endpointName);
+    const resolvedIndex = namedIndex >= 0 ? namedIndex : index;
+    if (resolvedIndex < 0 || resolvedIndex >= endpoints.length) {
+        showNotification(tt('tokenPool.failed', { error: `Invalid endpoint index ${resolvedIndex}` }), 'error');
+        return;
+    }
+
+    tokenPoolCurrentIndex = resolvedIndex;
+    const resolvedEndpointName = endpointName || endpoints[resolvedIndex]?.name || '';
+    const mode = getTokenPoolManagerMode(resolvedIndex);
+    const meta = getTokenPoolManagerMeta(mode);
     const modal = ensureTokenPoolModal();
+    modal.dataset.tokenPoolMode = mode;
     const title = modal.querySelector('#tokenPoolTitle');
+    const modeBadge = modal.querySelector('#tokenPoolModeBadge');
+    const endpointNameEl = modal.querySelector('#tokenPoolEndpointName');
+    const modeDescription = modal.querySelector('#tokenPoolModeDescription');
+    const importLabel = modal.querySelector('#tokenPoolImportLabel');
     const authBtn = modal.querySelector('#tokenPoolAuthBtn');
     const claudeDiscoverBtn = modal.querySelector('#tokenPoolClaudeDiscoverBtn');
     const rateRefreshBtn = modal.querySelector('#tokenPoolRateRefreshBtn');
     const importInput = modal.querySelector('#tokenPoolImportInput');
     const rateHeaders = modal.querySelectorAll('.token-pool-rate-header');
-    const isCodex = isCodexTokenPoolEndpoint(index);
-    const isClaudeOAuth = isClaudeOAuthTokenPoolEndpoint(index);
-    title.textContent = `🪪 ${isClaudeOAuth ? t('tokenPool.claudeOAuthTitle') : t('tokenPool.title')}${endpointName ? `: ${endpointName}` : ''}`;
+    const isCodex = mode === 'codex';
+    const isClaudeOAuth = mode === 'claude';
+    title.textContent = `🪪 ${meta.title}`;
+    if (modeBadge) {
+        modeBadge.textContent = meta.badge;
+        modeBadge.className = `token-pool-mode-badge token-pool-mode-${mode}`;
+    }
+    if (endpointNameEl) {
+        endpointNameEl.textContent = resolvedEndpointName ? tt('tokenPool.endpointLabel', { name: resolvedEndpointName }) : '';
+    }
+    if (modeDescription) {
+        modeDescription.textContent = meta.description;
+    }
+    if (importLabel) {
+        importLabel.textContent = meta.importLabel;
+    }
     if (authBtn) {
         authBtn.style.display = isCodex ? '' : 'none';
     }
@@ -1889,7 +1981,7 @@ export async function openTokenPoolModal(index, endpointName = '') {
         rateRefreshBtn.style.display = isCodex ? '' : 'none';
     }
     if (importInput) {
-        importInput.placeholder = isClaudeOAuth ? t('tokenPool.claudeImportPlaceholder') : t('tokenPool.importPlaceholder');
+        importInput.placeholder = meta.placeholder;
     }
     rateHeaders.forEach((header) => {
         header.style.display = isCodex ? '' : 'none';
@@ -1898,7 +1990,7 @@ export async function openTokenPoolModal(index, endpointName = '') {
     await loadTokenPoolProxySetting();
 
     try {
-        await loadTokenPoolData(index);
+        await loadTokenPoolData(resolvedIndex);
     } catch (error) {
         const message = error?.message || String(error);
         showNotification(tt('tokenPool.failedToLoad', { error: message }), 'error');
@@ -2184,7 +2276,7 @@ export async function checkAllEndpointsOnStartup() {
             } else if (status === 'invalid_key') {
                 saveEndpointTestStatus(name, false);
             }
-            // 'unknown' keeps unset state, shows dot-unknown
+            // 'unknown' 保持未设置状态，显示 ⚠️
         }
         // 刷新端点列表显示
         if (window.loadConfig) {
@@ -2205,13 +2297,13 @@ function renderCompactView(sortedEndpoints, container, currentEndpointName, isFi
 
         // 获取测试状态
         const testStatus = getEndpointTestStatus(ep.name);
-        let testStatusClass = 'status-dot-unknown';
+        let testStatusIcon = '⚠️';
         let testStatusTip = t('endpoints.testTipUnknown');
         if (testStatus === true) {
-            testStatusClass = 'status-dot-success';
+            testStatusIcon = '✅';
             testStatusTip = t('endpoints.testTipSuccess');
         } else if (testStatus === false) {
-            testStatusClass = 'status-dot-failure';
+            testStatusIcon = '❌';
             testStatusTip = t('endpoints.testTipFailed');
         }
 
@@ -2249,7 +2341,7 @@ function renderCompactView(sortedEndpoints, container, currentEndpointName, isFi
                 <div class="drag-handle-dots"><span></span><span></span></div>
                 <div class="drag-handle-dots"><span></span><span></span></div>
             </div>
-            <span class="compact-status status-dot ${testStatusClass}" title="${testStatusTip}" style="cursor: help"></span>
+            <span class="compact-status" title="${testStatusTip}" style="cursor: help">${testStatusIcon}</span>
             <span class="compact-name" title="${ep.name}">${ep.name}</span>
             <span class="endpoint-default-slot compact-default-slot" data-name="${escapeHtml(ep.name)}" data-enabled="${enabled ? 'true' : 'false'}" data-view="compact">${renderCompactDefaultEndpointControl(ep.name, enabled)}</span>
             <span class="endpoint-runtime-slot compact-runtime-slot" data-name="${escapeHtml(ep.name)}">${renderEndpointRuntimeBadges(ep.name, 'compact')}</span>

@@ -149,6 +149,72 @@ func TestNormalizeOpenAI2RequestForUpstreamConvertsToolRoleInput(t *testing.T) {
 	}
 }
 
+func TestAdaptOpenAI2FunctionCallArgumentsToObjectsParsesJSONObjectString(t *testing.T) {
+	openai2Req := `{
+		"model":"gpt-5.5",
+		"stream":true,
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"lookup"}]},
+			{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"symbol\":\"002714\"}"},
+			{"type":"function_call_output","call_id":"call_1","output":"ok"}
+		]
+	}`
+
+	reqBytes, changed := AdaptOpenAI2FunctionCallArgumentsToObjects([]byte(openai2Req))
+	if !changed {
+		t.Fatal("expected object-arguments compatibility adapter to report a change")
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(reqBytes, &req); err != nil {
+		t.Fatalf("unmarshal adapted req failed: %v", err)
+	}
+	input := req["input"].([]interface{})
+	functionCall := input[1].(map[string]interface{})
+	arguments, ok := functionCall["arguments"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected arguments object, got %#v", functionCall["arguments"])
+	}
+	if arguments["symbol"] != "002714" {
+		t.Fatalf("expected parsed symbol argument, got %#v", arguments)
+	}
+}
+
+func TestAdaptOpenAI2FunctionCallArgumentsToObjectsLeavesIncompatibleValues(t *testing.T) {
+	openai2Req := `{
+		"model":"gpt-5.5",
+		"stream":true,
+		"input":[
+			{"type":"function_call","call_id":"call_plain","name":"plain","arguments":"plain text"},
+			{"type":"function_call","call_id":"call_array","name":"array","arguments":"[]"},
+			{"type":"function_call","call_id":"call_object","name":"object","arguments":{"path":"/tmp/a"}}
+		]
+	}`
+
+	reqBytes, changed := AdaptOpenAI2FunctionCallArgumentsToObjects([]byte(openai2Req))
+	if changed {
+		t.Fatal("did not expect incompatible or already-object arguments to change")
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(reqBytes, &req); err != nil {
+		t.Fatalf("unmarshal adapted req failed: %v", err)
+	}
+	input := req["input"].([]interface{})
+	plain := input[0].(map[string]interface{})
+	array := input[1].(map[string]interface{})
+	object := input[2].(map[string]interface{})
+	if plain["arguments"] != "plain text" {
+		t.Fatalf("expected plain string to be preserved, got %#v", plain["arguments"])
+	}
+	if array["arguments"] != "[]" {
+		t.Fatalf("expected non-object JSON string to be preserved, got %#v", array["arguments"])
+	}
+	if args, ok := object["arguments"].(map[string]interface{}); !ok || args["path"] != "/tmp/a" {
+		t.Fatalf("expected object arguments to be preserved, got %#v", object["arguments"])
+	}
+}
+
 func TestOpenAI2ReqToOpenAIPreservesReasoningEffort(t *testing.T) {
 	openai2Req := `{
 		"model":"gpt-5.5",

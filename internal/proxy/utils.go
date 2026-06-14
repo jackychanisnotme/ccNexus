@@ -332,6 +332,7 @@ func (p *Proxy) estimateTokens(bodyBytes []byte, outputText string, inputTokens,
 
 	return inputTokens, outputTokens
 }
+
 // NewSharedTransport returns an http.Transport tuned for upstream API requests,
 // including large SSE streams and HTTP/2. responseHeaderTimeout controls how
 // long to wait for the first response header; pass <=0 for no timeout.
@@ -348,4 +349,23 @@ func NewSharedTransport(responseHeaderTimeout time.Duration) *http.Transport {
 		ReadBufferSize:         128 * 1024, // 128KB read buffer for large SSE streams
 		MaxResponseHeaderBytes: 64 * 1024,  // 64KB max response headers
 	}
+}
+
+// shouldCompatRetryOnArgumentsTypeError returns true when upstream rejects
+// an OpenAI2/Responses request because input[*].arguments is a string
+// instead of an object. This allows the proxy to retry with arguments
+// parsed from their JSON string representation.
+func shouldCompatRetryOnArgumentsTypeError(statusCode int, body string, transformerName string) bool {
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(strings.TrimSpace(transformerName)), "openai2") {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(body))
+	return strings.Contains(lower, "arguments") &&
+		strings.Contains(lower, "expected an object") &&
+		strings.Contains(lower, "got a string") &&
+		strings.Contains(lower, "invalid_type") &&
+		strings.Contains(lower, "invalid_request_error")
 }
