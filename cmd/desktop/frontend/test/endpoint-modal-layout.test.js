@@ -8,6 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(__dirname, '..');
 
 const uiSource = readFileSync(resolve(frontendRoot, 'src/modules/ui.js'), 'utf8');
+const modalSource = readFileSync(resolve(frontendRoot, 'src/modules/modal.js'), 'utf8');
 const cssSource = readFileSync(resolve(frontendRoot, 'src/style.css'), 'utf8');
 
 describe('endpoint modal option layout', () => {
@@ -34,5 +35,16 @@ describe('endpoint modal option layout', () => {
             cssSource,
             /\.form-group\s+\.endpoint-option-label\s+input\[type="checkbox"\]\s*{[^}]*flex-shrink:\s*0;/s,
         );
+    });
+
+    it('keeps the edit endpoint modal open while opening token pool management', () => {
+        const start = modalSource.indexOf('export async function openEndpointTokenPoolFromModal()');
+        const end = modalSource.indexOf('export async function saveEndpoint()', start);
+        assert.notEqual(start, -1);
+        assert.notEqual(end, -1);
+
+        const functionSource = modalSource.slice(start, end);
+        assert.doesNotMatch(functionSource, /\bcloseModal\(\);/);
+        assert.match(functionSource, /\bopenTokenPoolModal\(/);
     });
 });

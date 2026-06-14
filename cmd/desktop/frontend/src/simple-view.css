@@ -56,15 +56,17 @@
 }
 
 .endpoint-item-compact {
-    display: flex;
+    display: grid;
+    grid-template-columns: 12px 24px 100px 70px minmax(160px, 310px) minmax(100px, 1fr) 80px 120px 100px;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     padding: 12px 16px;
     background: var(--bg-secondary, #f8f9fa);
     border-radius: 8px;
     transition: all 0.2s ease;
     cursor: grab;
     user-select: none;
+    overflow: hidden;
 }
 
 .endpoint-item-compact:hover {
@@ -91,6 +93,10 @@
 
 /* 拖拽时其他元素的平滑移动 */
 .endpoint-item-compact {
+    display: grid;
+    grid-template-columns: 12px 24px 100px 70px minmax(160px, 310px) minmax(100px, 1fr) 80px 120px 100px;
+    align-items: center;
+    gap: 8px;
     transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -166,10 +172,24 @@
 
 /* Compact View Elements */
 .compact-status {
-    font-size: 16px;
+    display: inline-flex;
+    align-items: center;
     flex-shrink: 0;
-    width: 24px;
-    text-align: center;
+}
+
+.compact-status.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+.compact-status.status-dot-unknown {
+    background: #94a3b8;
+}
+.compact-status.status-dot-success {
+    background: #4a9d6e;
+}
+.compact-status.status-dot-failure {
+    background: #d95b5b;
 }
 
 .compact-name {
@@ -219,9 +239,7 @@ span.compact-badge-btn:hover {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    width: 310px;
-    min-width: 160px;
-    flex-shrink: 0;
+    min-width: 0;
     overflow: hidden;
 }
 
@@ -241,7 +259,6 @@ span.compact-badge-btn:hover {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
     min-width: 0;
 }
 
@@ -272,7 +289,9 @@ span.compact-badge-btn:hover {
     color: var(--text-secondary, #666);
     font-size: 12px;
     flex-shrink: 0;
-    width: 120px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     cursor: help;
     transition: color 0.2s ease;
 }

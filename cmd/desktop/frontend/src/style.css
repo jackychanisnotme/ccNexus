@@ -658,8 +658,13 @@ body {
 }
 
 .endpoint-info h3 {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 4px;
     min-width: 0;
     max-width: 100%;
+    overflow: hidden;
 }
 
 .endpoint-actions {
@@ -681,9 +686,15 @@ body {
 }
 
 .endpoint-info h3 {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 4px;
     font-size: 16px;
     margin-bottom: 5px;
     color: #333;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .endpoint-info p {
@@ -1833,33 +1844,43 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    min-width: 0;
     margin-left: 8px;
     vertical-align: middle;
 }
 
 .runtime-badge {
-    color: white;
-    padding: 3px 7px;
+    padding: 2px 7px;
     border-radius: 4px;
+    border: 1px solid;
     font-size: 12px;
     font-weight: normal;
     line-height: 1.2;
     display: inline-flex;
     align-items: center;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
 }
 
 .runtime-badge-active {
-    background: #0ea5e9;
+    background: rgba(74, 155, 217, 0.12);
+    color: #3a7ab0;
+    border-color: rgba(74, 155, 217, 0.3);
 }
 
 .runtime-badge-success {
-    background: #16a34a;
+    background: rgba(74, 157, 110, 0.12);
+    color: #3d7d5c;
+    border-color: rgba(74, 157, 110, 0.3);
 }
 
 .runtime-badge-failure {
-    background: #dc2626;
+    background: rgba(217, 91, 91, 0.12);
+    color: #b04a4a;
+    border-color: rgba(217, 91, 91, 0.3);
 }
 
 /* Disabled badge */
@@ -4838,4 +4859,24 @@ body {
         transform: scale(1.1);
         opacity: 0.8;
     }
+}
+
+/* Status dot indicator (replaces emoji) */
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+.status-dot-unknown {
+    background: #94a3b8;
+}
+.status-dot-success {
+    background: #4a9d6e;
+}
+.status-dot-failure {
+    background: #d95b5b;
 }

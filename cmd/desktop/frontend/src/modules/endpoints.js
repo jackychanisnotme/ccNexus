@@ -158,12 +158,31 @@ function formatRuntimeTime(value) {
     });
 }
 
+/**
+ * Returns a short label for the failure badge (e.g. "HTTP 502" or "Err").
+ * The full English reason+code lives in the tooltip.
+ */
 function formatFailureCode(status) {
+    const statusCode = Number(status.lastFailureStatusCode || 0);
+    if (statusCode > 0) {
+        return `HTTP ${statusCode}`;
+    }
+    const reason = String(status.lastFailureReason || '').trim();
+    if (reason) {
+        return 'Err';
+    }
+    return 'Err';
+}
+
+/**
+ * Returns the full tooltip string for the failure badge.
+ */
+function formatFailureTooltip(status) {
     const reason = String(status.lastFailureReason || '').trim();
     const statusCode = Number(status.lastFailureStatusCode || 0);
 
     if (reason && statusCode > 0) {
-        return `${reason}/${statusCode}`;
+        return `${reason} (HTTP ${statusCode})`;
     }
     if (reason) {
         return reason;
@@ -198,7 +217,7 @@ function renderCompactDefaultEndpointControl(endpointName, enabled) {
     return '<span class="btn btn-primary compact-badge-btn compact-badge-disabled">' + t('endpoints.disabled') + '</span>';
 }
 
-function renderEndpointRuntimeBadges(endpointName, viewMode = 'detail') {
+function renderEndpointRuntimeBadges(endpointName, viewMode) {
     const status = endpointRuntimeStatuses[endpointName] || {};
     const activeCount = endpointActiveCounts[endpointName] || 0;
     const isCompact = viewMode === 'compact';
@@ -218,11 +237,9 @@ function renderEndpointRuntimeBadges(endpointName, viewMode = 'detail') {
 
     const failureTime = formatRuntimeTime(status.lastFailureAt);
     if (failureTime) {
-        const failureCode = formatFailureCode(status);
-        const title = failureCode ? `${t('endpoints.failureReason')}: ${failureCode}` : t('endpoints.recentFailure');
-        const labelPrefix = isCompact ? t('endpoints.failureShort') : t('endpoints.recentFailure');
-        const codeLabel = failureCode ? ` · ${escapeHtml(failureCode)}` : '';
-        badges.push(`<span class="runtime-badge runtime-badge-failure" title="${escapeHtml(title)}">${labelPrefix} ${failureTime}${codeLabel}</span>`);
+        const shortLabel = formatFailureCode(status);
+        const tooltip = formatFailureTooltip(status);
+        badges.push(`<span class="runtime-badge runtime-badge-failure" title="${escapeHtml(tooltip)}">${shortLabel} ${failureTime}</span>`);
     }
 
     return badges.join('');
@@ -408,20 +425,20 @@ export async function renderEndpoints(endpoints) {
 
         // 获取测试状态：true=成功显示✅，false=失败显示❌，undefined/unknown=未测试/未知显示⚠️
         const testStatus = getEndpointTestStatus(ep.name);
-        let testStatusIcon = '⚠️';
+        let testStatusClass = 'status-dot-unknown';
         let testStatusTip = t('endpoints.testTipUnknown');
         if (testStatus === true) {
-            testStatusIcon = '✅';
+            testStatusClass = 'status-dot-success';
             testStatusTip = t('endpoints.testTipSuccess');
         } else if (testStatus === false) {
-            testStatusIcon = '❌';
+            testStatusClass = 'status-dot-failure';
             testStatusTip = t('endpoints.testTipFailed');
         }
 
         item.innerHTML = `
             <div class="endpoint-info">
                 <h3>
-                    <span title="${testStatusTip}" style="cursor: help">${testStatusIcon}</span>
+                    <span class="status-dot ${testStatusClass}" title="${testStatusTip}" style="cursor: help"></span>
                     ${ep.name}
                     ${!enabled ? '<span class="disabled-badge">' + t('endpoints.disabled') + '</span>' : ''}
                     <span class="endpoint-default-slot" data-name="${escapeHtml(ep.name)}" data-enabled="${enabled ? 'true' : 'false'}" data-view="detail">${renderDefaultEndpointControl(ep.name, enabled)}</span>
@@ -2167,7 +2184,7 @@ export async function checkAllEndpointsOnStartup() {
             } else if (status === 'invalid_key') {
                 saveEndpointTestStatus(name, false);
             }
-            // 'unknown' 保持未设置状态，显示 ⚠️
+            // 'unknown' keeps unset state, shows dot-unknown
         }
         // 刷新端点列表显示
         if (window.loadConfig) {
@@ -2188,13 +2205,13 @@ function renderCompactView(sortedEndpoints, container, currentEndpointName, isFi
 
         // 获取测试状态
         const testStatus = getEndpointTestStatus(ep.name);
-        let testStatusIcon = '⚠️';
+        let testStatusClass = 'status-dot-unknown';
         let testStatusTip = t('endpoints.testTipUnknown');
         if (testStatus === true) {
-            testStatusIcon = '✅';
+            testStatusClass = 'status-dot-success';
             testStatusTip = t('endpoints.testTipSuccess');
         } else if (testStatus === false) {
-            testStatusIcon = '❌';
+            testStatusClass = 'status-dot-failure';
             testStatusTip = t('endpoints.testTipFailed');
         }
 
@@ -2232,7 +2249,7 @@ function renderCompactView(sortedEndpoints, container, currentEndpointName, isFi
                 <div class="drag-handle-dots"><span></span><span></span></div>
                 <div class="drag-handle-dots"><span></span><span></span></div>
             </div>
-            <span class="compact-status" title="${testStatusTip}" style="cursor: help">${testStatusIcon}</span>
+            <span class="compact-status status-dot ${testStatusClass}" title="${testStatusTip}" style="cursor: help"></span>
             <span class="compact-name" title="${ep.name}">${ep.name}</span>
             <span class="endpoint-default-slot compact-default-slot" data-name="${escapeHtml(ep.name)}" data-enabled="${enabled ? 'true' : 'false'}" data-view="compact">${renderCompactDefaultEndpointControl(ep.name, enabled)}</span>
             <span class="endpoint-runtime-slot compact-runtime-slot" data-name="${escapeHtml(ep.name)}">${renderEndpointRuntimeBadges(ep.name, 'compact')}</span>

@@ -388,7 +388,6 @@ export async function openEndpointTokenPoolFromModal() {
         showNotification(t('modal.syncProxyFailed').replace('{error}', message), 'error');
         return;
     }
-    closeModal();
     await openTokenPoolModal(currentEditIndex, endpointName);
 }
 
