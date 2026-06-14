@@ -215,8 +215,8 @@ func (m *Manager) Start(ctx context.Context, endpoint config.Endpoint) (StartRes
 	}
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.sessions[loginID] = sess
-	m.mu.Unlock()
 
 	go m.completeLogin(sessionCtx, loginID, endpoint, code)
 

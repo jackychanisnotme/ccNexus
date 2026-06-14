@@ -332,3 +332,20 @@ func (p *Proxy) estimateTokens(bodyBytes []byte, outputText string, inputTokens,
 
 	return inputTokens, outputTokens
 }
+// NewSharedTransport returns an http.Transport tuned for upstream API requests,
+// including large SSE streams and HTTP/2. responseHeaderTimeout controls how
+// long to wait for the first response header; pass <=0 for no timeout.
+func NewSharedTransport(responseHeaderTimeout time.Duration) *http.Transport {
+	return &http.Transport{
+		ForceAttemptHTTP2:      true,
+		MaxIdleConns:           100,
+		MaxIdleConnsPerHost:    10,
+		IdleConnTimeout:        90 * time.Second,
+		TLSHandshakeTimeout:    10 * time.Second,
+		ExpectContinueTimeout:  1 * time.Second,
+		ResponseHeaderTimeout:  responseHeaderTimeout,
+		WriteBufferSize:        128 * 1024, // 128KB write buffer for large SSE streams
+		ReadBufferSize:         128 * 1024, // 128KB read buffer for large SSE streams
+		MaxResponseHeaderBytes: 64 * 1024,  // 64KB max response headers
+	}
+}

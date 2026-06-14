@@ -79,19 +79,8 @@ func New(cfg *config.Config, statsStorage StatsStorage, sqliteStorage *storage.S
 	// Create a reusable HTTP client with connection pool
 	// Enhanced configuration for large SSE streaming and HTTP/2 support
 	httpClient := &http.Client{
-		Timeout: 300 * time.Second,
-		Transport: &http.Transport{
-			ForceAttemptHTTP2:      true,
-			MaxIdleConns:           100,
-			MaxIdleConnsPerHost:    10,
-			IdleConnTimeout:        90 * time.Second,
-			TLSHandshakeTimeout:    10 * time.Second,
-			ExpectContinueTimeout:  1 * time.Second,
-			ResponseHeaderTimeout:  90 * time.Second,
-			WriteBufferSize:        128 * 1024, // 128KB write buffer for large SSE streams
-			ReadBufferSize:         128 * 1024, // 128KB read buffer for large SSE streams
-			MaxResponseHeaderBytes: 64 * 1024,  // 64KB max response headers
-		},
+		Timeout:   300 * time.Second,
+		Transport: NewSharedTransport(90 * time.Second),
 	}
 
 	return &Proxy{

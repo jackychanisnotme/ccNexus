@@ -715,18 +715,7 @@ func CreateProxyTransport(proxyURL string) (*http.Transport, error) {
 		return nil, fmt.Errorf("invalid proxy URL: %w", err)
 	}
 
-	transport := &http.Transport{
-		ForceAttemptHTTP2:      true,
-		MaxIdleConns:           100,
-		MaxIdleConnsPerHost:    10,
-		IdleConnTimeout:        90 * time.Second,
-		TLSHandshakeTimeout:    10 * time.Second,
-		ExpectContinueTimeout:  1 * time.Second,
-		ResponseHeaderTimeout:  90 * time.Second,
-		WriteBufferSize:        128 * 1024, // 128KB write buffer for large SSE streams
-		ReadBufferSize:         128 * 1024, // 128KB read buffer for large SSE streams
-		MaxResponseHeaderBytes: 64 * 1024,  // 64KB max response headers
-	}
+	transport := NewSharedTransport(90 * time.Second)
 
 	switch parsed.Scheme {
 	case "socks5", "socks5h":

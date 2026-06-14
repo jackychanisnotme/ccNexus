@@ -239,6 +239,9 @@ func (s *downstreamStreamSession) primeStreamContext(ctx *transformer.StreamCont
 	ctx.ResponseSequenceNumber = 1
 }
 
+// filterDuplicateOpenAIResponsesCreatedLocked filters out duplicate response.created
+// SSE events from OpenAI Responses streams. Callers must pass data that contains
+// complete SSE blocks separated by \n\n; partial writes will split incorrectly.
 func (s *downstreamStreamSession) filterDuplicateOpenAIResponsesCreatedLocked(data []byte) []byte {
 	if len(data) == 0 {
 		return data
