@@ -9,6 +9,8 @@ export function AddProjectDir(arg1:string):Promise<void>;
 
 export function ApplyUpdate(arg1:string):Promise<string>;
 
+export function ApplyAgentProviderConfig(arg1:string):Promise<string>;
+
 export function BackupToProvider(arg1:string,arg2:string):Promise<void>;
 
 export function BackupToWebDAV(arg1:string):Promise<void>;
@@ -56,6 +58,8 @@ export function GenerateMockArchives(arg1:number):Promise<string>;
 export function GetArchiveData(arg1:string):Promise<string>;
 
 export function GetArchiveTrend(arg1:string):Promise<string>;
+
+export function GetAgentProviderStatus():Promise<string>;
 
 export function GetAutoDarkTheme():Promise<string>;
 
@@ -170,6 +174,8 @@ export function RenameSession(arg1:string,arg2:string,arg3:string):Promise<void>
 export function ReorderEndpoints(arg1:Array<string>):Promise<void>;
 
 export function RestoreFromProvider(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function RestoreAgentProviderBackup(arg1:string,arg2:string):Promise<string>;
 
 export function RestoreFromWebDAV(arg1:string,arg2:string):Promise<void>;
 

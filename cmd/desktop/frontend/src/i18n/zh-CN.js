@@ -770,6 +770,32 @@ export default {
     festival: {
         toggle: '切换开关'
     },
+    agentProvider: {
+        title: 'Agent Provider',
+        button: 'Agent Provider',
+        targetUrl: '目标地址',
+        detected: '已检测',
+        missing: '未初始化',
+        selectAll: '全选',
+        clearAll: '清空',
+        createMissing: '创建缺失配置',
+        latestBackup: '最近备份',
+        noBackup: '暂无备份',
+        apply: '覆盖为 ccNexus',
+        restore: '还原备份',
+        noSelection: '请至少选择一个 Agent',
+        loadFailed: '加载 Agent Provider 状态失败：{error}',
+        applyFailed: '覆盖失败：{error}',
+        restoreFailed: '还原失败：{error}',
+        applyComplete: 'Agent Provider 配置已处理完成',
+        restoreComplete: 'Agent Provider 备份已还原',
+        status: {
+            success: '成功',
+            skipped: '跳过',
+            failed: '失败',
+            restored: '已还原'
+        }
+    },
     common: {
         ok: '确定',
         cancel: '取消',

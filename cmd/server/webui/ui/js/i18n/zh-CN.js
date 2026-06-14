@@ -54,6 +54,32 @@ export default {
         noEndpoints: '未配置端点',
         noEnabledEndpoints: '无启用端点'
     },
+    agentProvider: {
+        title: 'Agent Provider',
+        open: '管理 Agent Provider',
+        targetUrl: '目标地址',
+        detected: '已检测',
+        missing: '未初始化',
+        latestBackup: '最近备份',
+        noBackup: '暂无备份',
+        selectAll: '全选',
+        clearAll: '清空',
+        createMissing: '创建缺失配置',
+        apply: '覆盖为 ccNexus',
+        restore: '还原备份',
+        noSelection: '请至少选择一个 Agent',
+        loadFailed: '加载 Agent Provider 状态失败',
+        applyFailed: '覆盖失败',
+        restoreFailed: '还原失败',
+        applyComplete: 'Agent Provider 配置已处理完成',
+        restoreComplete: 'Agent Provider 备份已还原',
+        status: {
+            success: '成功',
+            skipped: '跳过',
+            failed: '失败',
+            restored: '已还原'
+        }
+    },
     network: {
         title: '网络访问',
         listenMode: '访问模式',

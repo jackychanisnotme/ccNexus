@@ -54,6 +54,16 @@ class Dashboard {
                     </div>
                 </div>
 
+                <div class="card mt-4">
+                    <div class="card-header agent-provider-card-header">
+                        <h3 class="card-title">${t('agentProvider.title')}</h3>
+                        <button class="btn btn-primary" id="agent-provider-open">${t('agentProvider.open')}</button>
+                    </div>
+                    <div class="card-body">
+                        <div id="agent-provider-summary" class="agent-provider-inline"></div>
+                    </div>
+                </div>
+
                 <div class="grid grid-cols-2 mt-4">
                     <div class="card">
                         <div class="card-header">
@@ -77,6 +87,7 @@ class Dashboard {
         `;
 
         await this.loadData();
+        document.getElementById('agent-provider-open')?.addEventListener('click', () => this.openAgentProviderModal());
     }
 
     async loadData() {
@@ -92,12 +103,165 @@ class Dashboard {
             const network = await api.getNetwork();
             this.updateNetwork(network);
 
+            const agentProvider = await api.getAgentProviderStatus();
+            this.updateAgentProviderSummary(agentProvider);
+
             // Load daily stats for chart
             const dailyStats = await api.getStatsDaily();
             this.renderChart(dailyStats);
         } catch (error) {
             notifications.error('Failed to load dashboard data: ' + error.message);
         }
+    }
+
+    updateAgentProviderSummary(status) {
+        const container = document.getElementById('agent-provider-summary');
+        if (!container) return;
+        const targets = Array.isArray(status?.targets) ? status.targets : [];
+        const detected = targets.filter(target => target.detected).length;
+        container.innerHTML = `
+            <div>
+                <div class="network-label">${t('agentProvider.targetUrl')}</div>
+                <code class="network-code">${this.escapeHtml(status?.targetUrl || '')}</code>
+            </div>
+            <div>
+                <div class="network-label">${t('agentProvider.detected')}</div>
+                <div class="network-value">${detected} / ${targets.length}</div>
+            </div>
+            <div>
+                <div class="network-label">${t('agentProvider.latestBackup')}</div>
+                <code class="network-code">${this.escapeHtml(status?.latestBackup?.id || t('agentProvider.noBackup'))}</code>
+            </div>
+        `;
+    }
+
+    async openAgentProviderModal() {
+        try {
+            const status = await api.getAgentProviderStatus();
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.id = 'agent-provider-modal';
+            overlay.innerHTML = this.renderAgentProviderModal(status);
+            document.body.appendChild(overlay);
+            overlay.querySelectorAll('.modal-close').forEach(button => {
+                button.addEventListener('click', () => overlay.remove());
+            });
+            overlay.querySelector('#agent-provider-select-all')?.addEventListener('click', () => this.setAgentProviderChecks(true));
+            overlay.querySelector('#agent-provider-clear')?.addEventListener('click', () => this.setAgentProviderChecks(false));
+            overlay.querySelector('#agent-provider-apply')?.addEventListener('click', () => this.applyAgentProvider(overlay));
+            overlay.querySelector('#agent-provider-restore')?.addEventListener('click', () => this.restoreAgentProvider(overlay, status?.latestBackup?.id || ''));
+        } catch (error) {
+            notifications.error(`${t('agentProvider.loadFailed')}: ${error.message}`);
+        }
+    }
+
+    renderAgentProviderModal(status) {
+        const targets = Array.isArray(status?.targets) ? status.targets : [];
+        const rows = targets.map(target => `
+            <label class="agent-provider-row ${target.detected ? 'detected' : 'missing'}">
+                <input type="checkbox" value="${this.escapeHtml(target.target)}" ${target.detected ? 'checked' : ''}>
+                <span>
+                    <strong>${this.escapeHtml(target.label)}</strong>
+                    <small title="${this.escapeHtml(target.path)}">${this.escapeHtml(target.path)}</small>
+                </span>
+                <em>${target.detected ? t('agentProvider.detected') : t('agentProvider.missing')}</em>
+            </label>
+        `).join('');
+        return `
+            <div class="modal agent-provider-web-modal">
+                <div class="modal-header">
+                    <h3 class="modal-title">${t('agentProvider.title')}</h3>
+                    <button class="modal-close">×</button>
+                </div>
+                <div class="modal-body">
+                    <div class="agent-provider-inline">
+                        <div>
+                            <div class="network-label">${t('agentProvider.targetUrl')}</div>
+                            <code class="network-code">${this.escapeHtml(status?.targetUrl || '')}</code>
+                        </div>
+                        <div>
+                            <div class="network-label">${t('agentProvider.latestBackup')}</div>
+                            <code class="network-code">${this.escapeHtml(status?.latestBackup?.id || t('agentProvider.noBackup'))}</code>
+                        </div>
+                    </div>
+                    <div class="agent-provider-toolbar">
+                        <button class="btn btn-secondary" id="agent-provider-select-all">${t('agentProvider.selectAll')}</button>
+                        <button class="btn btn-secondary" id="agent-provider-clear">${t('agentProvider.clearAll')}</button>
+                        <label><input type="checkbox" id="agent-provider-create-missing"> ${t('agentProvider.createMissing')}</label>
+                    </div>
+                    <div class="agent-provider-list">${rows}</div>
+                    <div id="agent-provider-results"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary modal-close">${t('common.close')}</button>
+                    <button class="btn btn-secondary" id="agent-provider-restore" ${status?.latestBackup?.id ? '' : 'disabled'}>${t('agentProvider.restore')}</button>
+                    <button class="btn btn-primary" id="agent-provider-apply">${t('agentProvider.apply')}</button>
+                </div>
+            </div>
+        `;
+    }
+
+    setAgentProviderChecks(checked) {
+        document.querySelectorAll('#agent-provider-modal .agent-provider-row input[type="checkbox"]').forEach(input => {
+            input.checked = !!checked;
+        });
+    }
+
+    selectedAgentProviderTargets(overlay) {
+        return Array.from(overlay.querySelectorAll('.agent-provider-row input[type="checkbox"]:checked')).map(input => input.value);
+    }
+
+    async applyAgentProvider(overlay) {
+        const targets = this.selectedAgentProviderTargets(overlay);
+        if (!targets.length) {
+            notifications.warning(t('agentProvider.noSelection'));
+            return;
+        }
+        try {
+            const result = await api.applyAgentProviderConfig({
+                targets,
+                createMissing: !!overlay.querySelector('#agent-provider-create-missing')?.checked,
+            });
+            this.renderAgentProviderResults(overlay, result.results);
+            notifications.success(t('agentProvider.applyComplete'));
+            this.updateAgentProviderSummary(await api.getAgentProviderStatus());
+        } catch (error) {
+            notifications.error(`${t('agentProvider.applyFailed')}: ${error.message}`);
+        }
+    }
+
+    async restoreAgentProvider(overlay, backupId) {
+        if (!backupId) {
+            notifications.warning(t('agentProvider.noBackup'));
+            return;
+        }
+        try {
+            const result = await api.restoreAgentProviderBackup({
+                backupId,
+                targets: this.selectedAgentProviderTargets(overlay),
+            });
+            this.renderAgentProviderResults(overlay, result.results);
+            notifications.success(t('agentProvider.restoreComplete'));
+            this.updateAgentProviderSummary(await api.getAgentProviderStatus());
+        } catch (error) {
+            notifications.error(`${t('agentProvider.restoreFailed')}: ${error.message}`);
+        }
+    }
+
+    renderAgentProviderResults(overlay, results = []) {
+        const container = overlay.querySelector('#agent-provider-results');
+        if (!container) return;
+        container.innerHTML = `
+            <div class="agent-provider-result-list">
+                ${results.map(result => `
+                    <div class="agent-provider-result ${this.escapeHtml(result.status)}">
+                        <strong>${this.escapeHtml(result.label || result.target || '-')}</strong>
+                        <span>${this.escapeHtml(t(`agentProvider.status.${result.status}`) || result.status)}</span>
+                        <small>${this.escapeHtml(result.message || '')}</small>
+                    </div>
+                `).join('')}
+            </div>
+        `;
     }
 
     updateNetwork(network) {

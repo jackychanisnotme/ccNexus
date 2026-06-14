@@ -54,6 +54,32 @@ export default {
         noEndpoints: 'No endpoints configured',
         noEnabledEndpoints: 'No enabled endpoints'
     },
+    agentProvider: {
+        title: 'Agent Provider',
+        open: 'Manage Agent Provider',
+        targetUrl: 'Target URL',
+        detected: 'Detected',
+        missing: 'Missing',
+        latestBackup: 'Latest backup',
+        noBackup: 'No backup',
+        selectAll: 'Select All',
+        clearAll: 'Clear',
+        createMissing: 'Create missing configs',
+        apply: 'Route to ccNexus',
+        restore: 'Restore backup',
+        noSelection: 'Select at least one agent',
+        loadFailed: 'Failed to load Agent Provider status',
+        applyFailed: 'Failed to apply',
+        restoreFailed: 'Failed to restore',
+        applyComplete: 'Agent Provider config processed',
+        restoreComplete: 'Agent Provider backup restored',
+        status: {
+            success: 'Success',
+            skipped: 'Skipped',
+            failed: 'Failed',
+            restored: 'Restored'
+        }
+    },
     network: {
         title: 'Network Access',
         listenMode: 'Access Mode',

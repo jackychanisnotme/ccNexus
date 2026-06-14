@@ -16,6 +16,7 @@ import { showSettingsModal, closeSettingsModal, saveSettings, applyTheme, initTh
 import { checkUpdatesOnStartup, checkForUpdates, initUpdateSettings } from './modules/updater.js'
 import { initBroadcast } from './modules/broadcast.js'
 import { initFilterDropdowns, clearAllFilters } from './modules/filters.js'
+import { showAgentProviderModal, closeAgentProviderModal, selectAllAgentProviders, applyAgentProviderConfig, restoreAgentProviderBackup } from './modules/agentProvider.js'
 import { formatTokens } from './utils/format.js'
 import {
     showAddEndpointModal,
@@ -262,6 +263,11 @@ window.showCloseActionDialog = showCloseActionDialog;
 window.quitApplication = quitApplication;
 window.minimizeToTray = minimizeToTray;
 window.showDataSyncDialog = showDataSyncDialog;
+window.showAgentProviderModal = showAgentProviderModal;
+window.closeAgentProviderModal = closeAgentProviderModal;
+window.selectAllAgentProviders = selectAllAgentProviders;
+window.applyAgentProviderConfig = applyAgentProviderConfig;
+window.restoreAgentProviderBackup = restoreAgentProviderBackup;
 window.switchStatsPeriod = switchStatsPeriod;
 window.toggleEndpointPanel = toggleEndpointPanel;
 window.switchEndpointViewMode = switchEndpointViewMode;

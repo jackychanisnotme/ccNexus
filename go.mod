@@ -12,6 +12,7 @@ require (
 	github.com/studio-b12/gowebdav v0.11.0
 	github.com/wailsapp/wails/v2 v2.11.0
 	golang.org/x/net v0.44.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.28.0
 )
 

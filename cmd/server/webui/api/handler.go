@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/lich0821/ccNexus/internal/codexauth"
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/proxy"
+	"github.com/lich0821/ccNexus/internal/service"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
@@ -19,11 +21,12 @@ type codexCredentialAuthManager interface {
 
 // Handler handles API requests
 type Handler struct {
-	config    *config.Config
-	proxy     *proxy.Proxy
-	storage   *storage.SQLiteStorage
-	auth      AuthConfig
-	codexAuth codexCredentialAuthManager
+	config        *config.Config
+	proxy         *proxy.Proxy
+	storage       *storage.SQLiteStorage
+	auth          AuthConfig
+	codexAuth     codexCredentialAuthManager
+	agentProvider *service.AgentProviderService
 }
 
 // NewHandler creates a new API handler
@@ -37,9 +40,19 @@ func NewHandler(cfg *config.Config, p *proxy.Proxy, s *storage.SQLiteStorage) *H
 			Username: cfg.BasicAuthUsername,
 			Password: cfg.BasicAuthPassword,
 		},
+		agentProvider: newAgentProviderService(cfg, s),
 	}
 	h.resetCodexAuthManager()
 	return h
+}
+
+func newAgentProviderService(cfg *config.Config, s *storage.SQLiteStorage) *service.AgentProviderService {
+	if s != nil {
+		if dbPath := strings.TrimSpace(s.GetDBPath()); dbPath != "" {
+			return service.NewAgentProviderServiceForDataDir(cfg, filepath.Dir(dbPath))
+		}
+	}
+	return service.NewAgentProviderService(cfg)
 }
 
 func (h *Handler) resetCodexAuthManager() {
@@ -98,6 +111,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		authMiddleware(http.HandlerFunc(h.handleNetwork)).ServeHTTP(w, r)
 	case "/api/events":
 		authMiddleware(http.HandlerFunc(h.handleEvents)).ServeHTTP(w, r)
+	case "/api/agent-providers/status":
+		authMiddleware(http.HandlerFunc(h.handleAgentProviderStatus)).ServeHTTP(w, r)
+	case "/api/agent-providers/apply":
+		authMiddleware(http.HandlerFunc(h.handleAgentProviderApply)).ServeHTTP(w, r)
+	case "/api/agent-providers/restore":
+		authMiddleware(http.HandlerFunc(h.handleAgentProviderRestore)).ServeHTTP(w, r)
 	default:
 		if strings.HasPrefix(path, "/api/endpoints/") {
 			authMiddleware(http.HandlerFunc(h.handleEndpointByName)).ServeHTTP(w, r)

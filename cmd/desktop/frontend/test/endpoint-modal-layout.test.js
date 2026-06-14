@@ -10,6 +10,7 @@ const frontendRoot = resolve(__dirname, '..');
 const uiSource = readFileSync(resolve(frontendRoot, 'src/modules/ui.js'), 'utf8');
 const modalSource = readFileSync(resolve(frontendRoot, 'src/modules/modal.js'), 'utf8');
 const endpointsSource = readFileSync(resolve(frontendRoot, 'src/modules/endpoints.js'), 'utf8');
+const agentProviderSource = readFileSync(resolve(frontendRoot, 'src/modules/agentProvider.js'), 'utf8');
 const cssSource = readFileSync(resolve(frontendRoot, 'src/style.css'), 'utf8');
 
 describe('endpoint modal option layout', () => {
@@ -104,6 +105,16 @@ describe('endpoint modal option layout', () => {
         assert.match(cssSource, /\.token-pool-cell-actions/);
         assert.match(endpointsSource, /token-pool-col-account/);
         assert.match(endpointsSource, /token-pool-cell-rate/);
+    });
+
+    it('adds an Agent Provider home button and modal controls', () => {
+        assert.match(uiSource, /showAgentProviderModal/);
+        assert.match(uiSource, /agentProvider\.button/);
+        assert.match(agentProviderSource, /GetAgentProviderStatus/);
+        assert.match(agentProviderSource, /ApplyAgentProviderConfig/);
+        assert.match(agentProviderSource, /RestoreAgentProviderBackup/);
+        assert.match(agentProviderSource, /agentProviderTargets/);
+        assert.match(cssSource, /\.agent-provider-modal/);
     });
 
 });

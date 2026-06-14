@@ -769,6 +769,32 @@ export default {
     festival: {
         toggle: 'Toggle switch'
     },
+    agentProvider: {
+        title: 'Agent Provider',
+        button: 'Agent Provider',
+        targetUrl: 'Target URL',
+        detected: 'Detected',
+        missing: 'Missing',
+        selectAll: 'Select All',
+        clearAll: 'Clear',
+        createMissing: 'Create missing configs',
+        latestBackup: 'Latest backup',
+        noBackup: 'No backup',
+        apply: 'Route to ccNexus',
+        restore: 'Restore backup',
+        noSelection: 'Select at least one agent',
+        loadFailed: 'Failed to load Agent Provider status: {error}',
+        applyFailed: 'Failed to apply provider config: {error}',
+        restoreFailed: 'Failed to restore backup: {error}',
+        applyComplete: 'Agent Provider config processed',
+        restoreComplete: 'Agent Provider backup restored',
+        status: {
+            success: 'Success',
+            skipped: 'Skipped',
+            failed: 'Failed',
+            restored: 'Restored'
+        }
+    },
     common: {
         ok: 'OK',
         cancel: 'Cancel',

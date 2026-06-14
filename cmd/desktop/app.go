@@ -69,15 +69,16 @@ type App struct {
 	trayIcon []byte
 
 	// Services
-	stats     *service.StatsService
-	endpoint  *service.EndpointService
-	settings  *service.SettingsService
-	webdav    *service.WebDAVService
-	backup    *service.BackupService
-	archive   *service.ArchiveService
-	update    *service.UpdateService
-	terminal  *service.TerminalService
-	codexAuth *codexauth.Manager
+	stats         *service.StatsService
+	endpoint      *service.EndpointService
+	settings      *service.SettingsService
+	webdav        *service.WebDAVService
+	backup        *service.BackupService
+	archive       *service.ArchiveService
+	update        *service.UpdateService
+	terminal      *service.TerminalService
+	codexAuth     *codexauth.Manager
+	agentProvider *service.AgentProviderService
 }
 
 // NewApp creates a new App application struct
@@ -178,6 +179,7 @@ func (a *App) startup(ctx context.Context) {
 	a.archive = service.NewArchiveService(a.storage)
 	a.update = service.NewUpdateService(a.config, a.storage, version)
 	a.terminal = service.NewTerminalService(a.config, a.storage)
+	a.agentProvider = service.NewAgentProviderService(a.config)
 	a.codexAuth = codexauth.NewManager(codexauth.Options{
 		Storage:    a.storage,
 		HTTPClient: codexauth.HTTPClientForConfig(a.config),
@@ -1098,6 +1100,27 @@ func (a *App) SaveSettings(settingsJSON string) error {
 	}
 	a.resetCodexAuthManager()
 	return nil
+}
+
+func (a *App) GetAgentProviderStatus() string {
+	if a.agentProvider == nil {
+		a.agentProvider = service.NewAgentProviderService(a.config)
+	}
+	return a.agentProvider.StatusJSON()
+}
+
+func (a *App) ApplyAgentProviderConfig(targetsJSON string) string {
+	if a.agentProvider == nil {
+		a.agentProvider = service.NewAgentProviderService(a.config)
+	}
+	return a.agentProvider.ApplyFromJSON(targetsJSON)
+}
+
+func (a *App) RestoreAgentProviderBackup(backupID string, targetsJSON string) string {
+	if a.agentProvider == nil {
+		a.agentProvider = service.NewAgentProviderService(a.config)
+	}
+	return a.agentProvider.RestoreFromJSON(backupID, targetsJSON)
 }
 
 // ========== WebDAV Bindings ==========

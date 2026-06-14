@@ -18,6 +18,10 @@ export function ApplyUpdate(arg1) {
   return window['go']['main']['App']['ApplyUpdate'](arg1);
 }
 
+export function ApplyAgentProviderConfig(arg1) {
+  return window['go']['main']['App']['ApplyAgentProviderConfig'](arg1);
+}
+
 export function BackupToProvider(arg1, arg2) {
   return window['go']['main']['App']['BackupToProvider'](arg1, arg2);
 }
@@ -112,6 +116,10 @@ export function GetArchiveData(arg1) {
 
 export function GetArchiveTrend(arg1) {
   return window['go']['main']['App']['GetArchiveTrend'](arg1);
+}
+
+export function GetAgentProviderStatus() {
+  return window['go']['main']['App']['GetAgentProviderStatus']();
 }
 
 export function GetAutoDarkTheme() {
@@ -340,6 +348,10 @@ export function ReorderEndpoints(arg1) {
 
 export function RestoreFromProvider(arg1, arg2, arg3) {
   return window['go']['main']['App']['RestoreFromProvider'](arg1, arg2, arg3);
+}
+
+export function RestoreAgentProviderBackup(arg1, arg2) {
+  return window['go']['main']['App']['RestoreAgentProviderBackup'](arg1, arg2);
 }
 
 export function RestoreFromWebDAV(arg1, arg2) {

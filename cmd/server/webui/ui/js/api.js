@@ -178,6 +178,18 @@ class APIClient {
         }
         return this.request('PUT', '/network', payload);
     }
+
+    async getAgentProviderStatus() {
+        return this.request('GET', '/agent-providers/status');
+    }
+
+    async applyAgentProviderConfig(data) {
+        return this.request('POST', '/agent-providers/apply', data);
+    }
+
+    async restoreAgentProviderBackup(data) {
+        return this.request('POST', '/agent-providers/restore', data);
+    }
 }
 
 export const api = new APIClient();
