@@ -305,6 +305,9 @@ export function initUI() {
                         <button class="btn btn-secondary" onclick="window.showDataSyncDialog()">
                             🔄 ${t('webdav.dataSync')}
                         </button>
+                        <button class="btn btn-secondary" onclick="window.showAgentModal()">
+                            ${t('agent.button')}
+                        </button>
                         <button class="btn btn-secondary" onclick="window.showAgentProviderModal()">
                             🔀 ${t('agentProvider.button')}
                         </button>

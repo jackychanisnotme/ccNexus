@@ -769,6 +769,27 @@ export default {
     festival: {
         toggle: 'Toggle switch'
     },
+    agent: {
+        title: 'AI Agent',
+        button: 'AI Agent',
+        taskPlaceholder: 'Ask AINexus to diagnose endpoints, repair agent configs, or answer a task...',
+        run: 'Run',
+        cancel: 'Cancel',
+        checkConfigs: 'Check configs',
+        repairConfigs: 'Repair configs',
+        endpoint: 'Endpoint',
+        currentEndpoint: 'Current',
+        tools: 'Tools',
+        events: 'Events',
+        answer: 'Answer',
+        noTask: 'Enter a task first',
+        runFailed: 'Agent run failed: {error}',
+        repairComplete: 'Repair complete',
+        backupId: 'Backup ID',
+        healthy: 'Healthy',
+        missing: 'Missing',
+        unhealthy: 'Needs attention'
+    },
     agentProvider: {
         title: 'Agent Provider',
         button: 'Agent Provider',

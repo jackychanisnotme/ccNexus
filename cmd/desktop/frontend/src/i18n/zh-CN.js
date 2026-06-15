@@ -770,6 +770,27 @@ export default {
     festival: {
         toggle: '切换开关'
     },
+    agent: {
+        title: 'AI Agent',
+        button: 'AI Agent',
+        taskPlaceholder: '让 AINexus 诊断端点、修复 Agent 配置，或完成一个任务...',
+        run: '运行',
+        cancel: '取消',
+        checkConfigs: '检查配置',
+        repairConfigs: '修复配置',
+        endpoint: '端点',
+        currentEndpoint: '当前端点',
+        tools: '工具',
+        events: '事件',
+        answer: '回答',
+        noTask: '请先输入任务',
+        runFailed: 'Agent 运行失败：{error}',
+        repairComplete: '修复完成',
+        backupId: '备份 ID',
+        healthy: '健康',
+        missing: '缺失',
+        unhealthy: '需要处理'
+    },
     agentProvider: {
         title: 'Agent Provider',
         button: 'Agent Provider',
