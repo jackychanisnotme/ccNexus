@@ -1074,6 +1074,23 @@ func extractOpenAI2Text(content interface{}) string {
 // whether any item was changed. If the payload is unchanged the
 // original byte slice is returned.
 func AdaptOpenAI2FunctionCallArgumentsToObjects(openai2Req []byte) ([]byte, bool) {
+	return adaptOpenAI2FunctionCallArgumentsToObjects(openai2Req, nil)
+}
+
+// AdaptOpenAI2FunctionCallArgumentsAtIndicesToObjects rewrites only the
+// selected top-level input indexes. This is used when an upstream gateway
+// reports a specific input[N].arguments schema error while other entries in
+// the same request may still require the standard string shape.
+func AdaptOpenAI2FunctionCallArgumentsAtIndicesToObjects(openai2Req []byte, indices map[int]bool) ([]byte, bool) {
+	if len(indices) == 0 {
+		return openai2Req, false
+	}
+	return adaptOpenAI2FunctionCallArgumentsToObjects(openai2Req, func(index int) bool {
+		return indices[index]
+	})
+}
+
+func adaptOpenAI2FunctionCallArgumentsToObjects(openai2Req []byte, shouldAdapt func(index int) bool) ([]byte, bool) {
 	var body map[string]interface{}
 	if err := json.Unmarshal(openai2Req, &body); err != nil {
 		return openai2Req, false
@@ -1083,7 +1100,10 @@ func AdaptOpenAI2FunctionCallArgumentsToObjects(openai2Req []byte) ([]byte, bool
 		return openai2Req, false
 	}
 	changed := false
-	for _, raw := range rawInput {
+	for index, raw := range rawInput {
+		if shouldAdapt != nil && !shouldAdapt(index) {
+			continue
+		}
 		item, ok := raw.(map[string]interface{})
 		if !ok {
 			continue

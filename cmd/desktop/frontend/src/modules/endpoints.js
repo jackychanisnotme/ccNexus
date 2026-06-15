@@ -17,8 +17,8 @@ function extractBaseName(name) {
     return baseName;
 }
 
-const ENDPOINT_TEST_STATUS_KEY = 'ccNexus_endpointTestStatus';
-const ENDPOINT_VIEW_MODE_KEY = 'ccNexus_endpointViewMode';
+const ENDPOINT_TEST_STATUS_KEY = 'AINexus_endpointTestStatus';
+const ENDPOINT_VIEW_MODE_KEY = 'AINexus_endpointViewMode';
 
 // 获取端点测试状态
 export function getEndpointTestStatus(endpointName) {

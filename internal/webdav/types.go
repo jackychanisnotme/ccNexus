@@ -19,7 +19,7 @@ type BackupData struct {
 	Config     *config.Config `json:"config"`     // 配置数据
 	Stats      *proxy.Stats   `json:"stats"`      // 统计数据
 	BackupTime time.Time      `json:"backupTime"` // 备份时间
-	Version    string         `json:"version"`    // ccNexus 版本
+	Version    string         `json:"version"`    // AINexus 版本
 }
 
 // ConflictInfo 冲突信息

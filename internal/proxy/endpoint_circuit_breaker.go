@@ -137,7 +137,7 @@ func (p *Proxy) recordEndpointCircuitFailure(endpointName, reason string, status
 	p.markEndpointCooldown(endpointName, triggerReason, cooldown, requestObservability{
 		RequestID: "circuit_breaker",
 		ClientIP:  "internal",
-		Agent:     "ccnexus",
+		Agent:     "AINexus",
 	}, 0)
 	return true
 }

@@ -11,11 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lich0821/ccNexus/internal/branding"
 	"github.com/lich0821/ccNexus/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
-const agentProviderPlaceholderKey = "ccnexus-local"
+const agentProviderPlaceholderKey = "ainexus-local"
 
 var agentProviderTargets = []string{
 	"claude",
@@ -105,7 +106,7 @@ type agentProviderTarget struct {
 
 func NewAgentProviderService(cfg *config.Config) *AgentProviderService {
 	homeDir, _ := os.UserHomeDir()
-	dataDir := filepath.Join(homeDir, ".ccNexus")
+	dataDir := branding.ResolveDataDir(homeDir)
 	return NewAgentProviderServiceWithOptions(cfg, AgentProviderOptions{HomeDir: homeDir, DataDir: dataDir})
 }
 
@@ -124,7 +125,7 @@ func NewAgentProviderServiceWithOptions(cfg *config.Config, options AgentProvide
 	}
 	dataDir := strings.TrimSpace(options.DataDir)
 	if dataDir == "" {
-		dataDir = filepath.Join(homeDir, ".ccNexus")
+		dataDir = branding.ResolveDataDir(homeDir)
 	}
 	return &AgentProviderService{config: cfg, homeDir: homeDir, dataDir: dataDir}
 }
@@ -302,7 +303,7 @@ func (s *AgentProviderService) knownTargets() []agentProviderTarget {
 			return []string{filepath.Join(s.homeDir, ".claude", "settings.json")}
 		}, Apply: applyClaudeCode},
 		{ID: "claude_desktop", Label: "Claude Desktop", Paths: func(s *AgentProviderService) []string {
-			return []string{s.claudeDesktopProfilePath()}
+			return s.claudeDesktopProfilePaths()
 		}, Apply: applyClaudeDesktop},
 		{ID: "codex", Label: "Codex", Paths: func(s *AgentProviderService) []string {
 			return []string{filepath.Join(s.homeDir, ".codex", "config.toml"), filepath.Join(s.homeDir, ".codex", "auth.json")}
@@ -413,16 +414,41 @@ func (s *AgentProviderService) existingPaths(paths []string) []string {
 }
 
 func (s *AgentProviderService) claudeDesktopProfilePath() string {
+	paths := s.claudeDesktopProfilePaths()
+	for _, path := range paths {
+		if fileExists(path) {
+			return path
+		}
+	}
+	if len(paths) > 0 {
+		return paths[0]
+	}
+	return ""
+}
+
+func (s *AgentProviderService) claudeDesktopProfilePaths() []string {
 	switch runtime.GOOS {
 	case "darwin":
-		return filepath.Join(s.homeDir, "Library", "Application Support", "Claude-3p", "configLibrary", "ccnexus.json")
+		return []string{
+			filepath.Join(s.homeDir, "Library", "Application Support", "Claude-3p", "configLibrary", "ainexus.json"),
+			filepath.Join(s.homeDir, "Library", "Application Support", "Claude-3p", "configLibrary", "ccnexus.json"),
+		}
 	case "windows":
 		if local := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); local != "" {
-			return filepath.Join(local, "Claude-3p", "configLibrary", "ccnexus.json")
+			return []string{
+				filepath.Join(local, "Claude-3p", "configLibrary", "ainexus.json"),
+				filepath.Join(local, "Claude-3p", "configLibrary", "ccnexus.json"),
+			}
 		}
-		return filepath.Join(s.homeDir, "AppData", "Local", "Claude-3p", "configLibrary", "ccnexus.json")
+		return []string{
+			filepath.Join(s.homeDir, "AppData", "Local", "Claude-3p", "configLibrary", "ainexus.json"),
+			filepath.Join(s.homeDir, "AppData", "Local", "Claude-3p", "configLibrary", "ccnexus.json"),
+		}
 	default:
-		return filepath.Join(s.homeDir, ".config", "Claude-3p", "configLibrary", "ccnexus.json")
+		return []string{
+			filepath.Join(s.homeDir, ".config", "Claude-3p", "configLibrary", "ainexus.json"),
+			filepath.Join(s.homeDir, ".config", "Claude-3p", "configLibrary", "ccnexus.json"),
+		}
 	}
 }
 
@@ -454,7 +480,7 @@ func applyClaudeDesktop(s *AgentProviderService, targetURL string, createMissing
 		return path, "skipped", "configuration file not found"
 	}
 	profile := map[string]any{
-		"name": "ccNexus",
+		"name": "AINexus",
 		"env": map[string]any{
 			"ANTHROPIC_BASE_URL": targetURL,
 			"ANTHROPIC_API_KEY":  agentProviderPlaceholderKey,
@@ -472,11 +498,11 @@ func applyCodex(s *AgentProviderService, targetURL string, createMissing bool) (
 	if !fileExists(configPath) && !fileExists(authPath) && !createMissing {
 		return configPath, "skipped", "configuration file not found"
 	}
-	configText := fmt.Sprintf(`model_provider = "ccnexus"
+	configText := fmt.Sprintf(`model_provider = "AINexus"
 model = "gpt-5"
 
-[model_providers.ccnexus]
-name = "ccNexus"
+[model_providers.AINexus]
+name = "AINexus"
 base_url = "%s/v1"
 wire_api = "responses"
 experimental_bearer_token = "%s"
@@ -536,8 +562,8 @@ func applyOpenCode(s *AgentProviderService, targetURL string, createMissing bool
 	if providers == nil {
 		providers = map[string]any{}
 	}
-	providers["ccnexus"] = map[string]any{
-		"name": "ccNexus",
+	providers["AINexus"] = map[string]any{
+		"name": "AINexus",
 		"npm":  "@ai-sdk/openai-compatible",
 		"options": map[string]any{
 			"baseURL": targetURL + "/v1",
@@ -575,7 +601,7 @@ func applyOpenClaw(s *AgentProviderService, targetURL string, createMissing bool
 	if providers == nil {
 		providers = map[string]any{}
 	}
-	providers["ccnexus"] = map[string]any{
+	providers["AINexus"] = map[string]any{
 		"baseUrl": targetURL + "/v1",
 		"apiKey":  agentProviderPlaceholderKey,
 		"api":     "openai-completions",
@@ -592,7 +618,7 @@ func applyOpenClaw(s *AgentProviderService, targetURL string, createMissing bool
 	if defaults == nil {
 		defaults = map[string]any{}
 	}
-	defaults["model"] = map[string]any{"primary": "ccnexus/gpt-5", "fallbacks": []any{}}
+	defaults["model"] = map[string]any{"primary": "AINexus/gpt-5", "fallbacks": []any{}}
 	agents["defaults"] = defaults
 	root["agents"] = agents
 	if err := writeJSONFile(path, root); err != nil {
@@ -622,14 +648,14 @@ func applyHermes(s *AgentProviderService, targetURL string, createMissing bool) 
 	if model == nil {
 		model = map[string]any{}
 	}
-	model["provider"] = "ccnexus"
+	model["provider"] = "AINexus"
 	model["base_url"] = targetURL
 	if _, ok := model["default"]; !ok {
 		model["default"] = "gpt-5"
 	}
 	root["model"] = model
 	root["custom_providers"] = replaceHermesProvider(root["custom_providers"], map[string]any{
-		"name":     "ccnexus",
+		"name":     "AINexus",
 		"base_url": targetURL + "/v1",
 		"api_key":  agentProviderPlaceholderKey,
 		"model":    "gpt-5",
@@ -648,7 +674,7 @@ func replaceHermesProvider(existing any, provider map[string]any) []any {
 	var providers []any
 	if arr, ok := existing.([]any); ok {
 		for _, item := range arr {
-			if m, ok := item.(map[string]any); ok && fmt.Sprint(m["name"]) == "ccnexus" {
+			if m, ok := item.(map[string]any); ok && fmt.Sprint(m["name"]) == "AINexus" {
 				continue
 			}
 			providers = append(providers, item)

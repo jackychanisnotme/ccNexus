@@ -24,7 +24,7 @@ COPY . ./
 RUN go mod tidy
 
 # Build the headless API server (webui is embedded via go:embed)
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o ccnexus-server ./cmd/server
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o ainexus-server ./cmd/server
 
 # Runtime stage
 FROM alpine:latest
@@ -38,14 +38,14 @@ WORKDIR /app
 RUN mkdir -p /data
 
 # Copy binary from builder
-COPY --from=builder /app/ccnexus-server /app/ccnexus-server
+COPY --from=builder /app/ainexus-server /app/ainexus-server
 
 # Environment variables
-ENV CCNEXUS_DATA_DIR=/data
-ENV CCNEXUS_PORT=3000
-ENV CCNEXUS_DB_PATH=/data/ccnexus.db
-ENV CCNEXUS_BASIC_AUTH_ENABLED=true
-ENV CCNEXUS_BASIC_AUTH_USERNAME=admin
+ENV AINEXUS_DATA_DIR=/data
+ENV AINEXUS_PORT=3000
+ENV AINEXUS_DB_PATH=/data/ainexus.db
+ENV AINEXUS_BASIC_AUTH_ENABLED=true
+ENV AINEXUS_BASIC_AUTH_USERNAME=admin
 
 # Expose HTTP API port
 EXPOSE 3000
@@ -58,4 +58,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 VOLUME ["/data"]
 
 # Run the headless server
-ENTRYPOINT ["/app/ccnexus-server"]
+ENTRYPOINT ["/app/ainexus-server"]

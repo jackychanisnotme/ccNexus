@@ -187,8 +187,8 @@ type WebDAVConfig struct {
 	URL        string `json:"url"`        // WebDAV server URL
 	Username   string `json:"username"`   // Username
 	Password   string `json:"password"`   // Password
-	ConfigPath string `json:"configPath"` // Config backup path (default /ccNexus/config)
-	StatsPath  string `json:"statsPath"`  // Stats backup path (default /ccNexus/stats)
+	ConfigPath string `json:"configPath"` // Config backup path (default /AINexus/config)
+	StatsPath  string `json:"statsPath"`  // Stats backup path (default /AINexus/stats)
 }
 
 // LocalBackupConfig represents local backup configuration

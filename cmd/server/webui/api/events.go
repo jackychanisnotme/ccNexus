@@ -30,7 +30,7 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send initial connection message
-	fmt.Fprintf(w, "data: {\"type\":\"connected\",\"message\":\"Connected to ccNexus events\"}\n\n")
+	fmt.Fprintf(w, "data: {\"type\":\"connected\",\"message\":\"Connected to AINexus events\"}\n\n")
 	flusher.Flush()
 
 	// Create ticker for periodic updates

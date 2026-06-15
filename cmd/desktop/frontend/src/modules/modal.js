@@ -935,7 +935,7 @@ export async function showWelcomeModal() {
 export function closeWelcomeModal() {
     const dontShowAgain = document.getElementById('dontShowAgain').checked;
     if (dontShowAgain) {
-        localStorage.setItem('ccNexus_welcomeShown', 'true');
+        localStorage.setItem('AINexus_welcomeShown', 'true');
     }
     document.getElementById('welcomeModal').classList.remove('active');
 }
@@ -986,12 +986,12 @@ export function closeChangelogModal() {
 
 export async function showChangelogIfNewVersion() {
     const currentVersion = await window.go.main.App.GetVersion();
-    const lastVersion = localStorage.getItem('ccNexus_lastVersion');
+    const lastVersion = localStorage.getItem('AINexus_lastVersion');
 
     if (lastVersion && lastVersion !== currentVersion) {
         setTimeout(() => showChangelogModal(), 600);
     }
-    localStorage.setItem('ccNexus_lastVersion', currentVersion);
+    localStorage.setItem('AINexus_lastVersion', currentVersion);
 }
 
 // 判断是否为"不支持测试"的情况

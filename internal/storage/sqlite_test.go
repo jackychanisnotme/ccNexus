@@ -8,7 +8,7 @@ import (
 )
 
 func TestMigrateDeepSeekThinkingDefaultRunsOnce(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "ccnexus.db")
+	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -97,7 +97,7 @@ func TestMigrateDeepSeekThinkingDefaultRunsOnce(t *testing.T) {
 }
 
 func TestMigrateEndpointProxyURLRunsOnce(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "ccnexus.db")
+	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -172,7 +172,7 @@ func TestMigrateEndpointProxyURLRunsOnce(t *testing.T) {
 }
 
 func TestDailyStatsClientIPDimensionAndFilters(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "ccnexus.db")
+	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	store, err := NewSQLiteStorage(dbPath)
 	if err != nil {
 		t.Fatalf("open storage: %v", err)
@@ -228,7 +228,7 @@ func TestDailyStatsClientIPDimensionAndFilters(t *testing.T) {
 }
 
 func TestDailyStatsMigrationAddsClientIPAndPreservesStatsAfterEndpointDelete(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "ccnexus.db")
+	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -401,7 +401,7 @@ func hasStatsEndpointOption(options []StatsEndpointFilterOption, name string, de
 }
 
 func TestEndpointRuntimeStatusPersistsAcrossReopen(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "ccnexus.db")
+	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	store, err := NewSQLiteStorage(dbPath)
 	if err != nil {
 		t.Fatalf("open storage: %v", err)
@@ -492,7 +492,7 @@ func TestEndpointRuntimeStatusPersistsAcrossReopen(t *testing.T) {
 }
 
 func TestMigrateEndpointRuntimeFailureStatusCode(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "ccnexus.db")
+	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)

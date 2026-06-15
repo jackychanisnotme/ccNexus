@@ -41,7 +41,7 @@ It's an estimate based on text length, may differ from actual billing.
 **Q: How to backup configuration?**
 
 1. Use WebDAV cloud sync
-2. Manually copy `~/.ccNexus/ccnexus.db`
+2. Manually copy `~/.AINexus/ainexus.db`
 
 **Q: Endpoint rotation order?**
 
@@ -49,4 +49,4 @@ In list order, can be adjusted by drag and drop.
 
 **Q: Is data secure?**
 
-All data is stored locally in `~/.ccNexus/`, API keys are never sent to third parties.
+All data is stored locally in `~/.AINexus/`, API keys are never sent to third parties.

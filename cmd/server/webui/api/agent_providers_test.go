@@ -23,7 +23,7 @@ func TestAgentProvidersAPIStatusApplyAndRestore(t *testing.T) {
 	handler := NewHandler(cfg, proxy.New(cfg, nil, store, "test-device"), store)
 	handler.agentProvider = service.NewAgentProviderServiceWithOptions(cfg, service.AgentProviderOptions{
 		HomeDir: home,
-		DataDir: filepath.Join(home, ".ccNexus"),
+		DataDir: filepath.Join(home, ".AINexus"),
 	})
 
 	claudePath := filepath.Join(home, ".claude", "settings.json")
@@ -70,7 +70,7 @@ func TestAgentProvidersAPIUsesStorageDataDirForBackups(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatalf("mkdir data dir: %v", err)
 	}
-	store, err := storage.NewSQLiteStorage(filepath.Join(dataDir, "ccnexus.db"))
+	store, err := storage.NewSQLiteStorage(filepath.Join(dataDir, "ainexus.db"))
 	if err != nil {
 		t.Fatalf("new storage: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestAgentProvidersAPIUsesStorageDataDirForBackups(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dataDir, "agent-provider-backups", backupID, "manifest.json")); err != nil {
 		t.Fatalf("expected backup manifest under storage data dir: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".ccNexus", "agent-provider-backups", backupID, "manifest.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".AINexus", "agent-provider-backups", backupID, "manifest.json")); !os.IsNotExist(err) {
 		t.Fatalf("backup should not be written under home data dir, stat err=%v", err)
 	}
 }

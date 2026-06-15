@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/lich0821/ccNexus/internal/branding"
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/proxy"
@@ -29,9 +29,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	dbPath := os.Getenv("CCNEXUS_DB_PATH")
+	homeDir, _ := os.UserHomeDir()
+	dbPath := branding.LookupEnv("AINEXUS_DB_PATH", "CCNEXUS_DB_PATH")
 	if dbPath == "" {
-		dbPath = filepath.Join(dataDir, "ccnexus.db")
+		dbPath = branding.ResolveDatabasePath(homeDir, dataDir)
 	}
 
 	sqliteStorage, err := storage.NewSQLiteStorage(dbPath)
@@ -102,7 +103,7 @@ func main() {
 		errCh <- p.StartWithMux(mux)
 	}()
 
-	logger.Info("ccNexus headless API listening on %s (data dir: %s, db: %s)", cfg.GetListenAddr(), dataDir, dbPath)
+	logger.Info("%s headless API listening on %s (data dir: %s, db: %s)", branding.Name, cfg.GetListenAddr(), dataDir, dbPath)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -120,17 +121,21 @@ func main() {
 		}
 	}
 
-	logger.Info("ccNexus stopped")
+	logger.Info("%s stopped", branding.Name)
 }
 
 func resolveDataDir() string {
-	if dir := os.Getenv("CCNEXUS_DATA_DIR"); dir != "" {
+	if dir := branding.LookupEnv("AINEXUS_DATA_DIR", "CCNEXUS_DATA_DIR"); dir != "" {
 		return dir
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".ccNexus")
+		return resolveDataDirForHome(home)
 	}
 	return "/data"
+}
+
+func resolveDataDirForHome(home string) string {
+	return branding.ResolveDataDir(home)
 }
 
 func loadConfig(sqliteStorage *storage.SQLiteStorage) (*config.Config, error) {
@@ -156,40 +161,40 @@ func loadConfig(sqliteStorage *storage.SQLiteStorage) (*config.Config, error) {
 }
 
 func applyEnvOverrides(cfg *config.Config) {
-	if portStr := os.Getenv("CCNEXUS_PORT"); portStr != "" {
+	if portStr := branding.LookupEnv("AINEXUS_PORT", "CCNEXUS_PORT"); portStr != "" {
 		if port, err := strconv.Atoi(portStr); err == nil {
 			cfg.UpdatePort(port)
 		} else {
-			logger.Warn("Invalid CCNEXUS_PORT value %q: %v", portStr, err)
+			logger.Warn("Invalid AINEXUS_PORT/CCNEXUS_PORT value %q: %v", portStr, err)
 		}
 	}
 
-	if levelStr := os.Getenv("CCNEXUS_LOG_LEVEL"); levelStr != "" {
+	if levelStr := branding.LookupEnv("AINEXUS_LOG_LEVEL", "CCNEXUS_LOG_LEVEL"); levelStr != "" {
 		if level, err := strconv.Atoi(levelStr); err == nil {
 			cfg.UpdateLogLevel(level)
 		} else {
-			logger.Warn("Invalid CCNEXUS_LOG_LEVEL value %q: %v", levelStr, err)
+			logger.Warn("Invalid AINEXUS_LOG_LEVEL/CCNEXUS_LOG_LEVEL value %q: %v", levelStr, err)
 		}
 	}
 
-	if listenMode := os.Getenv("CCNEXUS_LISTEN_MODE"); listenMode != "" {
+	if listenMode := branding.LookupEnv("AINEXUS_LISTEN_MODE", "CCNEXUS_LISTEN_MODE"); listenMode != "" {
 		normalized := config.NormalizeListenMode(listenMode)
 		if normalized != strings.ToLower(strings.TrimSpace(listenMode)) {
-			logger.Warn("Invalid CCNEXUS_LISTEN_MODE value %q, using %q", listenMode, normalized)
+			logger.Warn("Invalid AINEXUS_LISTEN_MODE/CCNEXUS_LISTEN_MODE value %q, using %q", listenMode, normalized)
 		}
 		cfg.UpdateListenMode(normalized)
 	}
 
-	if authEnabled := os.Getenv("CCNEXUS_BASIC_AUTH_ENABLED"); authEnabled != "" {
+	if authEnabled := branding.LookupEnv("AINEXUS_BASIC_AUTH_ENABLED", "CCNEXUS_BASIC_AUTH_ENABLED"); authEnabled != "" {
 		enabled := authEnabled == "1" || authEnabled == "true"
 		cfg.BasicAuthEnabled = enabled
 	}
 
-	if username := os.Getenv("CCNEXUS_BASIC_AUTH_USERNAME"); username != "" {
+	if username := branding.LookupEnv("AINEXUS_BASIC_AUTH_USERNAME", "CCNEXUS_BASIC_AUTH_USERNAME"); username != "" {
 		cfg.BasicAuthUsername = username
 	}
 
-	if password := os.Getenv("CCNEXUS_BASIC_AUTH_PASSWORD"); password != "" {
+	if password := branding.LookupEnv("AINEXUS_BASIC_AUTH_PASSWORD", "CCNEXUS_BASIC_AUTH_PASSWORD"); password != "" {
 		cfg.BasicAuthPassword = password
 	}
 }

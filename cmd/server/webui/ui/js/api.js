@@ -1,4 +1,4 @@
-// API Client for ccNexus
+// API Client for AINexus
 class APIClient {
     constructor(baseURL = '/api') {
         this.baseURL = baseURL;

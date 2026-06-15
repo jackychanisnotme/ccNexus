@@ -39,7 +39,7 @@ Build output is in `build/bin/` directory.
 ## Project Structure
 
 ```
-ccNexus/
+AINexus/
 ├── main.go                 # Application entry
 ├── app.go                  # Core application logic
 ├── internal/

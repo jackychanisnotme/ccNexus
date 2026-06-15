@@ -12,7 +12,7 @@ import (
 	"github.com/lich0821/ccNexus/internal/logger"
 )
 
-// TestOpenAIResponsesStreamHeartbeatIsResponseCreated verifies that ccNexus
+// TestOpenAIResponsesStreamHeartbeatIsResponseCreated verifies that AINexus
 // sends a response.created event as the initial keep-alive for OpenAI Responses
 // API streaming clients (Hermes / Python SDK openai>=1.0).
 //
@@ -93,7 +93,7 @@ func TestOpenAIResponsesStreamHeartbeatIsResponseCreated(t *testing.T) {
 
 // TestOpenAIResponsesStreamFromChatUpstreamEmitsCreatedOnce verifies that when
 // a Codex Desktop /v1/responses streaming client hits a Poe (OpenAI Chat)
-// upstream behind ccNexus, the downstream SSE body contains exactly one
+// upstream behind AINexus, the downstream SSE body contains exactly one
 // response.created event. Real Poe usage shows Codex cancelling the connection
 // ~10–14 s after start, which aligns with a bogus heartbeat response.created
 // landing on the open stream while the upstream has already billed for tokens.

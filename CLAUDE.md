@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-ccNexus 是一个智能 API 端点轮换代理，专为 Claude Code 和 Codex CLI 设计。
+AINexus 是一个智能 API 端点轮换代理，专为 Claude Code 和 Codex CLI 设计。
 
 **核心功能：**
 - 多端点轮换与自动故障转移
@@ -30,7 +30,7 @@ wails build -platform darwin/amd64   # macOS
 wails build -platform windows/amd64  # Windows
 
 # 构建服务器
-cd cmd/server && go build -ldflags="-s -w" -o ccnexus-server .
+cd cmd/server && go build -ldflags="-s -w" -o ainexus-server .
 
 # 运行服务器
 cd cmd/server && go run main.go
@@ -49,7 +49,7 @@ cd internal/transformer/convert && go test -v ./...
 ### Docker
 ```bash
 # 构建镜像
-docker build -f cmd/server/Dockerfile -t ccnexus .
+docker build -f cmd/server/Dockerfile -t ainexus .
 
 # 使用 docker-compose
 cd cmd/server && docker-compose up -d
@@ -66,7 +66,7 @@ go mod tidy     # 清理依赖
 
 ### 目录结构
 ```
-ccNexus/
+AINexus/
 ├── cmd/
 │   ├── desktop/          # 桌面应用入口（Wails）
 │   │   ├── frontend/     # Vue.js 前端
@@ -103,7 +103,7 @@ ccNexus/
 - 线程安全操作
 
 ### 关键文件路径
-- 数据库：`~/.ccNexus/ccnexus.db`
+- 数据库：`~/.AINexus/ainexus.db`
 - 配置常量：`internal/config/config.go`（第 13-20 行：认证模式和端点 URL）
 - 代理路由：`internal/proxy/proxy.go`（第 108-114 行）
 
@@ -138,12 +138,12 @@ ccNexus/
 ## 环境变量
 
 服务器模式支持以下环境变量（`cmd/server/main.go`）：
-- `CCNEXUS_PORT` - 覆盖默认端口
-- `CCNEXUS_LOG_LEVEL` - 日志级别
-- `CCNEXUS_DB_PATH` - 数据库路径
-- `CCNEXUS_DATA_DIR` - 数据目录
-- `CCNEXUS_BASIC_AUTH_USERNAME` - Basic Auth 用户名
-- `CCNEXUS_BASIC_AUTH_PASSWORD` - Basic Auth 密码
+- `AINEXUS_PORT` - 覆盖默认端口
+- `AINEXUS_LOG_LEVEL` - 日志级别
+- `AINEXUS_DB_PATH` - 数据库路径
+- `AINEXUS_DATA_DIR` - 数据目录
+- `AINEXUS_BASIC_AUTH_USERNAME` - Basic Auth 用户名
+- `AINEXUS_BASIC_AUTH_PASSWORD` - Basic Auth 密码
 
 ## 依赖
 

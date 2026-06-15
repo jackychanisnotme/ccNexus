@@ -327,7 +327,7 @@ func TestHandleProxyEndpointSelectorModelSuffixDoesNotOverrideEndpointModel(t *t
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected HTTP 200, got %d body=%q", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("X-ccNexus-Endpoint"); got != "1052-2nd" {
+	if got := rec.Header().Get("X-AINexus-Endpoint"); got != "1052-2nd" {
 		t.Fatalf("expected request to select 1052-2nd, got %q", got)
 	}
 }

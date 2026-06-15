@@ -10,7 +10,7 @@ import (
 )
 
 func TestCloudBackupRequiresLoginCredentialOptInForClaudeOAuth(t *testing.T) {
-	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
 	if err != nil {
 		t.Fatalf("create storage: %v", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lich0821/ccNexus/internal/branding"
 	"github.com/lich0821/ccNexus/internal/claudeoauth"
 	"github.com/lich0821/ccNexus/internal/codexauth"
 	"github.com/lich0821/ccNexus/internal/config"
@@ -105,12 +106,12 @@ func (a *App) startup(ctx context.Context) {
 		logger.Error("Failed to get home directory: %v", err)
 		homeDir = "."
 	}
-	configDir := filepath.Join(homeDir, ".ccNexus")
+	configDir := branding.ResolveDataDir(homeDir)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		logger.Error("Failed to create config directory: %v", err)
 	}
 
-	dbPath := filepath.Join(configDir, "ccnexus.db")
+	dbPath := branding.ResolveDatabasePath(homeDir, configDir)
 
 	sqliteStorage, err := storage.NewSQLiteStorage(dbPath)
 	if err != nil {

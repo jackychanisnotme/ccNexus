@@ -20,7 +20,7 @@ type Mutex struct {
 // Uses flock (file locking) which is the standard Unix way to implement single instance
 func CreateMutex(name string) (*Mutex, error) {
 	// Convert Windows-style mutex name to Unix lock file path
-	// "Global\\ccNexus-SingleInstance-Mutex" -> "/tmp/ccNexus-SingleInstance.lock"
+	// "Global\\AINexus-SingleInstance-Mutex" -> "/tmp/AINexus-SingleInstance.lock"
 	lockName := filepath.Base(name)
 	lockPath := filepath.Join(os.TempDir(), lockName+".lock")
 

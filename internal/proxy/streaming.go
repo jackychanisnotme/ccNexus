@@ -28,7 +28,7 @@ const (
 	streamFinishTransformFailed       = "transform_failed"
 )
 
-const openAIResponsesWaitingID = "resp_ccnexus_waiting"
+const openAIResponsesWaitingID = "resp_ainexus_waiting"
 
 func openAIResponsesWaitingCreatedEvent() []byte {
 	return []byte(fmt.Sprintf(
@@ -83,7 +83,7 @@ func (s *downstreamStreamSession) Start() error {
 		header.Set("Cache-Control", "no-cache")
 		header.Set("X-Accel-Buffering", "no")
 		s.w.WriteHeader(http.StatusOK)
-		if _, err := s.w.Write([]byte(": ccnexus waiting for upstream\n\n")); err != nil {
+		if _, err := s.w.Write([]byte(": AINexus waiting for upstream\n\n")); err != nil {
 			s.mu.Unlock()
 			return err
 		}
@@ -200,7 +200,7 @@ func (s *downstreamStreamSession) writeHeartbeat() error {
 			return err
 		}
 	}
-	return s.writeComment("ccnexus waiting for upstream")
+	return s.writeComment("AINexus waiting for upstream")
 }
 
 func (s *downstreamStreamSession) writeOpenAIResponsesWaitingCreatedIfNeeded() (bool, error) {
@@ -329,11 +329,11 @@ func (s openAIResponsesCompletionState) canSynthesizeCompleted() bool {
 func (s openAIResponsesCompletionState) completedEvent(inputTokens, outputTokens int) []byte {
 	responseID := strings.TrimSpace(s.ResponseID)
 	if responseID == "" {
-		responseID = "resp_ccnexus_recovered"
+		responseID = "resp_ainexus_recovered"
 	}
 	itemID := strings.TrimSpace(s.ItemID)
 	if itemID == "" {
-		itemID = "msg_ccnexus_recovered_0"
+		itemID = "msg_ainexus_recovered_0"
 	}
 	if outputTokens <= 0 {
 		outputTokens = tokencount.EstimateOutputTokens(s.Text)

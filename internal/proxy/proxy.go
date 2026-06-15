@@ -152,7 +152,7 @@ func (p *Proxy) StartWithMux(customMux *http.ServeMux) error {
 	fatalCh := p.serverFatalCh
 	p.listenerMu.Unlock()
 
-	logger.Info("ccNexus starting on %s", addr)
+	logger.Info("AINexus starting on %s", addr)
 	logger.Info("Configured %d endpoints", len(p.config.GetEndpoints()))
 
 	p.serveListener(ln, addr)
@@ -191,7 +191,7 @@ func (p *Proxy) serveListener(ln net.Listener, addr string) {
 		fatalCh := p.serverFatalCh
 		p.listenerMu.Unlock()
 
-		logger.Error("ccNexus listener on %s stopped with error: %v", addr, err)
+		logger.Error("AINexus listener on %s stopped with error: %v", addr, err)
 		if isCurrent && fatalCh != nil {
 			select {
 			case fatalCh <- err:
@@ -266,7 +266,7 @@ func (p *Proxy) RebindListener() error {
 	p.listenerMu.Unlock()
 
 	p.serveListener(listenerToServe, listenerAddr)
-	logger.Info("ccNexus listener rebound from %s to %s", oldAddr, newAddr)
+	logger.Info("AINexus listener rebound from %s to %s", oldAddr, newAddr)
 	return nil
 }
 
@@ -709,7 +709,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	forceStreamRetryEndpoints := make(map[string]bool)
 	endpointAttempts := 0
-	compatRetryEndpoints := make(map[string]bool)
+	compatRetryArgumentIndices := make(map[string]map[int]bool)
 	advanceForFailure := func(current config.Endpoint, reason string, attemptNumber int, headers http.Header) {
 		p.markEndpointCooldownForReason(current.Name, reason, headers, obs, attemptNumber)
 		if !useSpecificEndpoint {
@@ -835,8 +835,8 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if clientFormat != ClientFormatClaude {
 			transformedBody = injectEndpointThinkingInPayload(transformedBody, transformerName, endpoint.Thinking)
 		}
-		if compatRetryEndpoints[endpoint.Name] {
-			if adaptedBody, changed := convert.AdaptOpenAI2FunctionCallArgumentsToObjects(transformedBody); changed {
+		if compatIndices := compatRetryArgumentIndices[endpoint.Name]; len(compatIndices) > 0 {
+			if adaptedBody, changed := convert.AdaptOpenAI2FunctionCallArgumentsAtIndicesToObjects(transformedBody, compatIndices); changed {
 				transformedBody = adaptedBody
 				logger.DebugLog("[%s] Arguments object compatibility enabled for upstream request", endpoint.Name)
 			}
@@ -1205,10 +1205,13 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				endpointAttempts = 0
 				continue
 			}
-			if shouldCompatRetryOnArgumentsTypeError(resp.StatusCode, errMsg, transformerName) && !compatRetryEndpoints[endpoint.Name] {
-				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "arguments_object_required", "Upstream requires Responses function_call arguments as objects, retrying same endpoint with compatibility payload: %s", logMsg)
+			if compatIndex, ok := openAI2ArgumentsObjectErrorIndex(resp.StatusCode, errMsg, transformerName); ok && !compatRetryArgumentIndices[endpoint.Name][compatIndex] {
+				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "arguments_object_required", "Upstream requires Responses input[%d].arguments as object, retrying same endpoint with compatibility payload: %s", compatIndex, logMsg)
 				p.markRequestInactive(endpoint.Name)
-				compatRetryEndpoints[endpoint.Name] = true
+				if compatRetryArgumentIndices[endpoint.Name] == nil {
+					compatRetryArgumentIndices[endpoint.Name] = make(map[int]bool)
+				}
+				compatRetryArgumentIndices[endpoint.Name][compatIndex] = true
 				endpointAttempts = 0
 				continue
 			}
@@ -1305,10 +1308,13 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			endpointAttempts = 0
 			continue
 		}
-		if shouldCompatRetryOnArgumentsTypeError(resp.StatusCode, respMsg, transformerName) && !compatRetryEndpoints[endpoint.Name] {
-			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "arguments_object_required", "Upstream requires Responses function_call arguments as objects, retrying same endpoint with compatibility payload: %s", respLogMsg)
+		if compatIndex, ok := openAI2ArgumentsObjectErrorIndex(resp.StatusCode, respMsg, transformerName); ok && !compatRetryArgumentIndices[endpoint.Name][compatIndex] {
+			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "arguments_object_required", "Upstream requires Responses input[%d].arguments as object, retrying same endpoint with compatibility payload: %s", compatIndex, respLogMsg)
 			p.markRequestInactive(endpoint.Name)
-			compatRetryEndpoints[endpoint.Name] = true
+			if compatRetryArgumentIndices[endpoint.Name] == nil {
+				compatRetryArgumentIndices[endpoint.Name] = make(map[int]bool)
+			}
+			compatRetryArgumentIndices[endpoint.Name][compatIndex] = true
 			endpointAttempts = 0
 			continue
 		}

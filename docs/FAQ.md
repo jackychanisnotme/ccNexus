@@ -41,7 +41,7 @@ Claude Code 请求中包含 Claude 模型名，代理需要知道转换为哪个
 **Q: 如何备份配置？**
 
 1. 使用 WebDAV 云同步
-2. 手动复制 `~/.ccNexus/ccnexus.db`
+2. 手动复制 `~/.AINexus/ainexus.db`
 
 **Q: 端点轮换顺序？**
 
@@ -49,4 +49,4 @@ Claude Code 请求中包含 Claude 模型名，代理需要知道转换为哪个
 
 **Q: 数据安全吗？**
 
-所有数据存储在本地 `~/.ccNexus/`，API 密钥不会发送给第三方。
+所有数据存储在本地 `~/.AINexus/`，API 密钥不会发送给第三方。

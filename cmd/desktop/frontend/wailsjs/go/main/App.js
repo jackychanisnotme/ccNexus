@@ -14,12 +14,12 @@ export function AddProjectDir(arg1) {
   return window['go']['main']['App']['AddProjectDir'](arg1);
 }
 
-export function ApplyUpdate(arg1) {
-  return window['go']['main']['App']['ApplyUpdate'](arg1);
-}
-
 export function ApplyAgentProviderConfig(arg1) {
   return window['go']['main']['App']['ApplyAgentProviderConfig'](arg1);
+}
+
+export function ApplyUpdate(arg1) {
+  return window['go']['main']['App']['ApplyUpdate'](arg1);
 }
 
 export function BackupToProvider(arg1, arg2) {
@@ -30,12 +30,12 @@ export function BackupToWebDAV(arg1) {
   return window['go']['main']['App']['BackupToWebDAV'](arg1);
 }
 
-export function CancelDownload() {
-  return window['go']['main']['App']['CancelDownload']();
-}
-
 export function CancelCodexCredentialAuth(arg1) {
   return window['go']['main']['App']['CancelCodexCredentialAuth'](arg1);
+}
+
+export function CancelDownload() {
+  return window['go']['main']['App']['CancelDownload']();
 }
 
 export function CheckForUpdates() {
@@ -82,6 +82,10 @@ export function DetectWebDAVConflict(arg1) {
   return window['go']['main']['App']['DetectWebDAVConflict'](arg1);
 }
 
+export function DiscoverClaudeOAuthCredentials(arg1) {
+  return window['go']['main']['App']['DiscoverClaudeOAuthCredentials'](arg1);
+}
+
 export function DownloadUpdate(arg1, arg2) {
   return window['go']['main']['App']['DownloadUpdate'](arg1, arg2);
 }
@@ -110,16 +114,16 @@ export function GenerateMockArchives(arg1) {
   return window['go']['main']['App']['GenerateMockArchives'](arg1);
 }
 
+export function GetAgentProviderStatus() {
+  return window['go']['main']['App']['GetAgentProviderStatus']();
+}
+
 export function GetArchiveData(arg1) {
   return window['go']['main']['App']['GetArchiveData'](arg1);
 }
 
 export function GetArchiveTrend(arg1) {
   return window['go']['main']['App']['GetArchiveTrend'](arg1);
-}
-
-export function GetAgentProviderStatus() {
-  return window['go']['main']['App']['GetAgentProviderStatus']();
 }
 
 export function GetAutoDarkTheme() {
@@ -134,12 +138,12 @@ export function GetChangelog(arg1) {
   return window['go']['main']['App']['GetChangelog'](arg1);
 }
 
-export function GetCodexProxyURL() {
-  return window['go']['main']['App']['GetCodexProxyURL']();
-}
-
 export function GetCodexCredentialAuthStatus(arg1) {
   return window['go']['main']['App']['GetCodexCredentialAuthStatus'](arg1);
+}
+
+export function GetCodexProxyURL() {
+  return window['go']['main']['App']['GetCodexProxyURL']();
 }
 
 export function GetCodexSessionData(arg1) {
@@ -158,20 +162,20 @@ export function GetCurrentEndpoint() {
   return window['go']['main']['App']['GetCurrentEndpoint']();
 }
 
-export function GetEndpointRuntimeStatuses() {
-  return window['go']['main']['App']['GetEndpointRuntimeStatuses']();
-}
-
-export function GetEndpointProxyURL(arg1) {
-  return window['go']['main']['App']['GetEndpointProxyURL'](arg1);
-}
-
 export function GetDownloadProgress() {
   return window['go']['main']['App']['GetDownloadProgress']();
 }
 
 export function GetEndpointCredentials(arg1) {
   return window['go']['main']['App']['GetEndpointCredentials'](arg1);
+}
+
+export function GetEndpointProxyURL(arg1) {
+  return window['go']['main']['App']['GetEndpointProxyURL'](arg1);
+}
+
+export function GetEndpointRuntimeStatuses() {
+  return window['go']['main']['App']['GetEndpointRuntimeStatuses']();
 }
 
 export function GetLanguage() {
@@ -188,6 +192,10 @@ export function GetLogs() {
 
 export function GetLogsByLevel(arg1) {
   return window['go']['main']['App']['GetLogsByLevel'](arg1);
+}
+
+export function GetNetworkStatus() {
+  return window['go']['main']['App']['GetNetworkStatus']();
 }
 
 export function GetProxyURL() {
@@ -210,16 +218,12 @@ export function GetStatsByPeriod(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetStatsByPeriod'](arg1, arg2, arg3, arg4);
 }
 
-export function GetStatsFilters() {
-  return window['go']['main']['App']['GetStatsFilters']();
-}
-
-export function GetNetworkStatus() {
-  return window['go']['main']['App']['GetNetworkStatus']();
-}
-
 export function GetStatsDaily() {
   return window['go']['main']['App']['GetStatsDaily']();
+}
+
+export function GetStatsFilters() {
+  return window['go']['main']['App']['GetStatsFilters']();
 }
 
 export function GetStatsMonthly() {
@@ -272,6 +276,10 @@ export function GetVersion() {
 
 export function HideWindow() {
   return window['go']['main']['App']['HideWindow']();
+}
+
+export function ImportClaudeOAuthCredential(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['ImportClaudeOAuthCredential'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function ImportEndpointCredentials(arg1, arg2, arg3) {
@@ -346,12 +354,12 @@ export function ReorderEndpoints(arg1) {
   return window['go']['main']['App']['ReorderEndpoints'](arg1);
 }
 
-export function RestoreFromProvider(arg1, arg2, arg3) {
-  return window['go']['main']['App']['RestoreFromProvider'](arg1, arg2, arg3);
-}
-
 export function RestoreAgentProviderBackup(arg1, arg2) {
   return window['go']['main']['App']['RestoreAgentProviderBackup'](arg1, arg2);
+}
+
+export function RestoreFromProvider(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RestoreFromProvider'](arg1, arg2, arg3);
 }
 
 export function RestoreFromWebDAV(arg1, arg2) {
@@ -390,12 +398,12 @@ export function SetCodexProxyURL(arg1) {
   return window['go']['main']['App']['SetCodexProxyURL'](arg1);
 }
 
-export function StartCodexCredentialAuth(arg1) {
-  return window['go']['main']['App']['StartCodexCredentialAuth'](arg1);
-}
-
 export function SetEndpointCredentialEnabled(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetEndpointCredentialEnabled'](arg1, arg2, arg3);
+}
+
+export function SetEndpointProxyURL(arg1, arg2) {
+  return window['go']['main']['App']['SetEndpointProxyURL'](arg1, arg2);
 }
 
 export function SetLanguage(arg1) {
@@ -430,6 +438,10 @@ export function SkipVersion(arg1) {
   return window['go']['main']['App']['SkipVersion'](arg1);
 }
 
+export function StartCodexCredentialAuth(arg1) {
+  return window['go']['main']['App']['StartCodexCredentialAuth'](arg1);
+}
+
 export function SwitchToEndpoint(arg1) {
   return window['go']['main']['App']['SwitchToEndpoint'](arg1);
 }
@@ -458,6 +470,10 @@ export function ToggleEndpoint(arg1, arg2) {
   return window['go']['main']['App']['ToggleEndpoint'](arg1, arg2);
 }
 
+export function UpdateBackupLoginCredentialOptIn(arg1) {
+  return window['go']['main']['App']['UpdateBackupLoginCredentialOptIn'](arg1);
+}
+
 export function UpdateBackupProvider(arg1) {
   return window['go']['main']['App']['UpdateBackupProvider'](arg1);
 }
@@ -474,8 +490,8 @@ export function UpdateEndpointCredentialToken(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['UpdateEndpointCredentialToken'](arg1, arg2, arg3, arg4);
 }
 
-export function SetEndpointProxyURL(arg1, arg2) {
-  return window['go']['main']['App']['SetEndpointProxyURL'](arg1, arg2);
+export function UpdateListenMode(arg1) {
+  return window['go']['main']['App']['UpdateListenMode'](arg1);
 }
 
 export function UpdateLocalBackupDir(arg1) {
@@ -484,10 +500,6 @@ export function UpdateLocalBackupDir(arg1) {
 
 export function UpdatePort(arg1) {
   return window['go']['main']['App']['UpdatePort'](arg1);
-}
-
-export function UpdateListenMode(arg1) {
-  return window['go']['main']['App']['UpdateListenMode'](arg1);
 }
 
 export function UpdateS3BackupConfig(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {

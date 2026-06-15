@@ -44,7 +44,7 @@ func (p *Proxy) handleVersion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeProxyJSON(w, map[string]interface{}{
-		"version": "ccNexus",
+		"version": "AINexus",
 	})
 }
 

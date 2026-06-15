@@ -1,7 +1,7 @@
 # /v1/models API 使用说明
 
 ## 功能概述
-ccNexus 现已支持 OpenAI 兼容的 `/v1/models` API，聚合所有后端端点的模型列表。
+AINexus 现已支持 OpenAI 兼容的 `/v1/models` API，聚合所有后端端点的模型列表。
 
 ## 快速开始
 

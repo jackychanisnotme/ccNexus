@@ -35,7 +35,7 @@ func ensureDBExtension(filename string) string {
 // DatabaseBackupData represents metadata for database backups
 type DatabaseBackupData struct {
 	BackupTime time.Time `json:"backupTime"` // 备份时间
-	Version    string    `json:"version"`    // ccNexus 版本
+	Version    string    `json:"version"`    // AINexus 版本
 }
 
 // BackupDatabase backs up the database file to WebDAV

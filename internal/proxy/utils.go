@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +42,8 @@ const (
 	retryReasonEndpointAuthFailed  = "endpoint_auth_failed"
 	retryReasonTransportProtocol   = "transport_protocol_error"
 )
+
+var openAI2InputArgumentsParamPattern = regexp.MustCompile(`input\[(\d+)\]\.arguments`)
 
 func (p *Proxy) streamHeaderTimeoutOrDefault() time.Duration {
 	if p != nil && p.streamHeaderTimeout > 0 {
@@ -368,4 +372,19 @@ func shouldCompatRetryOnArgumentsTypeError(statusCode int, body string, transfor
 		strings.Contains(lower, "got a string") &&
 		strings.Contains(lower, "invalid_type") &&
 		strings.Contains(lower, "invalid_request_error")
+}
+
+func openAI2ArgumentsObjectErrorIndex(statusCode int, body string, transformerName string) (int, bool) {
+	if !shouldCompatRetryOnArgumentsTypeError(statusCode, body, transformerName) {
+		return 0, false
+	}
+	matches := openAI2InputArgumentsParamPattern.FindStringSubmatch(body)
+	if len(matches) != 2 {
+		return 0, false
+	}
+	index, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, false
+	}
+	return index, true
 }

@@ -100,7 +100,7 @@ func (p *Proxy) fetchModelsFromEndpoint(ep config.Endpoint) ([]ModelInfo, error)
 			if ep.AuthMode == config.AuthModeAPIKey && ep.APIKey != "" {
 				req.Header.Set("Authorization", "Bearer "+ep.APIKey)
 			}
-			req.Header.Set("User-Agent", "ccNexus/1.0")
+			req.Header.Set("User-Agent", "AINexus/1.0")
 
 			client := p.httpClientForEndpoint(ep, modelsURL, 10*time.Second)
 			models, fetchErr := p.fetchOpenAIModelsWithRequest(client, req, ep.Name)
@@ -140,7 +140,7 @@ func (p *Proxy) fetchModelsFromEndpoint(ep config.Endpoint) ([]ModelInfo, error)
 	}
 
 	// Set User-Agent
-	req.Header.Set("User-Agent", "ccNexus/1.0")
+	req.Header.Set("User-Agent", "AINexus/1.0")
 
 	// Execute request
 	client := p.httpClientForEndpoint(ep, modelsURL, 10*time.Second)

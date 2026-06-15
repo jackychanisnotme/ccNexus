@@ -333,7 +333,7 @@ func TestTokenPoolUnauthorizedStillRetriesNextToken(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
 	if err != nil {
 		t.Fatalf("open storage: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestClaudeOAuthTokenPoolUsesOnlyClaudeOAuthCredentials(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
 	if err != nil {
 		t.Fatalf("open storage: %v", err)
 	}

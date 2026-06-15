@@ -16,7 +16,7 @@ func TestAgentProviderApplyBacksUpAndRestoresDetectedConfigs(t *testing.T) {
 	cfg.UpdatePort(3456)
 	svc := NewAgentProviderServiceWithOptions(cfg, AgentProviderOptions{
 		HomeDir: home,
-		DataDir: filepath.Join(home, ".ccNexus"),
+		DataDir: filepath.Join(home, ".AINexus"),
 	})
 
 	writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{"permissions":{"allow_file_access":true},"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","ANTHROPIC_API_KEY":"old-key"}}`)
@@ -45,8 +45,8 @@ func TestAgentProviderApplyBacksUpAndRestoresDetectedConfigs(t *testing.T) {
 		t.Fatalf("claude config not updated/preserved:\n%s", claude)
 	}
 	codex := readFile(t, filepath.Join(home, ".codex", "config.toml"))
-	if !strings.Contains(codex, `model_provider = "ccnexus"`) || !strings.Contains(codex, `base_url = "http://127.0.0.1:3456/v1"`) {
-		t.Fatalf("codex config missing ccnexus provider:\n%s", codex)
+	if !strings.Contains(codex, `model_provider = "AINexus"`) || !strings.Contains(codex, `base_url = "http://127.0.0.1:3456/v1"`) {
+		t.Fatalf("codex config missing AINexus provider:\n%s", codex)
 	}
 	gemini := readFile(t, filepath.Join(home, ".gemini", ".env"))
 	if !strings.Contains(gemini, "GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:3456") || !strings.Contains(gemini, "GEMINI_MODEL=gemini-pro") {
@@ -57,15 +57,15 @@ func TestAgentProviderApplyBacksUpAndRestoresDetectedConfigs(t *testing.T) {
 		t.Fatalf("expected opencode theme preserved, got %#v", got)
 	}
 	openclaw := readJSON(t, filepath.Join(home, ".openclaw", "openclaw.json"))
-	if _, ok := openclaw["models"].(map[string]any)["providers"].(map[string]any)["ccnexus"]; !ok {
-		t.Fatalf("expected openclaw ccnexus provider, got %#v", openclaw)
+	if _, ok := openclaw["models"].(map[string]any)["providers"].(map[string]any)["AINexus"]; !ok {
+		t.Fatalf("expected openclaw AINexus provider, got %#v", openclaw)
 	}
 	hermes := readFile(t, filepath.Join(home, ".hermes", "config.yaml"))
-	if !strings.Contains(hermes, "provider: ccnexus") || !strings.Contains(hermes, "base_url: http://127.0.0.1:3456") {
+	if !strings.Contains(hermes, "provider: AINexus") || !strings.Contains(hermes, "base_url: http://127.0.0.1:3456") {
 		t.Fatalf("hermes yaml not updated:\n%s", hermes)
 	}
 
-	manifestPath := filepath.Join(home, ".ccNexus", "agent-provider-backups", result.BackupID, "manifest.json")
+	manifestPath := filepath.Join(home, ".AINexus", "agent-provider-backups", result.BackupID, "manifest.json")
 	manifest := readFile(t, manifestPath)
 	if !strings.Contains(manifest, `"target": "claude"`) || !strings.Contains(manifest, `"target": "codex"`) {
 		t.Fatalf("manifest missing target backups:\n%s", manifest)
@@ -93,7 +93,7 @@ func TestAgentProviderSkipsMissingConfigsByDefault(t *testing.T) {
 	cfg := config.DefaultConfig()
 	svc := NewAgentProviderServiceWithOptions(cfg, AgentProviderOptions{
 		HomeDir: home,
-		DataDir: filepath.Join(home, ".ccNexus"),
+		DataDir: filepath.Join(home, ".AINexus"),
 	})
 
 	result := svc.Apply(AgentProviderRequest{Targets: []string{"claude", "codex"}})
@@ -101,6 +101,44 @@ func TestAgentProviderSkipsMissingConfigsByDefault(t *testing.T) {
 	assertTargetStatus(t, result.Results, "codex", "skipped")
 	if result.BackupID != "" {
 		t.Fatalf("expected no backup for all-skipped apply, got %q", result.BackupID)
+	}
+}
+
+func TestAgentProviderClaudeDesktopUsesAINexusProfileAndLegacyFallback(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	svc := NewAgentProviderServiceWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	wantNew := filepath.Join(home, "Library", "Application Support", "Claude-3p", "configLibrary", "ainexus.json")
+	if got := svc.claudeDesktopProfilePath(); got != wantNew {
+		t.Fatalf("claudeDesktopProfilePath() = %q, want %q", got, wantNew)
+	}
+
+	legacy := filepath.Join(home, "Library", "Application Support", "Claude-3p", "configLibrary", "ccnexus.json")
+	writeFile(t, legacy, `{"name":"ccNexus"}`)
+	if got := svc.claudeDesktopProfilePath(); got != legacy {
+		t.Fatalf("claudeDesktopProfilePath() = %q, want legacy %q", got, legacy)
+	}
+}
+
+func TestAgentProviderApplyCreatesAINexusClaudeDesktopProfile(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3456)
+	svc := NewAgentProviderServiceWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	result := svc.Apply(AgentProviderRequest{Targets: []string{"claude_desktop"}, CreateMissing: true})
+	assertTargetStatus(t, result.Results, "claude_desktop", "success")
+
+	path := filepath.Join(home, "Library", "Application Support", "Claude-3p", "configLibrary", "ainexus.json")
+	if got := readFile(t, path); !strings.Contains(got, `"name": "AINexus"`) {
+		t.Fatalf("expected AINexus profile, got:\n%s", got)
 	}
 }
 
@@ -148,7 +186,7 @@ func TestAgentProviderInvalidJSONFailsWithoutWriting(t *testing.T) {
 	cfg := config.DefaultConfig()
 	svc := NewAgentProviderServiceWithOptions(cfg, AgentProviderOptions{
 		HomeDir: home,
-		DataDir: filepath.Join(home, ".ccNexus"),
+		DataDir: filepath.Join(home, ".AINexus"),
 	})
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeFile(t, path, `{"env":`)

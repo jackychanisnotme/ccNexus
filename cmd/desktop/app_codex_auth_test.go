@@ -14,7 +14,7 @@ func TestSaveSettingsRebuildsCodexAuthManagerAfterProxyChange(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("HOME", tempDir)
 
-	store, err := storage.NewSQLiteStorage(filepath.Join(tempDir, "ccnexus.db"))
+	store, err := storage.NewSQLiteStorage(filepath.Join(tempDir, "ainexus.db"))
 	if err != nil {
 		t.Fatalf("create storage: %v", err)
 	}

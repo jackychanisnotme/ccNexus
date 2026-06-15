@@ -4,9 +4,9 @@ import (
 	"embed"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 
+	"github.com/lich0821/ccNexus/internal/branding"
 	"github.com/lich0821/ccNexus/internal/singleinstance"
 	"github.com/lich0821/ccNexus/internal/storage"
 	"github.com/wailsapp/wails/v2"
@@ -27,11 +27,11 @@ var trayIconOther []byte
 
 func main() {
 	// Check for single instance
-	mutex, err := singleinstance.CreateMutex("Global\\ccNexus-SingleInstance-Mutex")
+	mutex, err := singleinstance.CreateMutex("Global\\AINexus-SingleInstance-Mutex")
 	if err != nil {
 		// Another instance is already running, try to show it
 		log.Printf("Another instance is already running, attempting to show existing window...")
-		if singleinstance.FindAndShowExistingWindow("ccNexus") {
+		if singleinstance.FindAndShowExistingWindow(branding.Name) {
 			log.Printf("Successfully brought existing window to foreground")
 		} else {
 			log.Printf("Could not find existing window, but another instance is running")
@@ -56,7 +56,8 @@ func main() {
 	windowWidth, windowHeight := 1024, 768 // defaults
 	homeDir, err := os.UserHomeDir()
 	if err == nil {
-		dbPath := filepath.Join(homeDir, ".ccNexus", "ccnexus.db")
+		dataDir := branding.ResolveDataDir(homeDir)
+		dbPath := branding.ResolveDatabasePath(homeDir, dataDir)
 		if sqliteStorage, err := storage.NewSQLiteStorage(dbPath); err == nil {
 			if w, err := sqliteStorage.GetConfig("windowWidth"); err == nil && w != "" {
 				if width, err := strconv.Atoi(w); err == nil && width > 0 {
@@ -73,7 +74,7 @@ func main() {
 	}
 
 	err = wails.Run(&options.App{
-		Title:       "ccNexus",
+		Title:       branding.Name,
 		Width:       windowWidth,
 		Height:      windowHeight,
 		StartHidden: false,
@@ -104,8 +105,8 @@ func main() {
 			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
 			About: &mac.AboutInfo{
-				Title:   "ccNexus",
-				Message: "© 2024 ccNexus\n\nA smart API endpoint rotation proxy for Claude Code",
+				Title:   branding.Name,
+				Message: "© 2024 AINexus\n\nA smart API endpoint rotation proxy for AI coding tools",
 			},
 		},
 		Windows: &windows.Options{

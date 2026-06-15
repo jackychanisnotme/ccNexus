@@ -7,17 +7,17 @@ export function AddEndpoint(arg1:string,arg2:string,arg3:string,arg4:string,arg5
 
 export function AddProjectDir(arg1:string):Promise<void>;
 
-export function ApplyUpdate(arg1:string):Promise<string>;
-
 export function ApplyAgentProviderConfig(arg1:string):Promise<string>;
+
+export function ApplyUpdate(arg1:string):Promise<string>;
 
 export function BackupToProvider(arg1:string,arg2:string):Promise<void>;
 
 export function BackupToWebDAV(arg1:string):Promise<void>;
 
-export function CancelDownload():Promise<void>;
-
 export function CancelCodexCredentialAuth(arg1:string):Promise<string>;
+
+export function CancelDownload():Promise<void>;
 
 export function CheckForUpdates():Promise<string>;
 
@@ -41,6 +41,8 @@ export function DetectTerminals():Promise<string>;
 
 export function DetectWebDAVConflict(arg1:string):Promise<string>;
 
+export function DiscoverClaudeOAuthCredentials(arg1:number):Promise<string>;
+
 export function DownloadUpdate(arg1:string,arg2:string):Promise<void>;
 
 export function FetchBroadcast(arg1:string):Promise<string>;
@@ -55,11 +57,11 @@ export function FetchModels(arg1:string,arg2:string,arg3:string,arg4:string):Pro
 
 export function GenerateMockArchives(arg1:number):Promise<string>;
 
+export function GetAgentProviderStatus():Promise<string>;
+
 export function GetArchiveData(arg1:string):Promise<string>;
 
 export function GetArchiveTrend(arg1:string):Promise<string>;
-
-export function GetAgentProviderStatus():Promise<string>;
 
 export function GetAutoDarkTheme():Promise<string>;
 
@@ -67,9 +69,9 @@ export function GetAutoLightTheme():Promise<string>;
 
 export function GetChangelog(arg1:string):Promise<string>;
 
-export function GetCodexProxyURL():Promise<string>;
-
 export function GetCodexCredentialAuthStatus(arg1:string):Promise<string>;
+
+export function GetCodexProxyURL():Promise<string>;
 
 export function GetCodexSessionData(arg1:string):Promise<string>;
 
@@ -79,13 +81,13 @@ export function GetConfig():Promise<string>;
 
 export function GetCurrentEndpoint():Promise<string>;
 
-export function GetEndpointProxyURL(arg1:number):Promise<string>;
-
-export function GetEndpointRuntimeStatuses():Promise<string>;
-
 export function GetDownloadProgress():Promise<string>;
 
 export function GetEndpointCredentials(arg1:number):Promise<string>;
+
+export function GetEndpointProxyURL(arg1:number):Promise<string>;
+
+export function GetEndpointRuntimeStatuses():Promise<string>;
 
 export function GetLanguage():Promise<string>;
 
@@ -94,6 +96,8 @@ export function GetLogLevel():Promise<number>;
 export function GetLogs():Promise<string>;
 
 export function GetLogsByLevel(arg1:number):Promise<string>;
+
+export function GetNetworkStatus():Promise<string>;
 
 export function GetProxyURL():Promise<string>;
 
@@ -105,11 +109,9 @@ export function GetStats():Promise<string>;
 
 export function GetStatsByPeriod(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
-export function GetStatsFilters():Promise<string>;
-
-export function GetNetworkStatus():Promise<string>;
-
 export function GetStatsDaily():Promise<string>;
+
+export function GetStatsFilters():Promise<string>;
 
 export function GetStatsMonthly():Promise<string>;
 
@@ -136,6 +138,8 @@ export function GetUpdateSettings():Promise<string>;
 export function GetVersion():Promise<string>;
 
 export function HideWindow():Promise<void>;
+
+export function ImportClaudeOAuthCredential(arg1:number,arg2:string,arg3:boolean,arg4:string,arg5:boolean):Promise<string>;
 
 export function ImportEndpointCredentials(arg1:number,arg2:string,arg3:boolean):Promise<string>;
 
@@ -173,9 +177,9 @@ export function RenameSession(arg1:string,arg2:string,arg3:string):Promise<void>
 
 export function ReorderEndpoints(arg1:Array<string>):Promise<void>;
 
-export function RestoreFromProvider(arg1:string,arg2:string,arg3:string):Promise<void>;
-
 export function RestoreAgentProviderBackup(arg1:string,arg2:string):Promise<string>;
+
+export function RestoreFromProvider(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function RestoreFromWebDAV(arg1:string,arg2:string):Promise<void>;
 
@@ -195,9 +199,9 @@ export function SetCloseWindowBehavior(arg1:string):Promise<void>;
 
 export function SetCodexProxyURL(arg1:string):Promise<void>;
 
-export function StartCodexCredentialAuth(arg1:number):Promise<string>;
-
 export function SetEndpointCredentialEnabled(arg1:number,arg2:number,arg3:boolean):Promise<void>;
+
+export function SetEndpointProxyURL(arg1:number,arg2:string):Promise<void>;
 
 export function SetLanguage(arg1:string):Promise<void>;
 
@@ -215,6 +219,8 @@ export function ShowWindow():Promise<void>;
 
 export function SkipVersion(arg1:string):Promise<void>;
 
+export function StartCodexCredentialAuth(arg1:number):Promise<string>;
+
 export function SwitchToEndpoint(arg1:string):Promise<void>;
 
 export function TestAllEndpointsZeroCost():Promise<string>;
@@ -229,6 +235,8 @@ export function TestWebDAVConnection(arg1:string,arg2:string,arg3:string):Promis
 
 export function ToggleEndpoint(arg1:number,arg2:boolean):Promise<void>;
 
+export function UpdateBackupLoginCredentialOptIn(arg1:boolean):Promise<void>;
+
 export function UpdateBackupProvider(arg1:string):Promise<void>;
 
 export function UpdateConfig(arg1:string):Promise<void>;
@@ -237,11 +245,9 @@ export function UpdateEndpoint(arg1:number,arg2:string,arg3:string,arg4:string,a
 
 export function UpdateEndpointCredentialToken(arg1:number,arg2:number,arg3:string,arg4:string):Promise<void>;
 
-export function SetEndpointProxyURL(arg1:number,arg2:string):Promise<void>;
+export function UpdateListenMode(arg1:string):Promise<void>;
 
 export function UpdateLocalBackupDir(arg1:string):Promise<void>;
-
-export function UpdateListenMode(arg1:string):Promise<void>;
 
 export function UpdatePort(arg1:number):Promise<void>;
 

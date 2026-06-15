@@ -9,13 +9,13 @@ import (
 )
 
 var (
-	kernel32         = syscall.NewLazyDLL("kernel32.dll")
-	procCreateMutex  = kernel32.NewProc("CreateMutexW")
-	procReleaseMutex = kernel32.NewProc("ReleaseMutex")
-	procCloseHandle  = kernel32.NewProc("CloseHandle")
-	user32           = syscall.NewLazyDLL("user32.dll")
-	procFindWindow   = user32.NewProc("FindWindowW")
-	procShowWindow   = user32.NewProc("ShowWindow")
+	kernel32                = syscall.NewLazyDLL("kernel32.dll")
+	procCreateMutex         = kernel32.NewProc("CreateMutexW")
+	procReleaseMutex        = kernel32.NewProc("ReleaseMutex")
+	procCloseHandle         = kernel32.NewProc("CloseHandle")
+	user32                  = syscall.NewLazyDLL("user32.dll")
+	procFindWindow          = user32.NewProc("FindWindowW")
+	procShowWindow          = user32.NewProc("ShowWindow")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 )
 

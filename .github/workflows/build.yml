@@ -149,34 +149,34 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           cd cmd/desktop/build/bin
-          tar -czf ccNexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ccNexus
-          mv ccNexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../../
+          tar -czf AINexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz AINexus
+          mv AINexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../../
 
       - name: Package application (macOS)
         if: matrix.platform == 'darwin'
         run: |
           cd cmd/desktop/build/bin
-          if [ -d "ccNexus.app" ]; then
-            zip -r ccNexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip "ccNexus.app"
+          if [ -d "AINexus.app" ]; then
+            zip -r AINexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip "AINexus.app"
           else
-            tar -czf ccNexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ccNexus
+            tar -czf AINexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz AINexus
           fi
-          mv ccNexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.* ../../../../
+          mv AINexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.* ../../../../
 
       - name: Package application (Windows)
         if: matrix.platform == 'windows'
         run: |
           cd cmd/desktop/build/bin
-          Compress-Archive -Path ccNexus.exe -DestinationPath ../../../../ccNexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          Compress-Archive -Path AINexus.exe -DestinationPath ../../../../AINexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
         shell: pwsh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ccNexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          name: AINexus-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
-            ccNexus-*.tar.gz
-            ccNexus-*.zip
+            AINexus-*.tar.gz
+            AINexus-*.zip
 
   release:
     needs: build

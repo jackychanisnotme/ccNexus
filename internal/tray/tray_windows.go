@@ -30,15 +30,15 @@ var menuTexts = map[string]struct {
 		Show:    "显示窗口",
 		ShowTip: "显示主窗口",
 		Quit:    "退出程序",
-		QuitTip: "退出 ccNexus",
-		Tooltip: "ccNexus - API 端点轮换代理",
+		QuitTip: "退出 AINexus",
+		Tooltip: "AINexus - API 端点轮换代理",
 	},
 	"en": {
 		Show:    "Show Window",
 		ShowTip: "Show the main window",
 		Quit:    "Quit",
-		QuitTip: "Quit ccNexus",
-		Tooltip: "ccNexus - API Endpoint Rotation Proxy",
+		QuitTip: "Quit AINexus",
+		Tooltip: "AINexus - API Endpoint Rotation Proxy",
 	},
 }
 
@@ -63,7 +63,7 @@ func onReady(icon []byte) {
 	if len(icon) > 0 {
 		systray.SetIcon(icon)
 	}
-	systray.SetTitle("ccNexus")
+	systray.SetTitle("AINexus")
 
 	texts := getMenuTexts(currentLang)
 	systray.SetTooltip(texts.Tooltip)

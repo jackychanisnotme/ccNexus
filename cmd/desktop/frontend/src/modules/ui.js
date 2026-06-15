@@ -363,7 +363,7 @@ export function initUI() {
         <div class="footer">
             <div class="footer-content">
                 <div class="footer-left">
-                    <span style="opacity: 0.8;">© 2025 ccNexus</span>
+                    <span style="opacity: 0.8;">© 2026 AINexus</span>
                 </div>
                 <div class="footer-center">
                     <div class="tips-container">

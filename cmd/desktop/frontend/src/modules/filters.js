@@ -40,7 +40,7 @@ export function clearAllFilters() {
 }
 
 // 持久化筛选状态
-const FILTER_STATE_KEY = 'ccnexus_filter_state_v3';
+const FILTER_STATE_KEY = 'ainexus_filter_state_v3';
 
 function saveFilterState() {
     try {

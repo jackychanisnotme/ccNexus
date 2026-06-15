@@ -253,7 +253,7 @@ func TestHandleProxyRetriesOpenAI2WhenFunctionCallArgumentsMustBeObjects(t *test
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":{"message":"Invalid type for 'input[58].arguments': expected an object, but got a string instead.","type":"invalid_request_error","param":"input[58].arguments","code":"invalid_type"}}`))
+			_, _ = w.Write([]byte(`{"error":{"message":"Invalid type for 'input[1].arguments': expected an object, but got a string instead.","type":"invalid_request_error","param":"input[1].arguments","code":"invalid_type"}}`))
 			return
 		}
 		arguments, ok := functionCall["arguments"].(map[string]interface{})
@@ -295,6 +295,88 @@ func TestHandleProxyRetriesOpenAI2WhenFunctionCallArgumentsMustBeObjects(t *test
 	}
 	if !strings.Contains(rec.Body.String(), `"id":"resp-upstream"`) {
 		t.Fatalf("expected upstream response body, got %q", rec.Body.String())
+	}
+}
+
+func TestHandleProxyOnlyConvertsRejectedOpenAI2ArgumentIndexToObject(t *testing.T) {
+	var upstreamHits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode upstream request: %v", err)
+		}
+		input, ok := body["input"].([]interface{})
+		if !ok {
+			t.Fatalf("expected input array, got %#v", body["input"])
+		}
+		rejectedCall := input[8].(map[string]interface{})
+		standardCall := input[12].(map[string]interface{})
+		switch upstreamHits {
+		case 1:
+			if _, ok := rejectedCall["arguments"].(string); !ok {
+				t.Fatalf("first attempt should preserve rejected-call string arguments, got %#v", rejectedCall["arguments"])
+			}
+			if _, ok := standardCall["arguments"].(string); !ok {
+				t.Fatalf("first attempt should preserve standard-call string arguments, got %#v", standardCall["arguments"])
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Invalid type for 'input[8].arguments': expected an object, but got a string instead.","type":"invalid_request_error","param":"input[8].arguments","code":"invalid_type"}}`))
+			return
+		case 2:
+			arguments, ok := rejectedCall["arguments"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("compat retry should send object arguments for rejected index, got %#v", rejectedCall["arguments"])
+			}
+			if arguments["symbol"] != "002714" {
+				t.Fatalf("expected parsed symbol argument, got %#v", arguments)
+			}
+			if _, ok := standardCall["arguments"].(string); !ok {
+				t.Fatalf("compat retry should preserve unrelated string arguments, got %#v", standardCall["arguments"])
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"resp-upstream","usage":{"input_tokens":1,"output_tokens":1},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+			return
+		default:
+			t.Fatalf("unexpected extra upstream hit %d", upstreamHits)
+		}
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+
+	body := `{
+		"model":"gpt-5.5",
+		"stream":false,
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"lookup"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"thinking"}]},
+			{"type":"function_call_output","call_id":"call_0","output":"ok"},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"more"}]},
+			{"type":"function_call_output","call_id":"call_x","output":"ok"},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"lookup"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"tool next"}]},
+			{"type":"function_call","call_id":"call_rejected","name":"lookup","arguments":"{\"symbol\":\"002714\"}"},
+			{"type":"function_call_output","call_id":"call_rejected","output":"ok"},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"second lookup"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"tool next"}]},
+			{"type":"function_call","call_id":"call_standard","name":"lookup","arguments":"{\"symbol\":\"000001\"}"}
+		]
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected compatibility retry to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 2 {
+		t.Fatalf("expected one compatibility retry, got upstream hits=%d", upstreamHits)
 	}
 }
 

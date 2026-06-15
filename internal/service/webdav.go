@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/lich0821/ccNexus/internal/branding"
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/storage"
@@ -30,8 +31,8 @@ func (w *WebDAVService) UpdateWebDAVConfig(url, username, password string) error
 		URL:        url,
 		Username:   username,
 		Password:   password,
-		ConfigPath: "/ccNexus/config",
-		StatsPath:  "/ccNexus/stats",
+		ConfigPath: branding.DefaultWebDAVConfigPath,
+		StatsPath:  branding.DefaultWebDAVStatsPath,
 	}
 
 	w.config.UpdateWebDAV(webdavConfig)
@@ -98,7 +99,7 @@ func (w *WebDAVService) BackupToWebDAV(filename string) error {
 		logger.Error("Failed to get home directory: %v", err)
 		return fmt.Errorf("get_home_dir_failed")
 	}
-	tempDir := filepath.Join(homeDir, ".ccNexus", "temp")
+	tempDir := filepath.Join(branding.ResolveDataDir(homeDir), "temp")
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		logger.Error("Failed to create temp directory: %v", err)
 		return fmt.Errorf("create_temp_dir_failed")
@@ -156,7 +157,7 @@ func (w *WebDAVService) RestoreFromWebDAV(filename, choice string, reloadConfig 
 	if err != nil {
 		return fmt.Errorf("get_home_dir_failed")
 	}
-	tempDir := filepath.Join(homeDir, ".ccNexus", "temp")
+	tempDir := filepath.Join(branding.ResolveDataDir(homeDir), "temp")
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return fmt.Errorf("create_temp_dir_failed")
 	}
@@ -310,7 +311,7 @@ func (w *WebDAVService) DetectWebDAVConflict(filename string) string {
 		data, _ := json.Marshal(result)
 		return string(data)
 	}
-	tempDir := filepath.Join(homeDir, ".ccNexus", "temp")
+	tempDir := filepath.Join(branding.ResolveDataDir(homeDir), "temp")
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		result := map[string]interface{}{
 			"success": false,

@@ -1,18 +1,18 @@
 services:
-  ccnexus:
+  ainexus:
     build:
       context: ../..
       dockerfile: cmd/server/Dockerfile
-    container_name: ccnexus
+    container_name: ainexus
     restart: unless-stopped
     ports:
       - "3021:3000"
     volumes:
-      - ./ccnexus/:/data
+      - ./ainexus/:/data
     environment:
-      - CCNEXUS_PORT=3000
-      - CCNEXUS_DATA_DIR=/data
-      - CCNEXUS_DB_PATH=/data/ccnexus.db
+      - AINEXUS_PORT=3000
+      - AINEXUS_DATA_DIR=/data
+      - AINEXUS_DB_PATH=/data/ainexus.db
       - TZ=Asia/Shanghai
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]

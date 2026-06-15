@@ -96,7 +96,7 @@ func (d *Downloader) Download(url, destPath string) error {
 		d.setError(fmt.Sprintf("failed to create request: %v", err))
 		return err
 	}
-	req.Header.Set("User-Agent", "ccNexus-Updater")
+	req.Header.Set("User-Agent", "AINexus-Updater")
 
 	resp, err := client.Do(req)
 	if err != nil {

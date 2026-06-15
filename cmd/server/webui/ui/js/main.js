@@ -132,7 +132,7 @@ function init() {
     // Initialize real-time updates
     initRealtime();
 
-    console.log('ccNexus Admin initialized');
+    console.log('AINexus Admin initialized');
 }
 
 // Start application when DOM is ready

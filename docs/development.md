@@ -39,7 +39,7 @@ npm run build:linux     # Linux
 ## 项目结构
 
 ```
-ccNexus/
+AINexus/
 ├── main.go                 # 应用入口
 ├── app.go                  # 核心应用逻辑
 ├── internal/

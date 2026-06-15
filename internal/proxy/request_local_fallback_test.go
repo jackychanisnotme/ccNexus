@@ -799,7 +799,7 @@ func TestClientCanceledRequestDoesNotPersistFailureStatus(t *testing.T) {
 	}))
 	defer fallback.Close()
 
-	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
 	if err != nil {
 		t.Fatalf("open storage: %v", err)
 	}
@@ -1386,7 +1386,7 @@ func TestStreamingResponseHeaderTimeoutKeepsDownstreamOpenAndFallsBack(t *testin
 		t.Fatalf("expected fallback to be used once, got %d", fallbackHits)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, ": ccnexus waiting for upstream") || !strings.Contains(body, "response.output_text.delta") {
+	if !strings.Contains(body, ": AINexus waiting for upstream") || !strings.Contains(body, "response.output_text.delta") {
 		t.Fatalf("expected heartbeat plus fallback stream output, got %q", body)
 	}
 	if strings.Contains(body, "event: error") {
@@ -1481,7 +1481,7 @@ func TestTransportProtocolErrorDoesNotPenalizeTokenPoolCredential(t *testing.T) 
 		return nil, errors.New("net/http: HTTP/1.x transport connection broken: malformed HTTP response \"\\x00\\x00\\x12\\x04\"")
 	})}
 
-	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
 	if err != nil {
 		t.Fatalf("open storage: %v", err)
 	}

@@ -63,14 +63,23 @@ func TestHandleProxyAddsRequestObservabilityHeadersAndLogs(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected upstream success, got status=%d body=%q", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("X-ccNexus-Request-ID"); got != "req-existing" {
+	if got := rec.Header().Get("X-AINexus-Request-ID"); got != "req-existing" {
 		t.Fatalf("expected request id response header to preserve inbound id, got %q", got)
 	}
-	if got := rec.Header().Get("X-ccNexus-Endpoint"); got != "EndpointA" {
+	if got := rec.Header().Get("X-ccNexus-Request-ID"); got != "req-existing" {
+		t.Fatalf("expected legacy request id response header to preserve inbound id, got %q", got)
+	}
+	if got := rec.Header().Get("X-AINexus-Endpoint"); got != "EndpointA" {
 		t.Fatalf("expected endpoint response header, got %q", got)
 	}
-	if got := rec.Header().Get("X-ccNexus-Attempt"); got != "1" {
+	if got := rec.Header().Get("X-ccNexus-Endpoint"); got != "EndpointA" {
+		t.Fatalf("expected legacy endpoint response header, got %q", got)
+	}
+	if got := rec.Header().Get("X-AINexus-Attempt"); got != "1" {
 		t.Fatalf("expected attempt response header, got %q", got)
+	}
+	if got := rec.Header().Get("X-ccNexus-Attempt"); got != "1" {
+		t.Fatalf("expected legacy attempt response header, got %q", got)
 	}
 
 	logs := logger.GetLogger().GetLogs()
@@ -99,7 +108,7 @@ func TestHandleProxyRecordsStatsByForwardedClientIP(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
 	if err != nil {
 		t.Fatalf("open storage: %v", err)
 	}
@@ -192,7 +201,7 @@ func TestHandleProxyLogsRetryReasonAndFinalAttemptHeaders(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[]}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-ccNexus-Request-ID", "req-retry")
+	req.Header.Set("X-AINexus-Request-ID", "req-retry")
 	rec := httptest.NewRecorder()
 
 	p.handleProxy(rec, req)
@@ -203,7 +212,7 @@ func TestHandleProxyLogsRetryReasonAndFinalAttemptHeaders(t *testing.T) {
 	if attempts != 2 {
 		t.Fatalf("expected exactly 2 upstream attempts, got %d", attempts)
 	}
-	if got := rec.Header().Get("X-ccNexus-Attempt"); got != "2" {
+	if got := rec.Header().Get("X-AINexus-Attempt"); got != "2" {
 		t.Fatalf("expected final attempt response header to be 2, got %q", got)
 	}
 

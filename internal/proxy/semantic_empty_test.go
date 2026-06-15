@@ -321,7 +321,7 @@ func TestStreamingSemanticEmptyRetriesAfterDownstreamHeartbeat(t *testing.T) {
 		t.Fatalf("expected empty stream to be retried once, got hits=%d", hits)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, ": ccnexus waiting for upstream") || !strings.Contains(body, "response.output_text.delta") {
+	if !strings.Contains(body, ": AINexus waiting for upstream") || !strings.Contains(body, "response.output_text.delta") {
 		t.Fatalf("expected downstream heartbeat and final semantic event, got %q", body)
 	}
 	if strings.Contains(body, "resp-empty") {
@@ -537,7 +537,7 @@ func TestTokenPoolSemanticEmptySoftCoolsCredentialAndRetriesNextToken(t *testing
 	}))
 	defer upstream.Close()
 
-	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ccnexus.db"))
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
 	if err != nil {
 		t.Fatalf("open storage: %v", err)
 	}
@@ -594,7 +594,7 @@ func TestStreamingClaudeKeepAliveUsesPingEvent(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
-		// Non-semantic events first; ccNexus buffers these and must keep the
+		// Non-semantic events first; AINexus buffers these and must keep the
 		// client alive with its own ping heartbeat until a semantic event lands.
 		_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n"))
 		if flusher != nil {
@@ -628,7 +628,7 @@ func TestStreamingClaudeKeepAliveUsesPingEvent(t *testing.T) {
 	if !strings.Contains(body, "event: ping") || !strings.Contains(body, "\"type\": \"ping\"") {
 		t.Fatalf("expected Anthropic ping keep-alive in Claude stream, got %q", body)
 	}
-	if strings.Contains(body, ": ccnexus waiting for upstream\n\n: ccnexus waiting for upstream") {
+	if strings.Contains(body, ": AINexus waiting for upstream\n\n: AINexus waiting for upstream") {
 		t.Fatalf("did not expect repeated comment heartbeat on Claude stream, got %q", body)
 	}
 	if !strings.Contains(body, "ok") {

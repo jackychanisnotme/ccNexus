@@ -110,7 +110,7 @@ func (u *Updater) CancelDownload() {
 
 // InstallUpdate installs the downloaded update
 func (u *Updater) InstallUpdate(filePath string) (*InstallResult, error) {
-	// Extract version from filename (e.g., ccNexus-v3.4.1-darwin-arm64.zip -> v3.4.1)
+	// Extract version from filename (e.g., AINexus-v3.4.1-darwin-arm64.zip -> v3.4.1)
 	filename := filepath.Base(filePath)
 	parts := strings.Split(filename, "-")
 	version := "latest"
@@ -154,13 +154,13 @@ func getDownloadsDir() string {
 
 // installWindows installs update on Windows
 func (u *Updater) installWindows(filePath, version string) (*InstallResult, error) {
-	extractDir := filepath.Join(getDownloadsDir(), fmt.Sprintf("ccNexus-%s", version))
+	extractDir := filepath.Join(getDownloadsDir(), fmt.Sprintf("AINexus-%s", version))
 
 	if err := unzip(filePath, extractDir); err != nil {
 		return nil, fmt.Errorf("failed to extract: %w", err)
 	}
 
-	exePath := filepath.Join(extractDir, "ccNexus.exe")
+	exePath := filepath.Join(extractDir, "AINexus.exe")
 	if _, err := os.Stat(exePath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("executable not found in archive")
 	}
@@ -175,13 +175,13 @@ func (u *Updater) installWindows(filePath, version string) (*InstallResult, erro
 
 // installMacOS installs update on macOS
 func (u *Updater) installMacOS(filePath, version string) (*InstallResult, error) {
-	extractDir := filepath.Join(getDownloadsDir(), fmt.Sprintf("ccNexus-%s", version))
+	extractDir := filepath.Join(getDownloadsDir(), fmt.Sprintf("AINexus-%s", version))
 
 	if err := unzip(filePath, extractDir); err != nil {
 		return nil, fmt.Errorf("failed to extract: %w", err)
 	}
 
-	appPath := filepath.Join(extractDir, "ccNexus.app")
+	appPath := filepath.Join(extractDir, "AINexus.app")
 	if _, err := os.Stat(appPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("app bundle not found in archive")
 	}
@@ -197,13 +197,13 @@ func (u *Updater) installMacOS(filePath, version string) (*InstallResult, error)
 
 // installLinux installs update on Linux
 func (u *Updater) installLinux(filePath, version string) (*InstallResult, error) {
-	extractDir := filepath.Join(getDownloadsDir(), fmt.Sprintf("ccNexus-%s", version))
+	extractDir := filepath.Join(getDownloadsDir(), fmt.Sprintf("AINexus-%s", version))
 
 	if err := untar(filePath, extractDir); err != nil {
 		return nil, fmt.Errorf("failed to extract: %w", err)
 	}
 
-	exePath := filepath.Join(extractDir, "ccNexus")
+	exePath := filepath.Join(extractDir, "AINexus")
 	if _, err := os.Stat(exePath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("executable not found in archive")
 	}

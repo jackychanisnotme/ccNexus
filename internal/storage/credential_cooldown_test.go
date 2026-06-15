@@ -8,7 +8,7 @@ import (
 
 func newTestStorage(t *testing.T) *SQLiteStorage {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "ccnexus.db")
+	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	store, err := NewSQLiteStorage(dbPath)
 	if err != nil {
 		t.Fatalf("new storage: %v", err)

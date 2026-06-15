@@ -1,7 +1,7 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "ccNexus",
-  "outputfilename": "ccNexus",
+  "name": "AINexus",
+  "outputfilename": "AINexus",
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
@@ -21,9 +21,9 @@
     "email": "e8cn@foxmail.com"
   },
   "info": {
-    "companyName": "ccNexus",
-    "productName": "ccNexus",
-    "productVersion": "6.1.2",
+    "companyName": "AINexus",
+    "productName": "AINexus",
+    "productVersion": "6.1.4",
     "copyright": "Copyright © 2024 Chuck",
     "comments": "A smart API endpoint rotation proxy for Claude Code"
   }

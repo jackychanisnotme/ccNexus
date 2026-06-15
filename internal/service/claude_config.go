@@ -101,9 +101,9 @@ func (s *ClaudeConfigService) writeClaudeSettings(settings ClaudeSettings) error
 func (s *ClaudeConfigService) getNotificationText() (title, message string) {
 	lang := s.config.GetLanguage()
 	if lang == "en" {
-		return "ccNexus", "Task completed, ready for interaction!"
+		return "AINexus", "Task completed, ready for interaction!"
 	}
-	return "ccNexus", "任务完成，已就绪！"
+	return "AINexus", "任务完成，已就绪！"
 }
 
 // generateNotificationScript generates PowerShell notification script for Windows

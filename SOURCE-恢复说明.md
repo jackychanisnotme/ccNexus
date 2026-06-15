@@ -1,6 +1,6 @@
-# ccNexus native-compatible fallback 源码恢复包
+# AINexus native-compatible fallback 源码恢复包
 
-这个目录是为此前迁移包中的 `ccNexus.app` 补交的源码恢复包。
+这个目录是为此前迁移包中的 `AINexus.app` 补交的源码恢复包。
 
 ## 对应二进制
 
@@ -12,7 +12,7 @@
 
 恢复来源：
 
-- 上游仓库：`https://github.com/lich0821/ccNexus.git`
+- 上游仓库：`https://github.com/lich0821/AINexus.git`
 - 恢复基线提交：`8f503ba` (`Master lsf (#125)`)
 - 本机会话日志中保留的补丁/文件片段
 
@@ -21,7 +21,7 @@
 ## 已包含的主要改动
 
 - endpoint-level thinking/reasoning 配置路径（OpenAI / OpenAI2 Claude Code 转换路径）。
-- request-level observability：`X-ccNexus-Request-ID` / `X-ccNexus-Endpoint` / `X-ccNexus-Attempt` 与请求级日志字段。
+- request-level observability：`X-AINexus-Request-ID` / `X-AINexus-Endpoint` / `X-AINexus-Attempt` 与请求级日志字段。
 - request-local fallback：普通请求失败不会修改全局 `currentIndex`。
 - rate-limited backoff。
 - `quota_exhausted` 识别、立即 request-local failover、endpoint cooldown。
@@ -32,7 +32,7 @@
 同目录下有完整补丁：
 
 ```text
-patches/ccNexus-native-compatible-fallback-reconstructed-source.patch
+patches/AINexus-native-compatible-fallback-reconstructed-source.patch
 ```
 
 可用于查看相对上游 `8f503ba` 的修改范围。
@@ -72,7 +72,7 @@ wails build -clean
 
 不包含：
 
-- `~/.ccNexus/ccnexus.db`
+- `~/.AINexus/ainexus.db`
 - API key / token pool 凭据
 - 用户本机运行日志
 

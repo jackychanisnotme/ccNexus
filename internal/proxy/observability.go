@@ -12,6 +12,9 @@ import (
 )
 
 const (
+	headerAINexusRequestID = "X-AINexus-Request-ID"
+	headerAINexusEndpoint  = "X-AINexus-Endpoint"
+	headerAINexusAttempt   = "X-AINexus-Attempt"
 	headerCCNexusRequestID = "X-ccNexus-Request-ID"
 	headerCCNexusEndpoint  = "X-ccNexus-Endpoint"
 	headerCCNexusAttempt   = "X-ccNexus-Attempt"
@@ -24,7 +27,7 @@ type requestObservability struct {
 }
 
 func newRequestObservability(r *http.Request) requestObservability {
-	requestID := firstNonEmptyHeader(r.Header, headerCCNexusRequestID, "X-Request-ID", "X-Correlation-ID")
+	requestID := firstNonEmptyHeader(r.Header, headerAINexusRequestID, headerCCNexusRequestID, "X-Request-ID", "X-Correlation-ID")
 	if requestID == "" {
 		requestID = uuid.NewString()
 	}
@@ -38,13 +41,17 @@ func newRequestObservability(r *http.Request) requestObservability {
 
 func applyRequestObservabilityHeaders(w http.ResponseWriter, obs requestObservability, endpointName string, attempt int) {
 	if obs.RequestID != "" {
+		w.Header().Set(headerAINexusRequestID, obs.RequestID)
 		w.Header().Set(headerCCNexusRequestID, obs.RequestID)
 	}
 	if strings.TrimSpace(endpointName) != "" {
+		w.Header().Set(headerAINexusEndpoint, endpointName)
 		w.Header().Set(headerCCNexusEndpoint, endpointName)
 	}
 	if attempt > 0 {
-		w.Header().Set(headerCCNexusAttempt, strconv.Itoa(attempt))
+		value := strconv.Itoa(attempt)
+		w.Header().Set(headerAINexusAttempt, value)
+		w.Header().Set(headerCCNexusAttempt, value)
 	}
 }
 
