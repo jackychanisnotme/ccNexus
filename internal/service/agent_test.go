@@ -33,6 +33,32 @@ func TestAgentRunRejectsNoEnabledEndpoints(t *testing.T) {
 	}
 }
 
+func TestAgentRunRepairsConfigsWithoutEnabledEndpoints(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3456)
+	cfg.UpdateEndpoints([]config.Endpoint{{Name: "disabled", Enabled: false}})
+	svc := NewAgentServiceWithOptions(cfg, nil, nil, AgentServiceOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	result := svc.Run(AgentRunRequest{
+		Task:          "repair codex config",
+		RepairTargets: []string{"codex"},
+	})
+
+	if result.Success || result.Error != "no_enabled_endpoints" {
+		t.Fatalf("expected no_enabled_endpoints after local repair, got %#v", result)
+	}
+	if !hasTool(result.ToolResults, "check_agent_configs") || !hasTool(result.ToolResults, "repair_agent_configs") {
+		t.Fatalf("expected local check and repair tools, got %#v", result.ToolResults)
+	}
+	if !strings.Contains(readFile(t, filepath.Join(home, ".codex", "config.toml")), "AINexus") {
+		t.Fatalf("codex config was not repaired without enabled endpoints")
+	}
+}
+
 func TestAgentRunUsesResponsesThenReturnsAnswer(t *testing.T) {
 	var requestedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -121,40 +121,13 @@ func (s *AgentService) Run(req AgentRunRequest) AgentRunResult {
 		result.Events = append(result.Events, newAgentEvent("error", "Task is empty"))
 		return result
 	}
+	if s.shouldRepair(req) {
+		s.runRepairTools(req, &result)
+	}
 	if !s.hasEnabledEndpoints() {
 		result.Error = "no_enabled_endpoints"
 		result.Events = append(result.Events, newAgentEvent("error", "No enabled endpoints are configured"))
 		return result
-	}
-	if s.shouldRepair(req) {
-		targets := req.RepairTargets
-		if len(targets) == 0 {
-			targets = []string{"codex", "openclaw", "hermes"}
-		}
-		result.Events = append(result.Events, newAgentEvent("tool", "Checking agent configs before repair"))
-		before := s.CheckAgentConfigs(AgentProviderInspectRequest{Targets: targets})
-		result.ToolResults = append(result.ToolResults, AgentToolResult{
-			Tool:    "check_agent_configs",
-			Status:  inspectOverallStatus(before),
-			Summary: summarizeInspectStatus(before),
-			Data:    before,
-		})
-		result.Events = append(result.Events, newAgentEvent("tool", "Repairing selected agent configs"))
-		repair := s.RepairAgentConfigs(AgentConfigRepairRequest{Targets: targets, CreateMissing: true})
-		result.ToolResults = append(result.ToolResults, AgentToolResult{
-			Tool:    "repair_agent_configs",
-			Status:  repairOverallStatus(repair),
-			Summary: summarizeRepairResult(repair),
-			Data:    repair,
-		})
-		result.Events = append(result.Events, newAgentEvent("tool", "Checking agent configs after repair"))
-		after := s.CheckAgentConfigs(AgentProviderInspectRequest{Targets: targets})
-		result.ToolResults = append(result.ToolResults, AgentToolResult{
-			Tool:    "check_agent_configs",
-			Status:  inspectOverallStatus(after),
-			Summary: summarizeInspectStatus(after),
-			Data:    after,
-		})
 	}
 
 	answer, err := s.callResponses(task, result.ToolResults)
@@ -415,6 +388,37 @@ func (s *AgentService) shouldRepair(req AgentRunRequest) bool {
 		}
 	}
 	return false
+}
+
+func (s *AgentService) runRepairTools(req AgentRunRequest, result *AgentRunResult) {
+	targets := req.RepairTargets
+	if len(targets) == 0 {
+		targets = []string{"codex", "openclaw", "hermes"}
+	}
+	result.Events = append(result.Events, newAgentEvent("tool", "Checking agent configs before repair"))
+	before := s.CheckAgentConfigs(AgentProviderInspectRequest{Targets: targets})
+	result.ToolResults = append(result.ToolResults, AgentToolResult{
+		Tool:    "check_agent_configs",
+		Status:  inspectOverallStatus(before),
+		Summary: summarizeInspectStatus(before),
+		Data:    before,
+	})
+	result.Events = append(result.Events, newAgentEvent("tool", "Repairing selected agent configs"))
+	repair := s.RepairAgentConfigs(AgentConfigRepairRequest{Targets: targets, CreateMissing: true})
+	result.ToolResults = append(result.ToolResults, AgentToolResult{
+		Tool:    "repair_agent_configs",
+		Status:  repairOverallStatus(repair),
+		Summary: summarizeRepairResult(repair),
+		Data:    repair,
+	})
+	result.Events = append(result.Events, newAgentEvent("tool", "Checking agent configs after repair"))
+	after := s.CheckAgentConfigs(AgentProviderInspectRequest{Targets: targets})
+	result.ToolResults = append(result.ToolResults, AgentToolResult{
+		Tool:    "check_agent_configs",
+		Status:  inspectOverallStatus(after),
+		Summary: summarizeInspectStatus(after),
+		Data:    after,
+	})
 }
 
 func inspectOverallStatus(status AgentProviderInspectStatus) string {
