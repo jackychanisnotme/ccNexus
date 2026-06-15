@@ -80,6 +80,7 @@ type App struct {
 	terminal      *service.TerminalService
 	codexAuth     *codexauth.Manager
 	agentProvider *service.AgentProviderService
+	agent         *service.AgentService
 }
 
 // NewApp creates a new App application struct
@@ -181,6 +182,7 @@ func (a *App) startup(ctx context.Context) {
 	a.update = service.NewUpdateService(a.config, a.storage, version)
 	a.terminal = service.NewTerminalService(a.config, a.storage)
 	a.agentProvider = service.NewAgentProviderService(a.config)
+	a.agent = service.NewAgentService(a.config, a.proxy, a.storage, a.endpoint, a.agentProvider)
 	a.codexAuth = codexauth.NewManager(codexauth.Options{
 		Storage:    a.storage,
 		HTTPClient: codexauth.HTTPClientForConfig(a.config),
@@ -1122,6 +1124,40 @@ func (a *App) RestoreAgentProviderBackup(backupID string, targetsJSON string) st
 		a.agentProvider = service.NewAgentProviderService(a.config)
 	}
 	return a.agentProvider.RestoreFromJSON(backupID, targetsJSON)
+}
+
+func (a *App) ensureAgentService() *service.AgentService {
+	if a.agent == nil && a.config != nil {
+		if a.agentProvider == nil {
+			a.agentProvider = service.NewAgentProviderService(a.config)
+		}
+		a.agent = service.NewAgentService(a.config, a.proxy, a.storage, a.endpoint, a.agentProvider)
+	}
+	return a.agent
+}
+
+func (a *App) RunAgent(requestJSON string) string {
+	svc := a.ensureAgentService()
+	if svc == nil {
+		return desktopErrorJSON(fmt.Errorf("agent unavailable"))
+	}
+	return svc.RunJSON(requestJSON)
+}
+
+func (a *App) CheckAgentConfigs(requestJSON string) string {
+	svc := a.ensureAgentService()
+	if svc == nil {
+		return desktopErrorJSON(fmt.Errorf("agent unavailable"))
+	}
+	return svc.CheckAgentConfigsJSON(requestJSON)
+}
+
+func (a *App) RepairAgentConfigs(requestJSON string) string {
+	svc := a.ensureAgentService()
+	if svc == nil {
+		return desktopErrorJSON(fmt.Errorf("agent unavailable"))
+	}
+	return svc.RepairAgentConfigsJSON(requestJSON)
 }
 
 // ========== WebDAV Bindings ==========
