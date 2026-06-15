@@ -382,7 +382,7 @@ func (s *AgentService) shouldRepair(req AgentRunRequest) bool {
 		return true
 	}
 	task := strings.ToLower(req.Task)
-	for _, marker := range []string{"repair", "fix", "修复", "配置"} {
+	for _, marker := range []string{"repair", "fix", "修复", "修理", "修正"} {
 		if strings.Contains(task, marker) {
 			return true
 		}

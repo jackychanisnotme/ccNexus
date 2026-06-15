@@ -59,6 +59,29 @@ func TestAgentRunRepairsConfigsWithoutEnabledEndpoints(t *testing.T) {
 	}
 }
 
+func TestAgentRunDoesNotRepairForConfigMentionWithoutRepairIntent(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3456)
+	cfg.UpdateEndpoints([]config.Endpoint{{Name: "disabled", Enabled: false}})
+	svc := NewAgentServiceWithOptions(cfg, nil, nil, AgentServiceOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	result := svc.Run(AgentRunRequest{Task: "检查配置状态"})
+
+	if result.Error != "no_enabled_endpoints" {
+		t.Fatalf("expected no_enabled_endpoints, got %#v", result)
+	}
+	if hasTool(result.ToolResults, "repair_agent_configs") {
+		t.Fatalf("did not expect repair tool for check-only wording, got %#v", result.ToolResults)
+	}
+	if fileExists(filepath.Join(home, ".codex", "config.toml")) {
+		t.Fatalf("codex config should not be created for check-only wording")
+	}
+}
+
 func TestAgentRunUsesResponsesThenReturnsAnswer(t *testing.T) {
 	var requestedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

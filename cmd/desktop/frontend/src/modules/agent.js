@@ -233,7 +233,7 @@ export async function runAgent() {
     setBusy(true);
     try {
         const payload = { task };
-        if (/repair|fix|修复|配置/i.test(task)) {
+        if (/repair|fix|修复|修理|修正/i.test(task)) {
             payload.repairTargets = selectedTargets();
         }
         const raw = await window.go.main.App.RunAgent(JSON.stringify(payload));
