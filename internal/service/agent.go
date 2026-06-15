@@ -62,6 +62,11 @@ type AgentToolResult struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+type AgentConfigRepairRequest struct {
+	Targets       []string `json:"targets,omitempty"`
+	CreateMissing bool     `json:"createMissing,omitempty"`
+}
+
 func NewAgentService(cfg *config.Config, p *proxy.Proxy, s *storage.SQLiteStorage, endpoint *EndpointService, provider *AgentProviderService) *AgentService {
 	if provider == nil {
 		provider = NewAgentProviderService(cfg)
@@ -121,6 +126,36 @@ func (s *AgentService) Run(req AgentRunRequest) AgentRunResult {
 		result.Events = append(result.Events, newAgentEvent("error", "No enabled endpoints are configured"))
 		return result
 	}
+	if s.shouldRepair(req) {
+		targets := req.RepairTargets
+		if len(targets) == 0 {
+			targets = []string{"codex", "openclaw", "hermes"}
+		}
+		result.Events = append(result.Events, newAgentEvent("tool", "Checking agent configs before repair"))
+		before := s.CheckAgentConfigs(AgentProviderInspectRequest{Targets: targets})
+		result.ToolResults = append(result.ToolResults, AgentToolResult{
+			Tool:    "check_agent_configs",
+			Status:  inspectOverallStatus(before),
+			Summary: summarizeInspectStatus(before),
+			Data:    before,
+		})
+		result.Events = append(result.Events, newAgentEvent("tool", "Repairing selected agent configs"))
+		repair := s.RepairAgentConfigs(AgentConfigRepairRequest{Targets: targets, CreateMissing: true})
+		result.ToolResults = append(result.ToolResults, AgentToolResult{
+			Tool:    "repair_agent_configs",
+			Status:  repairOverallStatus(repair),
+			Summary: summarizeRepairResult(repair),
+			Data:    repair,
+		})
+		result.Events = append(result.Events, newAgentEvent("tool", "Checking agent configs after repair"))
+		after := s.CheckAgentConfigs(AgentProviderInspectRequest{Targets: targets})
+		result.ToolResults = append(result.ToolResults, AgentToolResult{
+			Tool:    "check_agent_configs",
+			Status:  inspectOverallStatus(after),
+			Summary: summarizeInspectStatus(after),
+			Data:    after,
+		})
+	}
 
 	answer, err := s.callResponses(task, result.ToolResults)
 	if err != nil || strings.TrimSpace(answer) == "" {
@@ -140,6 +175,58 @@ func (s *AgentService) Run(req AgentRunRequest) AgentRunResult {
 	result.Answer = answer
 	result.Events = append(result.Events, newAgentEvent("model_success", "Model call completed through AINexus"))
 	return result
+}
+
+func (s *AgentService) CheckAgentConfigs(req AgentProviderInspectRequest) AgentProviderInspectStatus {
+	if s == nil || s.inspector == nil {
+		return AgentProviderInspectStatus{Targets: []AgentProviderInspectTarget{{
+			Status:       "failed",
+			Problems:     []string{"agent inspector unavailable"},
+			SuggestedFix: "Restart AINexus.",
+		}}}
+	}
+	return s.inspector.Inspect(req)
+}
+
+func (s *AgentService) CheckAgentConfigsJSON(requestJSON string) string {
+	var req AgentProviderInspectRequest
+	if strings.TrimSpace(requestJSON) != "" {
+		if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+			data, _ := json.Marshal(AgentProviderInspectStatus{Targets: []AgentProviderInspectTarget{{
+				Status:       "failed",
+				Problems:     []string{fmt.Sprintf("invalid request: %v", err)},
+				SuggestedFix: "Send a JSON object with an optional targets array.",
+			}}})
+			return string(data)
+		}
+	}
+	data, _ := json.Marshal(s.CheckAgentConfigs(req))
+	return string(data)
+}
+
+func (s *AgentService) RepairAgentConfigs(req AgentConfigRepairRequest) AgentProviderResult {
+	if s == nil || s.agentProvider == nil {
+		return AgentProviderResult{Results: []AgentProviderTargetResult{{
+			Status:  "failed",
+			Message: "agent provider unavailable",
+		}}}
+	}
+	return s.agentProvider.Apply(AgentProviderRequest{Targets: req.Targets, CreateMissing: req.CreateMissing})
+}
+
+func (s *AgentService) RepairAgentConfigsJSON(requestJSON string) string {
+	var req AgentConfigRepairRequest
+	if strings.TrimSpace(requestJSON) != "" {
+		if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+			data, _ := json.Marshal(AgentProviderResult{Results: []AgentProviderTargetResult{{
+				Status:  "failed",
+				Message: fmt.Sprintf("invalid request: %v", err),
+			}}})
+			return string(data)
+		}
+	}
+	data, _ := json.Marshal(s.RepairAgentConfigs(req))
+	return string(data)
 }
 
 func (s *AgentService) callResponses(task string, toolResults []AgentToolResult) (string, error) {
@@ -315,4 +402,64 @@ func buildAgentUserPrompt(task string, toolResults []AgentToolResult) string {
 
 func newAgentEvent(eventType, message string) AgentEvent {
 	return AgentEvent{Type: eventType, Message: message, CreatedAt: time.Now().UTC()}
+}
+
+func (s *AgentService) shouldRepair(req AgentRunRequest) bool {
+	if len(req.RepairTargets) > 0 {
+		return true
+	}
+	task := strings.ToLower(req.Task)
+	for _, marker := range []string{"repair", "fix", "修复", "配置"} {
+		if strings.Contains(task, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func inspectOverallStatus(status AgentProviderInspectStatus) string {
+	if len(status.Targets) == 0 {
+		return "skipped"
+	}
+	for _, target := range status.Targets {
+		if !target.Healthy {
+			return "unhealthy"
+		}
+	}
+	return "healthy"
+}
+
+func repairOverallStatus(result AgentProviderResult) string {
+	if len(result.Results) == 0 {
+		return "skipped"
+	}
+	for _, item := range result.Results {
+		if item.Status == "failed" {
+			return "failed"
+		}
+	}
+	return "success"
+}
+
+func summarizeInspectStatus(status AgentProviderInspectStatus) string {
+	healthy := 0
+	for _, target := range status.Targets {
+		if target.Healthy {
+			healthy++
+		}
+	}
+	return fmt.Sprintf("%d/%d agent configs healthy", healthy, len(status.Targets))
+}
+
+func summarizeRepairResult(result AgentProviderResult) string {
+	success := 0
+	for _, item := range result.Results {
+		if item.Status == "success" || item.Status == "restored" {
+			success++
+		}
+	}
+	if result.BackupID != "" {
+		return fmt.Sprintf("%d/%d repairs completed; backup %s", success, len(result.Results), result.BackupID)
+	}
+	return fmt.Sprintf("%d/%d repairs completed", success, len(result.Results))
 }
