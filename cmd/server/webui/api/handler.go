@@ -27,10 +27,12 @@ type Handler struct {
 	auth          AuthConfig
 	codexAuth     codexCredentialAuthManager
 	agentProvider *service.AgentProviderService
+	agent         *service.AgentService
 }
 
 // NewHandler creates a new API handler
 func NewHandler(cfg *config.Config, p *proxy.Proxy, s *storage.SQLiteStorage) *Handler {
+	agentProvider := newAgentProviderService(cfg, s)
 	h := &Handler{
 		config:  cfg,
 		proxy:   p,
@@ -40,7 +42,8 @@ func NewHandler(cfg *config.Config, p *proxy.Proxy, s *storage.SQLiteStorage) *H
 			Username: cfg.BasicAuthUsername,
 			Password: cfg.BasicAuthPassword,
 		},
-		agentProvider: newAgentProviderService(cfg, s),
+		agentProvider: agentProvider,
+		agent:         service.NewAgentService(cfg, p, s, service.NewEndpointService(cfg, p, s), agentProvider),
 	}
 	h.resetCodexAuthManager()
 	return h
@@ -117,6 +120,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		authMiddleware(http.HandlerFunc(h.handleAgentProviderApply)).ServeHTTP(w, r)
 	case "/api/agent-providers/restore":
 		authMiddleware(http.HandlerFunc(h.handleAgentProviderRestore)).ServeHTTP(w, r)
+	case "/api/agent/run":
+		authMiddleware(http.HandlerFunc(h.handleAgentRun)).ServeHTTP(w, r)
+	case "/api/agent/check-configs":
+		authMiddleware(http.HandlerFunc(h.handleAgentCheckConfigs)).ServeHTTP(w, r)
+	case "/api/agent/repair-configs":
+		authMiddleware(http.HandlerFunc(h.handleAgentRepairConfigs)).ServeHTTP(w, r)
 	default:
 		if strings.HasPrefix(path, "/api/endpoints/") {
 			authMiddleware(http.HandlerFunc(h.handleEndpointByName)).ServeHTTP(w, r)
