@@ -120,11 +120,16 @@ func prepareCxRespTransformer(endpoint config.Endpoint, endpointTransformer stri
 			model = "claude-sonnet-4-20250514"
 		}
 		return responses.NewClaudeTransformer(model), nil
-	case "openai", "deepseek", "kimi", "poe":
+	case "openai", "deepseek", "kimi":
 		if endpoint.Model == "" {
 			return nil, fmt.Errorf("OpenAI transformer requires model field")
 		}
 		return responses.NewOpenAITransformer(endpoint.Model), nil
+	case "poe":
+		if endpoint.Model == "" {
+			return nil, fmt.Errorf("Poe transformer requires model field")
+		}
+		return responses.NewOpenAI2Transformer(endpoint.Model), nil
 	case "openai2":
 		if endpoint.Model == "" {
 			return nil, fmt.Errorf("OpenAI2 transformer requires model field")

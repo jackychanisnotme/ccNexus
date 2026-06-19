@@ -103,6 +103,22 @@ func TestPrepareTransformerAcceptsPoeAsOpenAIChatCompatible(t *testing.T) {
 	}
 }
 
+func TestPrepareTransformerUsesPoeNativeResponsesForResponsesClient(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:        "Poe",
+		Transformer: "poe",
+		Model:       "claude-opus-4.8",
+	}
+
+	trans, err := prepareTransformerForClient(ClientFormatOpenAIResponses, endpoint)
+	if err != nil {
+		t.Fatalf("expected Poe transformer to prepare for Responses client, got error: %v", err)
+	}
+	if got := trans.Name(); got != "cx_resp_openai2" {
+		t.Fatalf("expected Poe Responses client to use native Responses transformer, got %s", got)
+	}
+}
+
 func TestBuildProxyRequestAdaptsPoeOpenAIChatPayload(t *testing.T) {
 	endpoint := config.Endpoint{
 		Name:        "Poe",
@@ -138,6 +154,59 @@ func TestBuildProxyRequestAdaptsPoeOpenAIChatPayload(t *testing.T) {
 	}
 	if _, ok := payload["reasoning"]; ok {
 		t.Fatalf("did not expect reasoning object for Poe, got %#v", payload["reasoning"])
+	}
+}
+
+func TestBuildProxyRequestRoutesPoeResponsesToNativeResponsesPath(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:        "Poe",
+		APIUrl:      "https://api.poe.com/v1",
+		AuthMode:    config.AuthModeAPIKey,
+		Transformer: "poe",
+		Model:       "claude-opus-4.8",
+	}
+	body := []byte(`{"model":"claude-opus-4.8","stream":true,"input":"hi","reasoning":{"effort":"high"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+
+	proxyReq, err := buildProxyRequest(req, endpoint, "poe-key", body, "cx_resp_openai2", nil)
+	if err != nil {
+		t.Fatalf("buildProxyRequest failed: %v", err)
+	}
+	if got := proxyReq.URL.String(); got != "https://api.poe.com/v1/responses" {
+		t.Fatalf("expected Poe native Responses URL, got %s", got)
+	}
+	if got := proxyReq.Header.Get("Authorization"); got != "Bearer poe-key" {
+		t.Fatalf("expected Bearer auth header, got %q", got)
+	}
+
+	var payload map[string]interface{}
+	if err := json.NewDecoder(proxyReq.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode proxied payload: %v", err)
+	}
+	if _, ok := payload["output_effort"]; ok {
+		t.Fatalf("did not expect Chat-only output_effort on native Poe Responses payload, got %#v", payload["output_effort"])
+	}
+	if reasoning, ok := payload["reasoning"].(map[string]interface{}); !ok || reasoning["effort"] != "high" {
+		t.Fatalf("expected native Responses reasoning effort to be preserved, got %#v", payload["reasoning"])
+	}
+}
+
+func TestPoeEndpointIsNativeTierForResponsesClient(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:        "Poe",
+		Transformer: "poe",
+		Model:       "claude-opus-4.8",
+	}
+
+	if got := endpointClientFormatPreferenceTier(ClientFormatOpenAIResponses, endpoint); got != 0 {
+		t.Fatalf("expected Poe to be native Responses tier for Responses clients, got %d", got)
+	}
+	if got := endpointClientFormatPreferenceTier(ClientFormatOpenAIChat, endpoint); got != 0 {
+		t.Fatalf("expected Poe to remain native Chat tier for Chat clients, got %d", got)
+	}
+	if got := endpointClientFormatPreferenceTier(ClientFormatClaude, endpoint); got != 1 {
+		t.Fatalf("expected Poe to remain bridge tier for Claude clients, got %d", got)
 	}
 }
 

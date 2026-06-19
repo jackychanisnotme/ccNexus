@@ -16,6 +16,7 @@ import (
 
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/providercompat"
 	"github.com/lich0821/ccNexus/internal/tokencount"
 	"github.com/lich0821/ccNexus/internal/transformer"
 )
@@ -26,6 +27,7 @@ const (
 	streamFinishUpstreamStreamError   = "upstream_stream_error"
 	streamFinishDownstreamWriteFailed = "downstream_write_failed"
 	streamFinishTransformFailed       = "transform_failed"
+	streamFinishMissingResponsesDone  = "missing_response_completed"
 )
 
 const openAIResponsesWaitingID = "resp_ainexus_waiting"
@@ -50,16 +52,18 @@ type downstreamStreamSession struct {
 	closed                  bool
 	responsesCreatedWritten bool
 	responsesWaitingCreated bool
+	synthesizeMissingDone   bool
 }
 
 func newDownstreamStreamSession(w http.ResponseWriter, heartbeatInterval time.Duration, clientFormat ClientFormat) *downstreamStreamSession {
 	flusher, _ := w.(http.Flusher)
 	return &downstreamStreamSession{
-		w:                 w,
-		flusher:           flusher,
-		heartbeatInterval: heartbeatInterval,
-		clientFormat:      clientFormat,
-		done:              make(chan struct{}),
+		w:                     w,
+		flusher:               flusher,
+		heartbeatInterval:     heartbeatInterval,
+		clientFormat:          clientFormat,
+		done:                  make(chan struct{}),
+		synthesizeMissingDone: true,
 	}
 }
 
@@ -284,6 +288,13 @@ func sseBlockEventType(block string) string {
 	return ""
 }
 
+func responseRequestPath(resp *http.Response) string {
+	if resp == nil || resp.Request == nil || resp.Request.URL == nil {
+		return ""
+	}
+	return resp.Request.URL.Path
+}
+
 func (s *downstreamStreamSession) writeComment(message string) error {
 	if err := s.Start(); err != nil {
 		return err
@@ -301,29 +312,52 @@ func (s *downstreamStreamSession) writeComment(message string) error {
 }
 
 type streamResponseResult struct {
-	InputTokens             int
-	OutputTokens            int
-	OutputText              string
-	Completed               bool
-	WroteData               bool
-	WroteSemanticData       bool
-	ResponsesCompletionSafe openAIResponsesCompletionState
-	Reason                  string
-	Err                     error
+	InputTokens               int
+	OutputTokens              int
+	OutputText                string
+	Completed                 bool
+	WroteData                 bool
+	WroteSemanticData         bool
+	FirstTransformedEventType string
+	LastTransformedEventType  string
+	ResponsesCompletionSafe   openAIResponsesCompletionState
+	Reason                    string
+	Err                       error
 }
 
 type openAIResponsesCompletionState struct {
-	ResponseID     string
-	Model          string
-	ItemID         string
-	Text           string
-	SequenceNumber int
-	Completed      bool
-	Unsafe         bool
+	ResponseID         string
+	Model              string
+	ItemID             string
+	Text               string
+	SequenceNumber     int
+	Completed          bool
+	Unsafe             bool
+	UnsafeReason       string
+	LastEventType      string
+	LastOutputItemType string
+	OutputItems        map[int]*openAIResponsesOutputItemState
+	ToolSeen           bool
+	ToolItemDone       bool
+	ToolArgumentsDone  bool
+	ToolRecoverable    bool
+	ToolPending        bool
+	StructuralUnsafe   bool
+	StructuralReason   string
+	OutputItemCount    int
+}
+
+type openAIResponsesOutputItemState struct {
+	Index              int
+	Item               map[string]interface{}
+	ItemType           string
+	Done               bool
+	ArgumentsDone      bool
+	ArgumentsDeltaSeen bool
 }
 
 func (s openAIResponsesCompletionState) canSynthesizeCompleted() bool {
-	return !s.Completed && !s.Unsafe && strings.TrimSpace(s.Text) != ""
+	return !s.Completed && !s.Unsafe && (strings.TrimSpace(s.Text) != "" || s.ToolRecoverable)
 }
 
 func (s openAIResponsesCompletionState) completedEvent(inputTokens, outputTokens int) []byte {
@@ -339,6 +373,23 @@ func (s openAIResponsesCompletionState) completedEvent(inputTokens, outputTokens
 		outputTokens = tokencount.EstimateOutputTokens(s.Text)
 	}
 	totalTokens := inputTokens + outputTokens
+	output := s.completedOutputItems()
+	if len(output) == 0 {
+		output = []interface{}{
+			map[string]interface{}{
+				"type":   "message",
+				"id":     itemID,
+				"status": "completed",
+				"role":   "assistant",
+				"content": []interface{}{
+					map[string]interface{}{
+						"type": "output_text",
+						"text": s.Text,
+					},
+				},
+			},
+		}
+	}
 	payload := map[string]interface{}{
 		"type":            "response.completed",
 		"sequence_number": s.SequenceNumber + 1,
@@ -348,21 +399,8 @@ func (s openAIResponsesCompletionState) completedEvent(inputTokens, outputTokens
 			"created_at":          0,
 			"model":               strings.TrimSpace(s.Model),
 			"status":              "completed",
-			"parallel_tool_calls": false,
-			"output": []interface{}{
-				map[string]interface{}{
-					"type":   "message",
-					"id":     itemID,
-					"status": "completed",
-					"role":   "assistant",
-					"content": []interface{}{
-						map[string]interface{}{
-							"type": "output_text",
-							"text": s.Text,
-						},
-					},
-				},
-			},
+			"parallel_tool_calls": len(output) > 1,
+			"output":              output,
 			"usage": map[string]interface{}{
 				"input_tokens":  inputTokens,
 				"output_tokens": outputTokens,
@@ -375,6 +413,41 @@ func (s openAIResponsesCompletionState) completedEvent(inputTokens, outputTokens
 		return nil
 	}
 	return []byte("data: " + string(data) + "\n\n")
+}
+
+func (s openAIResponsesCompletionState) completedOutputItems() []interface{} {
+	if len(s.OutputItems) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(s.OutputItems))
+	for index := range s.OutputItems {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	output := make([]interface{}, 0, len(indexes))
+	for _, index := range indexes {
+		itemState := s.OutputItems[index]
+		if itemState == nil || !itemState.Done || !isRecoverableFunctionCallItem(itemState.Item) {
+			continue
+		}
+		output = append(output, cloneOpenAIResponsesMap(itemState.Item))
+	}
+	return output
+}
+
+func cloneOpenAIResponsesMap(value map[string]interface{}) map[string]interface{} {
+	if value == nil {
+		return nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var cloned map[string]interface{}
+	if err := json.Unmarshal(data, &cloned); err != nil {
+		return value
+	}
+	return cloned
 }
 
 func (s *openAIResponsesCompletionState) observe(eventData []byte) {
@@ -407,8 +480,8 @@ func (s *openAIResponsesCompletionState) observeJSON(event map[string]interface{
 		s.SequenceNumber = seq
 	}
 	eventType, _ := event["type"].(string)
-	if strings.Contains(eventType, "tool_call") || strings.Contains(eventType, "function_call") || strings.Contains(eventType, "custom_tool") {
-		s.Unsafe = true
+	if strings.TrimSpace(eventType) != "" {
+		s.LastEventType = eventType
 	}
 
 	switch eventType {
@@ -438,23 +511,188 @@ func (s *openAIResponsesCompletionState) observeJSON(event map[string]interface{
 		if part, ok := event["part"].(map[string]interface{}); ok {
 			partType, _ := part["type"].(string)
 			if partType != "" && partType != "output_text" {
-				s.Unsafe = true
+				s.markStructuralUnsafe("non_message_content")
 			}
 			if text, ok := part["text"].(string); ok && eventType == "response.content_part.done" && s.Text == "" {
 				s.Text = text
 			}
 		}
+	case "response.function_call_arguments.delta":
+		s.observeFunctionCallArguments(event, false)
+	case "response.function_call_arguments.done":
+		s.observeFunctionCallArguments(event, true)
 	case "response.output_item.added", "response.output_item.done":
 		if item, ok := event["item"].(map[string]interface{}); ok {
-			itemType, _ := item["type"].(string)
-			if itemType != "" && itemType != "message" && itemType != "reasoning" {
-				s.Unsafe = true
+			itemType := strings.ToLower(strings.TrimSpace(stringFromInterface(item["type"])))
+			if strings.TrimSpace(itemType) != "" {
+				s.LastOutputItemType = itemType
+			}
+			if itemType == "message" && s.Text == "" {
+				s.Text = openAIResponsesOutputItemText(item)
 			}
 			if id, ok := item["id"].(string); ok && strings.TrimSpace(id) != "" && s.ItemID == "" {
 				s.ItemID = id
 			}
+			s.observeOutputItem(event, item, eventType == "response.output_item.done")
 		}
 	}
+	s.updateToolSafety()
+}
+
+func (s *openAIResponsesCompletionState) markStructuralUnsafe(reason string) {
+	if s == nil {
+		return
+	}
+	s.StructuralUnsafe = true
+	if s.StructuralReason == "" {
+		s.StructuralReason = reason
+	}
+}
+
+func (s *openAIResponsesCompletionState) ensureOutputItem(index int) *openAIResponsesOutputItemState {
+	if s.OutputItems == nil {
+		s.OutputItems = make(map[int]*openAIResponsesOutputItemState)
+	}
+	itemState := s.OutputItems[index]
+	if itemState == nil {
+		itemState = &openAIResponsesOutputItemState{Index: index}
+		s.OutputItems[index] = itemState
+	}
+	return itemState
+}
+
+func (s *openAIResponsesCompletionState) observeFunctionCallArguments(event map[string]interface{}, done bool) {
+	if s == nil || event == nil {
+		return
+	}
+	s.ToolSeen = true
+	index := parseTokenNumber(event["output_index"])
+	itemState := s.ensureOutputItem(index)
+	itemState.ItemType = "function_call"
+	if done {
+		itemState.ArgumentsDone = true
+		s.ToolArgumentsDone = true
+		return
+	}
+	itemState.ArgumentsDeltaSeen = true
+}
+
+func (s *openAIResponsesCompletionState) observeOutputItem(event map[string]interface{}, item map[string]interface{}, done bool) {
+	if s == nil || item == nil {
+		return
+	}
+	index := parseTokenNumber(event["output_index"])
+	itemState := s.ensureOutputItem(index)
+	itemState.Item = cloneOpenAIResponsesMap(item)
+	itemState.ItemType = strings.ToLower(strings.TrimSpace(stringFromInterface(item["type"])))
+	itemState.Done = itemState.Done || done
+	if itemState.ItemType != "message" && itemState.ItemType != "reasoning" {
+		s.ToolSeen = true
+	}
+	if itemState.ItemType == "function_call" && done {
+		s.ToolItemDone = true
+		if hasNonEmptyString(item["arguments"]) {
+			itemState.ArgumentsDone = true
+			s.ToolArgumentsDone = true
+		}
+	}
+}
+
+func (s *openAIResponsesCompletionState) updateToolSafety() {
+	if s == nil {
+		return
+	}
+	s.OutputItemCount = 0
+	s.ToolRecoverable = false
+	s.ToolPending = false
+
+	for _, itemState := range s.OutputItems {
+		if itemState == nil {
+			continue
+		}
+		itemType := strings.ToLower(strings.TrimSpace(itemState.ItemType))
+		if itemType == "" || itemType == "message" || itemType == "reasoning" {
+			continue
+		}
+		s.OutputItemCount++
+		s.ToolSeen = true
+		if itemType == "function_call" && itemState.Done && isRecoverableFunctionCallItem(itemState.Item) {
+			s.ToolRecoverable = true
+			continue
+		}
+		s.ToolPending = true
+		if s.UnsafeReason == "" || s.UnsafeReason == "unknown" {
+			s.UnsafeReason = openAIResponsesPendingReason(itemType)
+		}
+	}
+
+	if s.ToolSeen && !s.ToolRecoverable && s.OutputItemCount == 0 {
+		s.ToolPending = true
+		if s.UnsafeReason == "" || s.UnsafeReason == "unknown" {
+			s.UnsafeReason = "function_call_pending"
+		}
+	}
+	if s.StructuralUnsafe {
+		s.Unsafe = true
+		s.UnsafeReason = s.StructuralReason
+		return
+	}
+	s.Unsafe = s.ToolPending
+	if s.ToolPending && (s.UnsafeReason == "" || s.UnsafeReason == "unknown") {
+		s.UnsafeReason = "function_call_pending"
+	}
+	if !s.Unsafe && s.UnsafeReason != "" && strings.HasSuffix(s.UnsafeReason, "_pending") {
+		s.UnsafeReason = ""
+	}
+}
+
+func openAIResponsesPendingReason(itemType string) string {
+	itemType = strings.ToLower(strings.TrimSpace(itemType))
+	switch itemType {
+	case "function_call":
+		return "function_call_pending"
+	case "custom_tool_call":
+		return "custom_tool_pending"
+	case "":
+		return "tool_pending"
+	default:
+		return itemType + "_pending"
+	}
+}
+
+func isRecoverableFunctionCallItem(item map[string]interface{}) bool {
+	if item == nil {
+		return false
+	}
+	itemType := strings.ToLower(strings.TrimSpace(stringFromInterface(item["type"])))
+	if itemType != "function_call" {
+		return false
+	}
+	if !hasNonEmptyString(item["name"]) {
+		return false
+	}
+	return hasNonEmptyString(item["arguments"]) || hasNonEmptyString(item["call_id"]) || hasNonEmptyString(item["id"])
+}
+
+func openAIResponsesOutputItemText(item map[string]interface{}) string {
+	if item == nil {
+		return ""
+	}
+	content, ok := item["content"].([]interface{})
+	if !ok {
+		return ""
+	}
+	var text strings.Builder
+	for _, rawPart := range content {
+		part, ok := rawPart.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if value, ok := part["text"].(string); ok {
+			text.WriteString(value)
+		}
+	}
+	return text.String()
 }
 
 func (s *openAIResponsesCompletionState) captureItemID(event map[string]interface{}) {
@@ -562,6 +800,8 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 	semanticDataSeen := false
 	progressFlushed := false
 	emptyKind := ""
+	isOpenAIResponsesStream := streamSession != nil && streamSession.clientFormat == ClientFormatOpenAIResponses
+	poeDiagnosticsPending := isOpenAIResponsesStream && providercompat.NormalizeTransformer(endpoint.Transformer) == providercompat.TransformerPoe
 
 	writeTransformedEvent := func(data []byte, semantic bool, progress bool) error {
 		if len(data) == 0 {
@@ -602,14 +842,90 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 		result.WroteData = true
 		return nil
 	}
+	logPoeResponsesDiagnostics := func(transformedEvent []byte) {
+		if !poeDiagnosticsPending || len(transformedEvent) == 0 {
+			return
+		}
+		poeDiagnosticsPending = false
+		eventType := sseBlockEventType(string(transformedEvent))
+		logger.Debug(
+			"[%s] Poe streaming diagnostics upstream_path=%s content_type=%s first_transformed_event_type=%s",
+			endpoint.Name,
+			responseRequestPath(resp),
+			resp.Header.Get("Content-Type"),
+			sanitizeLogField(eventType),
+		)
+	}
+	recordFirstTransformedEventType := func(transformedEvent []byte) {
+		if len(transformedEvent) == 0 {
+			return
+		}
+		eventType := sseBlockEventType(string(transformedEvent))
+		if result.FirstTransformedEventType == "" {
+			result.FirstTransformedEventType = eventType
+		}
+		if eventType != "" {
+			result.LastTransformedEventType = eventType
+		}
+	}
+	writeSyntheticResponsesCompletion := func() bool {
+		if !isOpenAIResponsesStream || responsesCompletion.Completed {
+			return true
+		}
+		if streamSession != nil && !streamSession.synthesizeMissingDone {
+			return false
+		}
+		if !responsesCompletion.canSynthesizeCompleted() {
+			return false
+		}
+		completedEvent := responsesCompletion.completedEvent(inputTokens, outputTokens)
+		if len(completedEvent) == 0 {
+			return false
+		}
+		responsesCompletion.observe(completedEvent)
+		streamInspection := inspectSemanticStreamEvent(completedEvent)
+		if writeErr := writeTransformedEvent(completedEvent, streamInspection.HasOutput, streamInspection.HasProgress); writeErr != nil {
+			result.Completed = false
+			result.Reason = streamFinishDownstreamWriteFailed
+			result.Err = writeErr
+			return false
+		}
+		if responsesCompletion.ToolRecoverable {
+			logger.Debug(
+				"[%s] Completing OpenAI Responses function_call stream missing response.completed responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d",
+				endpoint.Name,
+				responsesCompletion.ToolRecoverable,
+				responsesCompletion.ToolPending,
+				responsesCompletion.OutputItemCount,
+			)
+		} else {
+			logger.Debug("[%s] Synthesized OpenAI Responses response.completed before stream close", endpoint.Name)
+		}
+		return true
+	}
+	failMissingResponsesCompleted := func() {
+		result.Completed = false
+		result.Reason = streamFinishMissingResponsesDone
+		result.Err = fmt.Errorf("stream closed before response.completed")
+	}
 
 	for scanner.Scan() && !streamDone {
 		line := scanner.Text()
 
 		if strings.Contains(line, "data: [DONE]") {
 			streamDone = true
-			result.Completed = true
-			result.Reason = streamFinishCompleted
+			if isOpenAIResponsesStream && !responsesCompletion.Completed {
+				if !writeSyntheticResponsesCompletion() {
+					if result.Err == nil {
+						failMissingResponsesCompleted()
+					}
+					break
+				}
+			}
+			if result.Err == nil {
+				result.Completed = true
+				result.Reason = streamFinishCompleted
+			}
 
 			// Token Usage Fallback: Inject message_delta with estimated output_tokens before [DONE]
 			if outputTokens == 0 && outputText.Len() > 0 {
@@ -621,13 +937,15 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 					streamCtx.OutputTokens = outputTokens
 				}
 
-				// Inject message_delta event with usage
-				deltaEvent := fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":%d}}\n\n", outputTokens)
-				if writeErr := writeTransformedEvent([]byte(deltaEvent), false, false); writeErr != nil {
-					result.Completed = false
-					result.Reason = streamFinishDownstreamWriteFailed
-					result.Err = writeErr
-					break
+				if !isOpenAIResponsesStream {
+					// Inject message_delta event with usage
+					deltaEvent := fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":%d}}\n\n", outputTokens)
+					if writeErr := writeTransformedEvent([]byte(deltaEvent), false, false); writeErr != nil {
+						result.Completed = false
+						result.Reason = streamFinishDownstreamWriteFailed
+						result.Err = writeErr
+						break
+					}
 				}
 			}
 
@@ -640,8 +958,10 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 			}
 			transformedEvent, err := p.transformStreamEvent(eventData, trans, transformerName, streamCtx)
 			if err == nil && len(transformedEvent) > 0 {
+				recordFirstTransformedEventType(transformedEvent)
+				logPoeResponsesDiagnostics(transformedEvent)
 				logger.DebugLog("[%s] SSE Event #%d (Transformed): %s", endpoint.Name, eventCount+1, string(transformedEvent))
-				if streamSession != nil && streamSession.clientFormat == ClientFormatOpenAIResponses {
+				if isOpenAIResponsesStream {
 					responsesCompletion.observe(transformedEvent)
 				}
 				streamInspection := inspectSemanticStreamEvent(transformedEvent)
@@ -686,13 +1006,15 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 					streamCtx.OutputTokens = outputTokens
 				}
 
-				// Inject message_delta event with usage before message_stop
-				deltaEvent := fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":%d}}\n\n", outputTokens)
-				if writeErr := writeTransformedEvent([]byte(deltaEvent), false, false); writeErr != nil {
-					result.Reason = streamFinishDownstreamWriteFailed
-					result.Err = writeErr
-					streamDone = true
-					break
+				if !isOpenAIResponsesStream {
+					// Inject message_delta event with usage before message_stop
+					deltaEvent := fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":%d}}\n\n", outputTokens)
+					if writeErr := writeTransformedEvent([]byte(deltaEvent), false, false); writeErr != nil {
+						result.Reason = streamFinishDownstreamWriteFailed
+						result.Err = writeErr
+						streamDone = true
+						break
+					}
 				}
 			}
 
@@ -706,11 +1028,13 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 				result.Err = err
 				streamDone = true
 			} else if len(transformedEvent) > 0 {
+				recordFirstTransformedEventType(transformedEvent)
+				logPoeResponsesDiagnostics(transformedEvent)
 				logger.DebugLog("[%s] SSE Event #%d (Transformed): %s", endpoint.Name, eventCount, string(transformedEvent))
 
 				p.extractTokensFromEvent(transformedEvent, &inputTokens, &outputTokens)
 				p.extractTextFromEvent(transformedEvent, &outputText)
-				if streamSession != nil && streamSession.clientFormat == ClientFormatOpenAIResponses {
+				if isOpenAIResponsesStream {
 					responsesCompletion.observe(transformedEvent)
 				}
 				streamInspection := inspectSemanticStreamEvent(transformedEvent)
@@ -766,12 +1090,30 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 	resp.Body.Close()
 	if result.Reason == "" {
-		result.Reason = streamFinishCompleted
-		result.Completed = true
+		if isOpenAIResponsesStream && !responsesCompletion.Completed {
+			if writeSyntheticResponsesCompletion() {
+				result.Reason = streamFinishCompleted
+				result.Completed = true
+			} else {
+				if result.Err == nil {
+					failMissingResponsesCompleted()
+				}
+			}
+		} else {
+			result.Reason = streamFinishCompleted
+			result.Completed = true
+		}
+	}
+	finalOutputText := outputText.String()
+	if finalOutputText == "" && responsesCompletion.Text != "" {
+		finalOutputText = responsesCompletion.Text
+	}
+	if outputTokens == 0 && finalOutputText != "" {
+		outputTokens = tokencount.EstimateOutputTokens(finalOutputText)
 	}
 	result.InputTokens = inputTokens
 	result.OutputTokens = outputTokens
-	result.OutputText = outputText.String()
+	result.OutputText = finalOutputText
 	result.ResponsesCompletionSafe = responsesCompletion
 	if result.Err == nil && result.Completed && !result.WroteSemanticData {
 		if hasSuccessfulOutputTokens(outputTokens) {

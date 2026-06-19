@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -180,5 +181,112 @@ func TestOpenAIResponsesStreamFromChatUpstreamEmitsCreatedOnce(t *testing.T) {
 			"expected exactly 1 response.created event in downstream SSE (got %d). Duplicate created events corrupt Codex stream protocol and cause client-side cancellation.",
 			createdCount,
 		)
+	}
+}
+
+func TestPoeResponsesClientUsesNativeResponsesStreaming(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var upstreamPath string
+	var upstreamBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		upstreamBody = string(body)
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-poe-1","object":"response","status":"in_progress","model":"claude-opus-4.8","output":[]}}`,
+			"",
+			`data: {"type":"response.output_text.delta","sequence_number":2,"output_index":0,"content_index":0,"item_id":"msg-poe-1","delta":"hello"}`,
+			"",
+			`data: {"type":"response.output_text.delta","sequence_number":3,"output_index":0,"content_index":0,"item_id":"msg-poe-1","delta":" world"}`,
+			"",
+			`data: {"type":"response.completed","sequence_number":4,"response":{"id":"resp-poe-1","object":"response","status":"completed","model":"claude-opus-4.8","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},"output":[{"type":"message","id":"msg-poe-1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello world"}]}]}}`,
+			"",
+			"data: [DONE]",
+			"",
+		}, "\n")))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	endpoint := failoverPolicyTestEndpoint("Poe", upstream.URL)
+	endpoint.Transformer = "poe"
+	endpoint.Model = "claude-opus-4.8"
+	p := newFailoverPolicyTestProxy([]config.Endpoint{endpoint}, upstream.Client())
+	p.streamHeartbeatInterval = time.Hour
+
+	proxySrv := httptest.NewServer(http.HandlerFunc(p.handleProxy))
+	defer proxySrv.Close()
+
+	resp, err := proxySrv.Client().Post(
+		proxySrv.URL+"/v1/responses",
+		"application/json",
+		strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi","reasoning":{"effort":"high"}}`),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var fullBody strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		fullBody.WriteString(scanner.Text())
+		fullBody.WriteByte('\n')
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("failed reading downstream stream: %v", err)
+	}
+	body := fullBody.String()
+
+	if upstreamPath != "/v1/responses" {
+		t.Fatalf("expected Poe upstream path /v1/responses, got %s", upstreamPath)
+	}
+	if strings.Contains(upstreamBody, "output_effort") {
+		t.Fatalf("did not expect Chat-only output_effort in native Poe Responses request: %s", upstreamBody)
+	}
+	if !strings.Contains(upstreamBody, `"reasoning":{"effort":"high"}`) {
+		t.Fatalf("expected native Responses reasoning effort to be preserved, got: %s", upstreamBody)
+	}
+	if strings.Count(body, `"type":"response.created"`) != 1 {
+		t.Fatalf("expected exactly one response.created event, got stream: %s", body)
+	}
+	for _, want := range []string{
+		`"type":"response.output_text.delta"`,
+		`"delta":"hello"`,
+		`"delta":" world"`,
+		`"type":"response.completed"`,
+		`data: [DONE]`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected downstream stream to contain %s, got: %s", want, body)
+		}
+	}
+
+	var logs strings.Builder
+	for _, entry := range logger.GetLogger().GetLogs() {
+		logs.WriteString(entry.Message)
+		logs.WriteByte('\n')
+	}
+	joinedLogs := logs.String()
+	for _, want := range []string{
+		"Poe streaming diagnostics",
+		"upstream_path=/v1/responses",
+		"content_type=text/event-stream",
+		"first_transformed_event_type=response.created",
+	} {
+		if !strings.Contains(joinedLogs, want) {
+			t.Fatalf("expected logs to contain %q; logs:\n%s", want, joinedLogs)
+		}
 	}
 }

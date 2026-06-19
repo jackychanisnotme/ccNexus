@@ -938,7 +938,7 @@ func TestStreamingUpstreamErrorRetriesBeforeRequestLocalFallback(t *testing.T) {
 	}
 }
 
-func TestStreamingUpstreamErrorAfterSemanticDataWritesErrorAndSwitches(t *testing.T) {
+func TestStreamingUpstreamErrorAfterSemanticDataCompletesOpenAIPythonResponsesStream(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
 
@@ -999,12 +999,20 @@ func TestStreamingUpstreamErrorAfterSemanticDataWritesErrorAndSwitches(t *testin
 	for _, want := range []string{
 		"response.output_text.delta",
 		"hello",
-		"event: error",
-		`"type":"upstream_stream_error"`,
-		"Upstream stream interrupted",
+		"response.completed",
+		`"text":"hello"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected downstream body to contain %q, got %q", want, body)
+		}
+	}
+	for _, notWant := range []string{
+		"event: error",
+		"Upstream stream interrupted",
+		"fallback",
+	} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("did not expect downstream body to contain %q, got %q", notWant, body)
 		}
 	}
 	if got := p.GetCurrentEndpointName(); got != "Primary" {
@@ -1014,16 +1022,17 @@ func TestStreamingUpstreamErrorAfterSemanticDataWritesErrorAndSwitches(t *testin
 		t.Fatalf("expected no current endpoint events, got %#v", currentEvents)
 	}
 	p.cooldownMu.RLock()
-	_, cooled := p.endpointCooldowns["Primary"]
+	cooldown, cooled := p.endpointCooldowns["Primary"]
 	p.cooldownMu.RUnlock()
-	if cooled {
-		t.Fatal("expected post-output stream interruption not to cool Primary")
+	if !cooled || cooldown.Reason != "upstream_stream_error" {
+		t.Fatalf("expected Primary cooldown for post-output upstream_stream_error, got cooled=%v cooldown=%#v", cooled, cooldown)
 	}
 
 	logs := joinedProxyLogs()
 	for _, want := range []string{
-		"Streaming response failed after semantic output",
+		"Completing interrupted OpenAI Responses stream for compatible client",
 		"retry_reason=upstream_stream_error",
+		"cooldown_reason=upstream_stream_error",
 	} {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("expected logs to contain %q, got logs:\n%s", want, logs)
@@ -1135,7 +1144,7 @@ func TestStreamingUpstreamErrorAfterSemanticDataCompletesOpenAIJSResponsesStream
 
 	logs := joinedProxyLogs()
 	for _, want := range []string{
-		"Completing interrupted OpenAI Responses stream for JS/Codex client",
+		"Completing interrupted OpenAI Responses stream for compatible client",
 		"retry_reason=upstream_stream_error",
 		"cooldown_reason=upstream_stream_error",
 	} {

@@ -147,6 +147,9 @@ wire_api = "responses"  # 或 "chat"
 - [详细配置](docs/configuration.md)
 - [开发指南](docs/development.md)
 - [常见问题](docs/FAQ.md)
+- [第一阶段分发验证方案](docs/codex-goal-phase1-distribution.md)
+- [商业交付模板](docs/distribution/README.md)
+- [独立站开发说明](site/README.md)
 
 ## 许可证
 

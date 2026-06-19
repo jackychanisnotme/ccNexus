@@ -573,11 +573,98 @@ func shouldCompleteInterruptedOpenAIResponsesStream(r *http.Request, clientForma
 		if agent == "" {
 			continue
 		}
+		if strings.Contains(agent, "openai/js") || strings.Contains(agent, "openai/python") || strings.Contains(agent, "openclaw") || strings.Contains(agent, "codex") {
+			return true
+		}
+	}
+	return false
+}
+
+func openAIResponsesClientAgentValues(r *http.Request) []string {
+	if r == nil {
+		return nil
+	}
+	return []string{
+		r.Header.Get("X-Agent-ID"),
+		r.Header.Get("X-Agent-Id"),
+		r.Header.Get("X-Agent-Name"),
+		r.UserAgent(),
+	}
+}
+
+func isOpenAIPythonClient(r *http.Request) bool {
+	for _, value := range openAIResponsesClientAgentValues(r) {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(value)), "openai/python") {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldTolerateMissingOpenAIResponsesCompleted(r *http.Request, clientFormat ClientFormat) bool {
+	if clientFormat != ClientFormatOpenAIResponses {
+		return false
+	}
+	if strings.TrimSpace(r.Header.Get("X-OpenClaw-Agent")) != "" {
+		return true
+	}
+	for _, value := range []string{
+		r.Header.Get("X-Agent-ID"),
+		r.Header.Get("X-Agent-Id"),
+		r.Header.Get("X-Agent-Name"),
+		r.UserAgent(),
+	} {
+		agent := strings.ToLower(strings.TrimSpace(value))
+		if agent == "" {
+			continue
+		}
+		if strings.Contains(agent, "openai/python") {
+			return false
+		}
 		if strings.Contains(agent, "openai/js") || strings.Contains(agent, "openclaw") || strings.Contains(agent, "codex") {
 			return true
 		}
 	}
 	return false
+}
+
+func endpointSupportsResponsesMissingCompletedCompat(endpoint config.Endpoint) bool {
+	for _, value := range []string{endpoint.Name, endpoint.APIUrl} {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(value)), "1052") {
+			return true
+		}
+	}
+	remark := strings.ToLower(strings.TrimSpace(endpoint.Remark))
+	return strings.Contains(remark, "compat:responses-missing-completed")
+}
+
+func shouldSoftFallbackMissingOpenAIResponsesCompleted(endpoint config.Endpoint, r *http.Request, clientFormat ClientFormat, streamResult streamResponseResult) bool {
+	if clientFormat != ClientFormatOpenAIResponses {
+		return false
+	}
+	if !endpointSupportsResponsesMissingCompletedCompat(endpoint) {
+		return false
+	}
+	if !isOpenAIPythonClient(r) {
+		return false
+	}
+	return !streamResult.ResponsesCompletionSafe.Unsafe
+}
+
+func missingOpenAIResponsesCompletedDiagnostics(streamResult streamResponseResult) (int, bool, string, string, string, bool, bool, int) {
+	state := streamResult.ResponsesCompletionSafe
+	lastTransformedEventType := streamResult.LastTransformedEventType
+	if lastTransformedEventType == "" {
+		lastTransformedEventType = streamResult.FirstTransformedEventType
+	}
+	return len(state.Text),
+		state.Unsafe,
+		sanitizeLogField(state.UnsafeReason),
+		sanitizeLogField(lastTransformedEventType),
+		sanitizeLogField(state.LastOutputItemType),
+		state.ToolRecoverable,
+		state.ToolPending,
+		state.OutputItemCount
 }
 
 // handleProxy handles the main proxy logic
@@ -682,6 +769,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		streamSession = newDownstreamStreamSession(w, p.streamHeartbeatIntervalOrDefault(), clientFormat)
+		streamSession.synthesizeMissingDone = !shouldTolerateMissingOpenAIResponsesCompleted(r, clientFormat)
 		if err := streamSession.Start(); err != nil {
 			logger.Error("Failed to start downstream stream: %v %s", err, requestLogFields(obs, "", 0, http.StatusInternalServerError, "downstream_stream_start_failed"))
 			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
@@ -1010,13 +1098,210 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			if inputTokens == 0 || outputTokens == 0 {
 				inputTokens, outputTokens = p.estimateTokens(bodyBytes, outputText, inputTokens, outputTokens, endpoint.Name)
 			}
+			recordStreamingSuccess := func() {
+				p.stats.RecordRequestForClient(endpoint.Name, obs.ClientIP)
+				p.stats.RecordTokensForClient(endpoint.Name, obs.ClientIP, inputTokens, outputTokens)
+				p.recordCredentialUsage(credentialID, endpoint.Name, 1, 0, inputTokens, outputTokens)
+				p.markCredentialSuccess(credentialID)
+				p.clearEndpointCooldown(endpoint.Name)
+				p.markRequestInactive(endpoint.Name)
+				p.recordEndpointSuccessEvent(endpoint.Name)
+				totalElapsed := time.Since(requestStart).Round(time.Millisecond)
+				logRequestAttemptResult(obs, endpoint.Name, attemptNumber, http.StatusOK, "", "Requested tokens=%d/%d latency=%s cred_id=%d", inputTokens, outputTokens, totalElapsed, credentialID)
+			}
 			if streamResult.Err != nil {
 				retryReason := streamResult.Reason
 				if retryReason == "" {
 					retryReason = "streaming_failed"
 				}
+				if retryReason == streamFinishMissingResponsesDone {
+					responsesTextLen, responsesUnsafe, responsesUnsafeReason, lastTransformedEventType, lastOutputItemType, responsesToolRecoverable, responsesToolPending, responsesOutputItems := missingOpenAIResponsesCompletedDiagnostics(streamResult)
+					if streamResult.WroteSemanticData || streamResult.WroteData {
+						if shouldTolerateMissingOpenAIResponsesCompleted(r, clientFormat) {
+							logRequestAttemptWarn(
+								obs,
+								endpoint.Name,
+								attemptNumber,
+								http.StatusOK,
+								retryReason,
+								"Tolerating missing response.completed for tolerant client: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=false synthetic_completion_completed=false",
+								streamResult.Err,
+								streamResult.WroteData,
+								streamResult.WroteSemanticData,
+								sanitizeLogField(streamResult.FirstTransformedEventType),
+								responsesTextLen,
+								responsesUnsafe,
+								responsesUnsafeReason,
+								lastTransformedEventType,
+								lastOutputItemType,
+								responsesToolRecoverable,
+								responsesToolPending,
+								responsesOutputItems,
+							)
+							if streamSession != nil && streamSession.Started() {
+								streamSession.Close()
+							}
+							recordStreamingSuccess()
+							return
+						}
+						syntheticCompletionAttempted := false
+						if shouldCompleteInterruptedOpenAIResponsesStream(r, clientFormat, streamResult) && streamSession != nil && streamSession.Started() {
+							syntheticCompletionAttempted = true
+							completedEvent := streamResult.ResponsesCompletionSafe.completedEvent(inputTokens, outputTokens)
+							if len(completedEvent) == 0 {
+								logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishTransformFailed, "Failed to build synthetic OpenAI Responses completion after missing response.completed")
+							} else if writeErr := streamSession.Write(completedEvent); writeErr != nil {
+								logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishDownstreamWriteFailed, "Failed to write synthetic OpenAI Responses completion after missing response.completed: %v", writeErr)
+							} else {
+								completionMessage := "Completing OpenAI Responses stream missing response.completed for compatible client: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
+								if streamResult.ResponsesCompletionSafe.ToolRecoverable {
+									completionMessage = "Completing OpenAI Responses function_call stream missing response.completed: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
+								}
+								logRequestAttemptWarn(
+									obs,
+									endpoint.Name,
+									attemptNumber,
+									http.StatusOK,
+									retryReason,
+									completionMessage,
+									streamResult.Err,
+									streamResult.WroteData,
+									streamResult.WroteSemanticData,
+									sanitizeLogField(streamResult.FirstTransformedEventType),
+									responsesTextLen,
+									responsesUnsafe,
+									responsesUnsafeReason,
+									lastTransformedEventType,
+									lastOutputItemType,
+									responsesToolRecoverable,
+									responsesToolPending,
+									responsesOutputItems,
+								)
+								streamSession.Close()
+								recordStreamingSuccess()
+								return
+							}
+						}
+						logRequestAttemptWarn(
+							obs,
+							endpoint.Name,
+							attemptNumber,
+							http.StatusOK,
+							retryReason,
+							"OpenAI Responses stream closed before response.completed after downstream output: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=%t synthetic_completion_completed=false",
+							streamResult.Err,
+							streamResult.WroteData,
+							streamResult.WroteSemanticData,
+							sanitizeLogField(streamResult.FirstTransformedEventType),
+							responsesTextLen,
+							responsesUnsafe,
+							responsesUnsafeReason,
+							lastTransformedEventType,
+							lastOutputItemType,
+							responsesToolRecoverable,
+							responsesToolPending,
+							responsesOutputItems,
+							syntheticCompletionAttempted,
+						)
+						if streamSession != nil && streamSession.Started() {
+							message := fmt.Sprintf("Upstream Responses stream closed before response.completed: %v", streamResult.Err)
+							if writeErr := streamSession.WriteTypedError(streamFinishMissingResponsesDone, message); writeErr != nil {
+								logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishDownstreamWriteFailed, "Failed to write missing response.completed error to downstream: %v", writeErr)
+							}
+							streamSession.Close()
+						}
+						p.markCredentialFailure(credentialID, 0, streamResult.Err.Error())
+						p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
+						p.recordEndpointErrorForClient(endpoint.Name, retryReason, obs.ClientIP)
+						p.markRequestInactive(endpoint.Name)
+						return
+					}
+
+					if shouldSoftFallbackMissingOpenAIResponsesCompleted(endpoint, r, clientFormat, streamResult) {
+						logRequestAttemptWarn(
+							obs,
+							endpoint.Name,
+							attemptNumber,
+							http.StatusOK,
+							retryReason,
+							"Soft-fallback missing response.completed for compatible endpoint: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d",
+							streamResult.Err,
+							streamResult.WroteData,
+							streamResult.WroteSemanticData,
+							sanitizeLogField(streamResult.FirstTransformedEventType),
+							responsesTextLen,
+							responsesUnsafe,
+							responsesUnsafeReason,
+							lastTransformedEventType,
+							lastOutputItemType,
+							responsesToolRecoverable,
+							responsesToolPending,
+							responsesOutputItems,
+						)
+						p.markRequestInactive(endpoint.Name)
+						if useSpecificEndpoint {
+							if streamSession != nil && streamSession.Started() {
+								message := fmt.Sprintf("Upstream Responses stream closed before response.completed before output: %v", streamResult.Err)
+								_ = streamSession.WriteTypedError(streamFinishMissingResponsesDone, message)
+							}
+							return
+						}
+						p.advanceRequestEndpoint(requestPlan, endpoint, obs, attemptNumber, retryReason)
+						endpointAttempts = 0
+						continue
+					}
+
+					logRequestAttemptWarn(
+						obs,
+						endpoint.Name,
+						attemptNumber,
+						http.StatusOK,
+						retryReason,
+						"OpenAI Responses stream closed before response.completed before semantic output: %v responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d",
+						streamResult.Err,
+						responsesTextLen,
+						responsesUnsafe,
+						responsesUnsafeReason,
+						lastTransformedEventType,
+						lastOutputItemType,
+						responsesToolRecoverable,
+						responsesToolPending,
+						responsesOutputItems,
+					)
+					p.markCredentialFailure(credentialID, 0, streamResult.Err.Error())
+					p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
+					p.recordEndpointErrorForClient(endpoint.Name, retryReason, obs.ClientIP)
+					p.markRequestInactive(endpoint.Name)
+					if endpointAttempts >= endpointFastFailoverAttempts || p.isEndpointInActiveCooldown(endpoint.Name) {
+						p.markEndpointCooldownForReason(endpoint.Name, retryReason, resp.Header, obs, attemptNumber)
+						if useSpecificEndpoint {
+							if streamSession != nil && streamSession.Started() {
+								message := fmt.Sprintf("Upstream Responses stream closed before response.completed before output: %v", streamResult.Err)
+								_ = streamSession.WriteTypedError(streamFinishMissingResponsesDone, message)
+							}
+							return
+						}
+						p.advanceRequestEndpoint(requestPlan, endpoint, obs, attemptNumber, retryReason)
+						endpointAttempts = 0
+					} else {
+						logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, retryReason, "Retryable missing response.completed before semantic output, retrying same endpoint: %v", streamResult.Err)
+						p.sleepBeforeRetry(300 * time.Millisecond)
+					}
+					continue
+				}
 				if retryReason == streamFinishClientCanceled || isClientCanceled(ctx, streamResult.Err) {
-					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, "client_canceled", "Client canceled streaming response: %v", streamResult.Err)
+					logRequestAttemptWarn(
+						obs,
+						endpoint.Name,
+						attemptNumber,
+						http.StatusOK,
+						"client_canceled",
+						"Client canceled streaming response: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s",
+						streamResult.Err,
+						streamResult.WroteData,
+						streamResult.WroteSemanticData,
+						sanitizeLogField(streamResult.FirstTransformedEventType),
+					)
 					p.markRequestInactive(endpoint.Name)
 					return
 				}
@@ -1057,7 +1342,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				if retryReason == streamFinishUpstreamStreamError {
 					if streamResult.WroteSemanticData {
 						if shouldCompleteInterruptedOpenAIResponsesStream(r, clientFormat, streamResult) && streamSession != nil && streamSession.Started() {
-							logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, retryReason, "Completing interrupted OpenAI Responses stream for JS/Codex client: %v", streamResult.Err)
+							logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, retryReason, "Completing interrupted OpenAI Responses stream for compatible client: %v", streamResult.Err)
 							completedEvent := streamResult.ResponsesCompletionSafe.completedEvent(inputTokens, outputTokens)
 							if len(completedEvent) == 0 {
 								logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishTransformFailed, "Failed to build synthetic OpenAI Responses completion after stream interruption")
@@ -1121,15 +1406,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			p.stats.RecordRequestForClient(endpoint.Name, obs.ClientIP)
-			p.stats.RecordTokensForClient(endpoint.Name, obs.ClientIP, inputTokens, outputTokens)
-			p.recordCredentialUsage(credentialID, endpoint.Name, 1, 0, inputTokens, outputTokens)
-			p.markCredentialSuccess(credentialID)
-			p.clearEndpointCooldown(endpoint.Name)
-			p.markRequestInactive(endpoint.Name)
-			p.recordEndpointSuccessEvent(endpoint.Name)
-			totalElapsed := time.Since(requestStart).Round(time.Millisecond)
-			logRequestAttemptResult(obs, endpoint.Name, attemptNumber, http.StatusOK, "", "Requested tokens=%d/%d latency=%s cred_id=%d", inputTokens, outputTokens, totalElapsed, credentialID)
+			recordStreamingSuccess()
 			return
 		}
 

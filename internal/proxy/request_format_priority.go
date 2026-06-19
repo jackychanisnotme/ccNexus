@@ -53,7 +53,8 @@ func endpointClientFormatPreferenceTier(clientFormat ClientFormat, endpoint conf
 		}
 		return 3
 	case ClientFormatOpenAIResponses:
-		if providercompat.IsOpenAIResponsesTransformer(transformerName) {
+		if providercompat.IsOpenAIResponsesTransformer(transformerName) ||
+			transformerName == providercompat.TransformerPoe {
 			return 0
 		}
 		if providercompat.IsOpenAIChatTransformer(transformerName) {

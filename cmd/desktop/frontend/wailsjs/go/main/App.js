@@ -38,6 +38,10 @@ export function CancelDownload() {
   return window['go']['main']['App']['CancelDownload']();
 }
 
+export function CheckAgentConfigs(arg1) {
+  return window['go']['main']['App']['CheckAgentConfigs'](arg1);
+}
+
 export function CheckForUpdates() {
   return window['go']['main']['App']['CheckForUpdates']();
 }
@@ -354,6 +358,10 @@ export function ReorderEndpoints(arg1) {
   return window['go']['main']['App']['ReorderEndpoints'](arg1);
 }
 
+export function RepairAgentConfigs(arg1) {
+  return window['go']['main']['App']['RepairAgentConfigs'](arg1);
+}
+
 export function RestoreAgentProviderBackup(arg1, arg2) {
   return window['go']['main']['App']['RestoreAgentProviderBackup'](arg1, arg2);
 }
@@ -364,6 +372,10 @@ export function RestoreFromProvider(arg1, arg2, arg3) {
 
 export function RestoreFromWebDAV(arg1, arg2) {
   return window['go']['main']['App']['RestoreFromWebDAV'](arg1, arg2);
+}
+
+export function RunAgent(arg1) {
+  return window['go']['main']['App']['RunAgent'](arg1);
 }
 
 export function SaveSettings(arg1) {
