@@ -56,6 +56,8 @@ func (i *AgentProviderInspector) Inspect(req AgentProviderInspectRequest) AgentP
 	}
 	for _, target := range targets {
 		switch normalizeAgentTargetID(target) {
+		case "claude":
+			status.Targets = append(status.Targets, i.inspectClaudeCode())
 		case "codex":
 			status.Targets = append(status.Targets, i.inspectCodex())
 		case "openclaw":
@@ -85,6 +87,30 @@ func (i *AgentProviderInspector) InspectJSON(targetsJSON string) string {
 	return string(data)
 }
 
+func (i *AgentProviderInspector) inspectClaudeCode() AgentProviderInspectTarget {
+	path := filepath.Join(i.provider.homeDir, ".claude", "settings.json")
+	target := newInspectTarget("claude", "Claude", path)
+	if !fileExists(path) {
+		return missingInspectTarget(target)
+	}
+	target.Detected = true
+	root := map[string]any{}
+	if err := readJSONFile(path, &root, map[string]any{}); err != nil {
+		target.Status = "parse_failed"
+		target.Problems = append(target.Problems, "parse settings.json: "+err.Error())
+		target.SuggestedFix = "Repair Claude config through AINexus."
+		return target
+	}
+	env, _ := root["env"].(map[string]any)
+	if env == nil {
+		target.Problems = append(target.Problems, "missing env section")
+	} else {
+		addProblemIfMissing(&target, agentBaseURLMatches(fmt.Sprint(env["ANTHROPIC_BASE_URL"]), i.provider.targetURL()), "ANTHROPIC_BASE_URL does not point to AINexus")
+	}
+	finalizeInspectTarget(&target)
+	return target
+}
+
 func (i *AgentProviderInspector) inspectCodex() AgentProviderInspectTarget {
 	configPath := filepath.Join(i.provider.homeDir, ".codex", "config.toml")
 	authPath := filepath.Join(i.provider.homeDir, ".codex", "auth.json")
@@ -98,11 +124,8 @@ func (i *AgentProviderInspector) inspectCodex() AgentProviderInspectTarget {
 		return failedInspectTarget(target, err)
 	}
 	text := string(data)
-	wantBaseURL := fmt.Sprintf(`base_url = "%s/v1"`, i.provider.targetURL())
-	addProblemIfMissing(&target, strings.Contains(text, `model_provider = "AINexus"`), `missing model_provider = "AINexus"`)
-	addProblemIfMissing(&target, strings.Contains(text, `[model_providers.AINexus]`), "missing [model_providers.AINexus]")
-	addProblemIfMissing(&target, strings.Contains(text, wantBaseURL), "base_url does not point to AINexus")
-	addProblemIfMissing(&target, strings.Contains(text, `wire_api = "responses"`), `missing wire_api = "responses"`)
+	codexConfig := parseSimpleTOML(text)
+	addProblemIfMissing(&target, codexConfig.activeProviderBaseURLMatches(i.provider.targetURL()), "active model provider base_url does not point to AINexus")
 
 	auth := map[string]any{}
 	if !fileExists(authPath) {
@@ -139,18 +162,8 @@ func (i *AgentProviderInspector) inspectOpenClaw() AgentProviderInspectTarget {
 	if provider == nil {
 		target.Problems = append(target.Problems, "missing models.providers.AINexus")
 	} else {
-		addProblemIfMissing(&target, fmt.Sprint(provider["baseUrl"]) == i.provider.targetURL()+"/v1", "baseUrl does not point to AINexus")
+		addProblemIfMissing(&target, agentBaseURLMatches(fmt.Sprint(provider["baseUrl"]), i.provider.targetURL()), "baseUrl does not point to AINexus")
 		addProblemIfMissing(&target, strings.TrimSpace(fmt.Sprint(provider["apiKey"])) != "", "missing apiKey")
-	}
-	if agents, _ := root["agents"].(map[string]any); agents != nil {
-		if defaults, _ := agents["defaults"].(map[string]any); defaults != nil {
-			if model, _ := defaults["model"].(map[string]any); model != nil {
-				primary := strings.TrimSpace(fmt.Sprint(model["primary"]))
-				if primary != "" && !strings.HasPrefix(primary, "AINexus/") {
-					target.Problems = append(target.Problems, "default primary model does not use AINexus")
-				}
-			}
-		}
 	}
 	finalizeInspectTarget(&target)
 	return target
@@ -180,15 +193,7 @@ func (i *AgentProviderInspector) inspectHermes() AgentProviderInspectTarget {
 	if model == nil {
 		target.Problems = append(target.Problems, "missing model section")
 	} else {
-		addProblemIfMissing(&target, fmt.Sprint(model["provider"]) == "AINexus", "model.provider is not AINexus")
-		addProblemIfMissing(&target, fmt.Sprint(model["base_url"]) == i.provider.targetURL(), "model.base_url does not point to AINexus")
-	}
-	provider := hermesProvider(root["custom_providers"], "AINexus")
-	if provider == nil {
-		target.Problems = append(target.Problems, "missing custom provider AINexus")
-	} else {
-		addProblemIfMissing(&target, fmt.Sprint(provider["base_url"]) == i.provider.targetURL()+"/v1", "custom provider base_url does not point to AINexus")
-		addProblemIfMissing(&target, strings.TrimSpace(fmt.Sprint(provider["api_key"])) != "", "missing custom provider api_key")
+		addProblemIfMissing(&target, agentBaseURLMatches(fmt.Sprint(model["base_url"]), i.provider.targetURL()), "model.base_url does not point to AINexus")
 	}
 	finalizeInspectTarget(&target)
 	return target
@@ -254,4 +259,69 @@ func hermesProvider(existing any, name string) map[string]any {
 		}
 	}
 	return nil
+}
+
+type simpleTOMLConfig struct {
+	root     map[string]string
+	section map[string]map[string]string
+}
+
+func parseSimpleTOML(text string) simpleTOMLConfig {
+	result := simpleTOMLConfig{
+		root:     map[string]string{},
+		section: map[string]map[string]string{},
+	}
+	current := ""
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.Contains(line, "]") {
+			current = strings.TrimSpace(line[1:strings.Index(line, "]")])
+			if _, ok := result.section[current]; !ok {
+				result.section[current] = map[string]string{}
+			}
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if index := strings.Index(value, " #"); index >= 0 {
+			value = strings.TrimSpace(value[:index])
+		}
+		value = strings.Trim(value, `"'`)
+		if current == "" {
+			result.root[key] = value
+			continue
+		}
+		result.section[current][key] = value
+	}
+	return result
+}
+
+func (c simpleTOMLConfig) activeProviderBaseURLMatches(targetURL string) bool {
+	providerName := strings.TrimSpace(c.root["model_provider"])
+	if providerName != "" {
+		provider := c.section["model_providers."+providerName]
+		if provider == nil {
+			return false
+		}
+		return agentBaseURLMatches(provider["base_url"], targetURL)
+	}
+	for _, section := range c.section {
+		if agentBaseURLMatches(section["base_url"], targetURL) {
+			return true
+		}
+	}
+	return agentBaseURLMatches(c.root["base_url"], targetURL)
+}
+
+func agentBaseURLMatches(actual, targetURL string) bool {
+	actual = strings.TrimRight(strings.TrimSpace(actual), "/")
+	targetURL = strings.TrimRight(strings.TrimSpace(targetURL), "/")
+	return actual != "" && (actual == targetURL || actual == targetURL+"/v1")
 }

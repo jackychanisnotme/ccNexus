@@ -602,7 +602,7 @@ func applyOpenClaw(s *AgentProviderService, targetURL string, createMissing bool
 		providers = map[string]any{}
 	}
 	providers["AINexus"] = map[string]any{
-		"baseUrl": targetURL + "/v1",
+		"baseUrl": targetURL,
 		"apiKey":  agentProviderPlaceholderKey,
 		"api":     "openai-completions",
 		"models":  []any{map[string]any{"id": "gpt-5", "name": "gpt-5"}},

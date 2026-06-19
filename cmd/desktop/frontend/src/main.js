@@ -17,7 +17,7 @@ import { checkUpdatesOnStartup, checkForUpdates, initUpdateSettings } from './mo
 import { initBroadcast } from './modules/broadcast.js'
 import { initFilterDropdowns, clearAllFilters } from './modules/filters.js'
 import { showAgentProviderModal, closeAgentProviderModal, selectAllAgentProviders, applyAgentProviderConfig, restoreAgentProviderBackup } from './modules/agentProvider.js'
-import { showAgentModal, closeAgentModal, runAgent, checkAgentConfigs, repairAgentConfigs } from './modules/agent.js'
+import { showAgentModal, closeAgentModal, runAgent, checkAgentConfigs, repairAgentConfigs, newAgentChat, selectAgentSession, deleteAgentChat, handleAgentComposerKeydown, handleAgentPromptInput } from './modules/agent.js'
 import { formatTokens } from './utils/format.js'
 import {
     showAddEndpointModal,
@@ -269,6 +269,11 @@ window.closeAgentModal = closeAgentModal;
 window.runAgent = runAgent;
 window.checkAgentConfigs = checkAgentConfigs;
 window.repairAgentConfigs = repairAgentConfigs;
+window.newAgentChat = newAgentChat;
+window.selectAgentSession = selectAgentSession;
+window.deleteAgentChat = deleteAgentChat;
+window.handleAgentComposerKeydown = handleAgentComposerKeydown;
+window.handleAgentPromptInput = handleAgentPromptInput;
 window.showAgentProviderModal = showAgentProviderModal;
 window.closeAgentProviderModal = closeAgentProviderModal;
 window.selectAllAgentProviders = selectAllAgentProviders;

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,7 +60,7 @@ func TestAgentRunRepairsConfigsWithoutEnabledEndpoints(t *testing.T) {
 	}
 }
 
-func TestAgentRunDoesNotRepairForConfigMentionWithoutRepairIntent(t *testing.T) {
+func TestAgentRunChecksConfigsForCheckOnlyIntentWithoutRepairing(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.DefaultConfig()
 	cfg.UpdatePort(3456)
@@ -71,14 +72,178 @@ func TestAgentRunDoesNotRepairForConfigMentionWithoutRepairIntent(t *testing.T) 
 
 	result := svc.Run(AgentRunRequest{Task: "检查配置状态"})
 
-	if result.Error != "no_enabled_endpoints" {
-		t.Fatalf("expected no_enabled_endpoints, got %#v", result)
+	if result.Error != "" || !result.Success {
+		t.Fatalf("expected successful local config check, got %#v", result)
+	}
+	if !hasTool(result.ToolResults, "check_agent_configs") {
+		t.Fatalf("expected check tool for check-only wording, got %#v", result.ToolResults)
+	}
+	if !strings.Contains(result.Answer, "只读健康检查已完成") {
+		t.Fatalf("expected read-only health answer, got %q", result.Answer)
 	}
 	if hasTool(result.ToolResults, "repair_agent_configs") {
 		t.Fatalf("did not expect repair tool for check-only wording, got %#v", result.ToolResults)
 	}
 	if fileExists(filepath.Join(home, ".codex", "config.toml")) {
 		t.Fatalf("codex config should not be created for check-only wording")
+	}
+}
+
+func TestAgentRunChecksNamedAgentForBeginnerWordingWithoutRepairing(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3456)
+	cfg.UpdateEndpoints([]config.Endpoint{{Name: "disabled", Enabled: false}})
+	svc := NewAgentServiceWithOptions(cfg, nil, nil, AgentServiceOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	result := svc.Run(AgentRunRequest{Task: "帮我检查 Codex 是否能用"})
+
+	if result.Error != "" || !result.Success {
+		t.Fatalf("expected successful local named-agent check, got %#v", result)
+	}
+	if !hasTool(result.ToolResults, "check_agent_configs") {
+		t.Fatalf("expected check tool for named-agent wording, got %#v", result.ToolResults)
+	}
+	if !strings.Contains(result.Answer, "Codex") || !strings.Contains(result.Answer, "只读") {
+		t.Fatalf("expected named-agent read-only answer, got %q", result.Answer)
+	}
+	if hasTool(result.ToolResults, "repair_agent_configs") {
+		t.Fatalf("did not expect repair tool for named-agent wording, got %#v", result.ToolResults)
+	}
+	if fileExists(filepath.Join(home, ".codex", "config.toml")) {
+		t.Fatalf("codex config should not be created for named-agent check wording")
+	}
+}
+
+func TestAgentRunChecksOpenClawHealthForReadOnlyScanWording(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3456)
+	cfg.UpdateEndpoints([]config.Endpoint{{Name: "disabled", Enabled: false}})
+	svc := NewAgentServiceWithOptions(cfg, nil, nil, AgentServiceOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	result := svc.Run(AgentRunRequest{Task: "只读扫描下open claw的健康"})
+
+	if result.Error != "" || !result.Success {
+		t.Fatalf("expected successful local health check without endpoints, got %#v", result)
+	}
+	if !hasTool(result.ToolResults, "check_agent_configs") {
+		t.Fatalf("expected check_agent_configs tool for open claw health wording, got %#v", result.ToolResults)
+	}
+	if hasTool(result.ToolResults, "repair_agent_configs") {
+		t.Fatalf("did not expect repair tool for read-only health wording, got %#v", result.ToolResults)
+	}
+	assertInspectTargets(t, result.ToolResults, []string{"openclaw"})
+	if !strings.Contains(result.Answer, "OpenClaw") || !strings.Contains(result.Answer, "只读") {
+		t.Fatalf("expected local health answer to mention OpenClaw and read-only mode, got %q", result.Answer)
+	}
+	if fileExists(filepath.Join(home, ".openclaw", "config.json")) {
+		t.Fatalf("openclaw config should not be created for read-only health wording")
+	}
+}
+
+func TestAgentRunChecksClaudeHealthForNaturalWording(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3456)
+	cfg.UpdateEndpoints([]config.Endpoint{{Name: "disabled", Enabled: false}})
+	writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{
+		"env": {
+			"ANTHROPIC_BASE_URL": "http://127.0.0.1:3456",
+			"ANTHROPIC_API_KEY": "ainexus-local"
+		}
+	}`)
+	svc := NewAgentServiceWithOptions(cfg, nil, nil, AgentServiceOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	result := svc.Run(AgentRunRequest{Task: "检查下claude如何"})
+
+	if result.Error != "" || !result.Success {
+		t.Fatalf("expected successful local claude health check, got %#v", result)
+	}
+	if !hasTool(result.ToolResults, "check_agent_configs") {
+		t.Fatalf("expected check_agent_configs tool for claude health wording, got %#v", result.ToolResults)
+	}
+	if hasTool(result.ToolResults, "repair_agent_configs") {
+		t.Fatalf("did not expect repair tool for read-only claude wording, got %#v", result.ToolResults)
+	}
+	assertInspectTargets(t, result.ToolResults, []string{"claude"})
+	if !strings.Contains(result.Answer, "Claude") || !strings.Contains(result.Answer, "健康") {
+		t.Fatalf("expected local health answer to mention healthy Claude, got %q", result.Answer)
+	}
+}
+
+func TestAgentRunScansLocalAgentAppsReadOnlyWithoutEnabledEndpoints(t *testing.T) {
+	home := t.TempDir()
+	appDir := filepath.Join(home, "Applications")
+	mustMkdir(t, filepath.Join(appDir, "Cursor.app"))
+	mustMkdir(t, filepath.Join(home, ".codex"))
+	writeFile(t, filepath.Join(home, ".codex", "config.toml"), "[profiles]\n")
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{Name: "disabled", Enabled: false}})
+	svc := NewAgentServiceWithOptions(cfg, nil, nil, AgentServiceOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	result := svc.Run(AgentRunRequest{Task: "只读扫描下电脑有什么agent app"})
+
+	if result.Error != "" || !result.Success {
+		t.Fatalf("expected successful local scan without enabled endpoints, got %#v", result)
+	}
+	if !hasTool(result.ToolResults, "scan_agent_apps") {
+		t.Fatalf("expected scan_agent_apps tool, got %#v", result.ToolResults)
+	}
+	if !strings.Contains(result.Answer, "Cursor") || !strings.Contains(result.Answer, "Codex") {
+		t.Fatalf("expected scan answer to mention Cursor and Codex, got %q", result.Answer)
+	}
+	if !strings.Contains(result.Answer, "只读") && !strings.Contains(result.Answer, "read-only") {
+		t.Fatalf("expected answer to explain read-only scan, got %q", result.Answer)
+	}
+}
+
+func TestAgentRunIncludesLocalAgentAppScanInModelPrompt(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, "Applications", "Cursor.app"))
+	var payloadText string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		payloadText = string(mustJSON(t, payload))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[{"content":[{"type":"output_text","text":"scan summarized"}]}]}`))
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{Name: "primary", Enabled: true}})
+	svc := NewAgentServiceWithOptions(cfg, nil, nil, AgentServiceOptions{
+		LocalBaseURL: server.URL,
+		HTTPClient:   server.Client(),
+		HomeDir:      home,
+		DataDir:      filepath.Join(home, ".AINexus"),
+	})
+
+	result := svc.Run(AgentRunRequest{Task: "只读扫描下电脑有什么agent app"})
+
+	if !result.Success || result.Answer != "scan summarized" {
+		t.Fatalf("unexpected result %#v", result)
+	}
+	if !hasTool(result.ToolResults, "scan_agent_apps") {
+		t.Fatalf("expected scan_agent_apps tool, got %#v", result.ToolResults)
+	}
+	if !strings.Contains(payloadText, "scan_agent_apps") || !strings.Contains(payloadText, "Cursor") {
+		t.Fatalf("expected model prompt to include scan results, got %s", payloadText)
 	}
 }
 
@@ -212,6 +377,32 @@ func hasTool(results []AgentToolResult, tool string) bool {
 	return false
 }
 
+func assertInspectTargets(t *testing.T, results []AgentToolResult, want []string) {
+	t.Helper()
+	for _, result := range results {
+		if result.Tool != "check_agent_configs" {
+			continue
+		}
+		raw, err := json.Marshal(result.Data)
+		if err != nil {
+			t.Fatalf("marshal inspect data: %v", err)
+		}
+		var status AgentProviderInspectStatus
+		if err := json.Unmarshal(raw, &status); err != nil {
+			t.Fatalf("unmarshal inspect data: %v data=%s", err, raw)
+		}
+		got := make([]string, 0, len(status.Targets))
+		for _, target := range status.Targets {
+			got = append(got, target.Target)
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("inspect targets=%v want %v", got, want)
+		}
+		return
+	}
+	t.Fatalf("check_agent_configs result not found in %#v", results)
+}
+
 func mustJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	data, err := json.Marshal(value)
@@ -219,4 +410,11 @@ func mustJSON(t *testing.T, value any) []byte {
 		t.Fatalf("marshal: %v", err)
 	}
 	return data
+}
+
+func mustMkdir(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
 }

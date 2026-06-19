@@ -57,8 +57,12 @@ func TestAgentProviderApplyBacksUpAndRestoresDetectedConfigs(t *testing.T) {
 		t.Fatalf("expected opencode theme preserved, got %#v", got)
 	}
 	openclaw := readJSON(t, filepath.Join(home, ".openclaw", "openclaw.json"))
-	if _, ok := openclaw["models"].(map[string]any)["providers"].(map[string]any)["AINexus"]; !ok {
+	openclawProvider, ok := openclaw["models"].(map[string]any)["providers"].(map[string]any)["AINexus"].(map[string]any)
+	if !ok {
 		t.Fatalf("expected openclaw AINexus provider, got %#v", openclaw)
+	}
+	if got := openclawProvider["baseUrl"]; got != "http://127.0.0.1:3456" {
+		t.Fatalf("expected openclaw root baseUrl, got %#v", got)
 	}
 	hermes := readFile(t, filepath.Join(home, ".hermes", "config.yaml"))
 	if !strings.Contains(hermes, "provider: AINexus") || !strings.Contains(hermes, "base_url: http://127.0.0.1:3456") {

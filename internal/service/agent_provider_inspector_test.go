@@ -66,6 +66,159 @@ func TestAgentProviderInspectorReportsMissingAndBrokenConfigs(t *testing.T) {
 	}
 }
 
+func TestAgentProviderInspectorOpenClawRootBaseURLIsHealthy(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3000)
+	writeFile(t, filepath.Join(home, ".openclaw", "openclaw.json"), `{
+		"models": {
+			"mode": "merge",
+			"providers": {
+				"AINexus": {
+					"baseUrl": "http://127.0.0.1:3000",
+					"apiKey": "ainexus-local",
+					"api": "openai-completions",
+					"models": [{"id":"gpt-5","name":"gpt-5"}]
+				}
+			}
+		},
+		"agents": {
+			"defaults": {
+				"model": {"primary": "gpt-5"}
+			}
+		}
+	}`)
+	inspector := NewAgentProviderInspectorWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	status := inspector.Inspect(AgentProviderInspectRequest{Targets: []string{"openclaw"}})
+
+	assertInspectHealthy(t, status.Targets, "openclaw")
+}
+
+func TestAgentProviderInspectorCodexUsesV1BaseURL(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3000)
+	writeFile(t, filepath.Join(home, ".codex", "config.toml"), `model_provider = "AINexus"
+model = "gpt-5"
+
+[model_providers.AINexus]
+name = "AINexus"
+base_url = "http://127.0.0.1:3000/v1"
+wire_api = "responses"
+experimental_bearer_token = "ainexus-local"
+`)
+	writeFile(t, filepath.Join(home, ".codex", "auth.json"), `{"OPENAI_API_KEY":"ainexus-local"}`)
+
+	inspector := NewAgentProviderInspectorWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	status := inspector.Inspect(AgentProviderInspectRequest{Targets: []string{"codex"}})
+
+	assertInspectHealthy(t, status.Targets, "codex")
+}
+
+func TestAgentProviderInspectorCodexCustomProviderRootBaseURLIsHealthy(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3000)
+	writeFile(t, filepath.Join(home, ".codex", "config.toml"), `model = "gpt-5.5"
+model_provider = "openai-custom"
+
+[model_providers.openai-custom]
+name = "OpenAI Custom"
+base_url = "http://127.0.0.1:3000"
+supports_websockets = false
+requires_openai_auth = false
+`)
+	writeFile(t, filepath.Join(home, ".codex", "auth.json"), `{"OPENAI_API_KEY":"ainexus-local"}`)
+
+	inspector := NewAgentProviderInspectorWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	status := inspector.Inspect(AgentProviderInspectRequest{Targets: []string{"codex"}})
+
+	assertInspectHealthy(t, status.Targets, "codex")
+}
+
+func TestAgentProviderInspectorHermesUsesRootModelURLAndV1ProviderURL(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3000)
+	writeFile(t, filepath.Join(home, ".hermes", "config.yaml"), `model:
+  provider: AINexus
+  base_url: http://127.0.0.1:3000
+  default: gpt-5
+custom_providers:
+  - name: AINexus
+    base_url: http://127.0.0.1:3000/v1
+    api_key: ainexus-local
+    model: gpt-5
+`)
+
+	inspector := NewAgentProviderInspectorWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	status := inspector.Inspect(AgentProviderInspectRequest{Targets: []string{"hermes"}})
+
+	assertInspectHealthy(t, status.Targets, "hermes")
+}
+
+func TestAgentProviderInspectorHermesCustomProviderRootModelURLIsHealthy(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3000)
+	writeFile(t, filepath.Join(home, ".hermes", "config.yaml"), `model:
+  default: gpt-5.5
+  provider: custom
+  base_url: http://127.0.0.1:3000
+  api_key: ainexus-local
+providers:
+  - provider: custom-hk
+    model: gpt-5.5
+    base_url: https://example.invalid/v1
+`)
+
+	inspector := NewAgentProviderInspectorWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	status := inspector.Inspect(AgentProviderInspectRequest{Targets: []string{"hermes"}})
+
+	assertInspectHealthy(t, status.Targets, "hermes")
+}
+
+func TestAgentProviderInspectorClaudeCodeRootBaseURLIsHealthy(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3000)
+	writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{
+		"env": {
+			"ANTHROPIC_BASE_URL": "http://127.0.0.1:3000",
+			"ANTHROPIC_API_KEY": "ainexus-local"
+		}
+	}`)
+
+	inspector := NewAgentProviderInspectorWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	status := inspector.Inspect(AgentProviderInspectRequest{Targets: []string{"claude"}})
+
+	assertInspectHealthy(t, status.Targets, "claude")
+}
+
 func TestAgentProviderInspectorMissingConfigsAreNotHealthy(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.DefaultConfig()

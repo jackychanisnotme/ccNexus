@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -67,6 +71,52 @@ type AgentConfigRepairRequest struct {
 	CreateMissing bool     `json:"createMissing,omitempty"`
 }
 
+type AgentAppScanResult struct {
+	Status  string                 `json:"status"`
+	OS      string                 `json:"os"`
+	Items   []AgentAppScanItem     `json:"items"`
+	Scanned []AgentAppScannedScope `json:"scanned"`
+}
+
+type AgentAppScanItem struct {
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	Path       string `json:"path"`
+	Source     string `json:"source"`
+	Confidence string `json:"confidence"`
+}
+
+type AgentAppScannedScope struct {
+	Path   string `json:"path"`
+	Kind   string `json:"kind"`
+	Status string `json:"status"`
+}
+
+type agentAppSignature struct {
+	ID       string
+	Label    string
+	Keywords []string
+}
+
+var agentAppSignatures = []agentAppSignature{
+	{ID: "codex", Label: "Codex", Keywords: []string{"codex"}},
+	{ID: "openclaw", Label: "OpenClaw", Keywords: []string{"openclaw", "open claw"}},
+	{ID: "hermes", Label: "Hermes", Keywords: []string{"hermes"}},
+	{ID: "cursor", Label: "Cursor", Keywords: []string{"cursor"}},
+	{ID: "windsurf", Label: "Windsurf", Keywords: []string{"windsurf"}},
+	{ID: "claude", Label: "Claude", Keywords: []string{"claude"}},
+	{ID: "chatgpt", Label: "ChatGPT", Keywords: []string{"chatgpt", "openai"}},
+	{ID: "copilot", Label: "Copilot", Keywords: []string{"copilot"}},
+	{ID: "cline", Label: "Cline", Keywords: []string{"cline"}},
+	{ID: "roo", Label: "Roo", Keywords: []string{"roo code", "roo"}},
+	{ID: "continue", Label: "Continue", Keywords: []string{"continue"}},
+	{ID: "ollama", Label: "Ollama", Keywords: []string{"ollama"}},
+	{ID: "aider", Label: "Aider", Keywords: []string{"aider"}},
+	{ID: "gemini", Label: "Gemini", Keywords: []string{"gemini"}},
+	{ID: "qwen", Label: "Qwen", Keywords: []string{"qwen"}},
+	{ID: "trae", Label: "Trae", Keywords: []string{"trae"}},
+}
+
 func NewAgentService(cfg *config.Config, p *proxy.Proxy, s *storage.SQLiteStorage, endpoint *EndpointService, provider *AgentProviderService) *AgentService {
 	if provider == nil {
 		provider = NewAgentProviderService(cfg)
@@ -123,8 +173,17 @@ func (s *AgentService) Run(req AgentRunRequest) AgentRunResult {
 	}
 	if s.shouldRepair(req) {
 		s.runRepairTools(req, &result)
+	} else if s.shouldScanAgentApps(req) {
+		s.runAgentAppScanTool(&result)
+	} else if s.shouldInspectConfigs(req) {
+		s.runInspectTools(req, &result)
 	}
 	if !s.hasEnabledEndpoints() {
+		if s.hasLocalOnlyAnswer(&result) {
+			result.Success = true
+			result.Answer = localOnlyAgentAnswer(result.ToolResults)
+			return result
+		}
 		result.Error = "no_enabled_endpoints"
 		result.Events = append(result.Events, newAgentEvent("error", "No enabled endpoints are configured"))
 		return result
@@ -200,6 +259,173 @@ func (s *AgentService) RepairAgentConfigsJSON(requestJSON string) string {
 	}
 	data, _ := json.Marshal(s.RepairAgentConfigs(req))
 	return string(data)
+}
+
+func (s *AgentService) ScanAgentApps() AgentAppScanResult {
+	homeDir := s.agentHomeDir()
+	result := AgentAppScanResult{Status: "ok", OS: runtime.GOOS}
+	seen := map[string]bool{}
+	for _, scope := range agentAppScanScopes(homeDir) {
+		result.Scanned = append(result.Scanned, s.scanAgentScope(scope, seen, &result.Items))
+	}
+	sort.Slice(result.Items, func(i, j int) bool {
+		if result.Items[i].Name == result.Items[j].Name {
+			return result.Items[i].Path < result.Items[j].Path
+		}
+		return result.Items[i].Name < result.Items[j].Name
+	})
+	if len(result.Items) == 0 {
+		result.Status = "empty"
+	}
+	return result
+}
+
+func (s *AgentService) agentHomeDir() string {
+	if s != nil && s.agentProvider != nil && s.agentProvider.homeDir != "" {
+		return s.agentProvider.homeDir
+	}
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		return homeDir
+	}
+	return ""
+}
+
+type agentAppScanScope struct {
+	path string
+	kind string
+}
+
+func agentAppScanScopes(homeDir string) []agentAppScanScope {
+	scopes := []agentAppScanScope{}
+	add := func(path, kind string) {
+		if strings.TrimSpace(path) != "" && filepath.IsAbs(path) {
+			scopes = append(scopes, agentAppScanScope{path: path, kind: kind})
+		}
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		add("/Applications", "applications")
+		add(filepath.Join(homeDir, "Applications"), "applications")
+		add(filepath.Join(homeDir, ".codex"), "config")
+		add(filepath.Join(homeDir, ".openclaw"), "config")
+		add(filepath.Join(homeDir, ".hermes"), "config")
+		add(filepath.Join(homeDir, ".cursor"), "config")
+		add(filepath.Join(homeDir, ".continue"), "config")
+		add(filepath.Join(homeDir, ".ollama"), "config")
+		add(filepath.Join(homeDir, "Library", "Application Support"), "app_support")
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		localAppData := os.Getenv("LOCALAPPDATA")
+		programFiles := os.Getenv("ProgramFiles")
+		programFilesX86 := os.Getenv("ProgramFiles(x86)")
+		add(filepath.Join(homeDir, "AppData", "Roaming"), "app_data")
+		add(filepath.Join(homeDir, "AppData", "Local"), "app_data")
+		add(appData, "app_data")
+		add(localAppData, "app_data")
+		add(programFiles, "program_files")
+		add(programFilesX86, "program_files")
+		add(filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs"), "start_menu")
+		add(filepath.Join(homeDir, ".codex"), "config")
+		add(filepath.Join(homeDir, ".openclaw"), "config")
+		add(filepath.Join(homeDir, ".hermes"), "config")
+	default:
+		add(filepath.Join(homeDir, ".local", "share", "applications"), "desktop_entries")
+		add("/usr/share/applications", "desktop_entries")
+		add(filepath.Join(homeDir, ".config"), "config")
+		add(filepath.Join(homeDir, ".local", "share"), "app_data")
+		add(filepath.Join(homeDir, ".codex"), "config")
+		add(filepath.Join(homeDir, ".openclaw"), "config")
+		add(filepath.Join(homeDir, ".hermes"), "config")
+	}
+	return scopes
+}
+
+func (s *AgentService) scanAgentScope(scope agentAppScanScope, seen map[string]bool, items *[]AgentAppScanItem) AgentAppScannedScope {
+	status := AgentAppScannedScope{Path: scope.path, Kind: scope.kind, Status: "missing"}
+	info, err := os.Stat(scope.path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			status.Status = "unreadable"
+		}
+		return status
+	}
+	status.Status = "scanned"
+	if !info.IsDir() {
+		if item, ok := agentAppItemFromPath(scope.path, scope.kind); ok {
+			addAgentAppScanItem(items, seen, item)
+		}
+		return status
+	}
+
+	if item, ok := agentAppItemFromPath(scope.path, scope.kind); ok && scope.kind == "config" {
+		addAgentAppScanItem(items, seen, item)
+	}
+	entries, err := os.ReadDir(scope.path)
+	if err != nil {
+		status.Status = "unreadable"
+		return status
+	}
+	for _, entry := range entries {
+		entryPath := filepath.Join(scope.path, entry.Name())
+		if item, ok := agentAppItemFromPath(entryPath, scope.kind); ok {
+			addAgentAppScanItem(items, seen, item)
+		}
+	}
+	return status
+}
+
+func agentAppItemFromPath(path, source string) (AgentAppScanItem, bool) {
+	name := filepath.Base(path)
+	normalized := normalizeAgentAppName(name)
+	for _, signature := range agentAppSignatures {
+		for _, keyword := range signature.Keywords {
+			if strings.Contains(normalized, normalizeAgentAppName(keyword)) {
+				return AgentAppScanItem{
+					Name:       signature.Label,
+					Kind:       agentAppKind(path, source),
+					Path:       path,
+					Source:     source,
+					Confidence: "name_match",
+				}, true
+			}
+		}
+	}
+	return AgentAppScanItem{}, false
+}
+
+func normalizeAgentAppName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, suffix := range []string{".app", ".appimage", ".desktop", ".lnk", ".exe"} {
+		value = strings.TrimSuffix(value, suffix)
+	}
+	value = strings.ReplaceAll(value, "-", " ")
+	value = strings.ReplaceAll(value, "_", " ")
+	value = strings.Join(strings.Fields(value), " ")
+	return value
+}
+
+func agentAppKind(path, source string) string {
+	lower := strings.ToLower(path)
+	switch {
+	case strings.Contains(source, "config") || strings.HasPrefix(filepath.Base(path), "."):
+		return "config"
+	case strings.HasSuffix(lower, ".app") || strings.HasSuffix(lower, ".exe") || strings.HasSuffix(lower, ".appimage"):
+		return "application"
+	case strings.HasSuffix(lower, ".desktop") || strings.HasSuffix(lower, ".lnk"):
+		return "shortcut"
+	default:
+		return "directory"
+	}
+}
+
+func addAgentAppScanItem(items *[]AgentAppScanItem, seen map[string]bool, item AgentAppScanItem) {
+	key := strings.ToLower(item.Name + "\x00" + item.Kind + "\x00" + item.Path)
+	if seen[key] {
+		return
+	}
+	seen[key] = true
+	*items = append(*items, item)
 }
 
 func (s *AgentService) callResponses(task string, toolResults []AgentToolResult) (string, error) {
@@ -362,7 +588,7 @@ func (s *AgentService) currentEndpointName() string {
 }
 
 func agentSystemPrompt() string {
-	return "You are the built-in AINexus agent. Answer the user's task using the supplied endpoint and tool context. You cannot run shell commands or edit project files. You may summarize controlled AINexus tool results."
+	return "You are the built-in AINexus agent. Answer the user's task using the supplied endpoint and tool context. You cannot run arbitrary shell commands or edit project files. You may summarize controlled AINexus read-only and repair tool results."
 }
 
 func buildAgentUserPrompt(task string, toolResults []AgentToolResult) string {
@@ -388,6 +614,124 @@ func (s *AgentService) shouldRepair(req AgentRunRequest) bool {
 		}
 	}
 	return false
+}
+
+func (s *AgentService) shouldInspectConfigs(req AgentRunRequest) bool {
+	task := strings.ToLower(req.Task)
+	normalized := normalizeAgentIntentText(task)
+	hasChineseInspectVerb := strings.Contains(task, "检查") || strings.Contains(task, "检测") || strings.Contains(task, "查看") || strings.Contains(task, "诊断") || strings.Contains(task, "健康") || strings.Contains(task, "状态")
+	hasEnglishInspectVerb := strings.Contains(task, "check") || strings.Contains(task, "inspect") || strings.Contains(task, "diagnose") || strings.Contains(task, "validate") || strings.Contains(task, "health") || strings.Contains(task, "status")
+	hasConfigSubject := strings.Contains(task, "配置") || strings.Contains(task, "config") || strings.Contains(task, "setup") || strings.Contains(task, "健康") || strings.Contains(task, "状态") || strings.Contains(task, "health") || strings.Contains(task, "status")
+	hasAgentSubject := strings.Contains(normalized, "agent") || strings.Contains(normalized, "claude") || strings.Contains(normalized, "codex") || strings.Contains(normalized, "openclaw") || strings.Contains(normalized, "hermes")
+	chineseInspect := hasChineseInspectVerb && (hasConfigSubject || hasAgentSubject)
+	englishInspect := hasEnglishInspectVerb && (hasConfigSubject || hasAgentSubject)
+	return chineseInspect || englishInspect
+}
+
+func (s *AgentService) shouldScanAgentApps(req AgentRunRequest) bool {
+	task := strings.ToLower(req.Task)
+	normalized := normalizeAgentIntentText(task)
+	hasScanVerb := strings.Contains(task, "扫描") || strings.Contains(task, "scan") || strings.Contains(task, "查找") || strings.Contains(task, "找一下") || strings.Contains(task, "有什么") || strings.Contains(task, "有哪些")
+	hasComputerSubject := strings.Contains(task, "电脑") || strings.Contains(task, "本机") || strings.Contains(task, "系统") || strings.Contains(task, "local") || strings.Contains(task, "computer") || strings.Contains(task, "machine")
+	hasAgentSubject := strings.Contains(normalized, "agent") || strings.Contains(task, "ai app") || strings.Contains(task, "ai工具") || strings.Contains(task, "ai 工具") || strings.Contains(normalized, "codex") || strings.Contains(normalized, "cursor") || strings.Contains(normalized, "claude") || strings.Contains(normalized, "chatgpt")
+	return hasScanVerb && (hasComputerSubject || hasAgentSubject) && hasAgentSubject
+}
+
+func normalizeAgentIntentText(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer(" ", "", "-", "", "_", "", ".", "")
+	return replacer.Replace(value)
+}
+
+func agentTargetsFromTask(task string) []string {
+	normalized := normalizeAgentIntentText(task)
+	targets := []string{}
+	if strings.Contains(normalized, "claude") {
+		targets = append(targets, "claude")
+	}
+	if strings.Contains(normalized, "codex") {
+		targets = append(targets, "codex")
+	}
+	if strings.Contains(normalized, "openclaw") {
+		targets = append(targets, "openclaw")
+	}
+	if strings.Contains(normalized, "hermes") {
+		targets = append(targets, "hermes")
+	}
+	if len(targets) == 0 {
+		return []string{"codex", "openclaw", "hermes"}
+	}
+	return targets
+}
+
+func (s *AgentService) runAgentAppScanTool(result *AgentRunResult) {
+	result.Events = append(result.Events, newAgentEvent("tool", "Scanning local agent apps read-only"))
+	scan := s.ScanAgentApps()
+	result.ToolResults = append(result.ToolResults, AgentToolResult{
+		Tool:    "scan_agent_apps",
+		Status:  scan.Status,
+		Summary: summarizeAgentAppScan(scan),
+		Data:    scan,
+	})
+}
+
+func (s *AgentService) runInspectTools(req AgentRunRequest, result *AgentRunResult) {
+	targets := req.RepairTargets
+	if len(targets) == 0 {
+		targets = agentTargetsFromTask(req.Task)
+	}
+	result.Events = append(result.Events, newAgentEvent("tool", "Checking agent configs"))
+	status := s.CheckAgentConfigs(AgentProviderInspectRequest{Targets: targets})
+	result.ToolResults = append(result.ToolResults, AgentToolResult{
+		Tool:    "check_agent_configs",
+		Status:  inspectOverallStatus(status),
+		Summary: summarizeInspectStatus(status),
+		Data:    status,
+	})
+}
+
+func (s *AgentService) hasLocalOnlyAnswer(result *AgentRunResult) bool {
+	if result == nil {
+		return false
+	}
+	for _, tool := range result.ToolResults {
+		if tool.Tool == "repair_agent_configs" {
+			return false
+		}
+	}
+	for _, tool := range result.ToolResults {
+		if tool.Tool == "scan_agent_apps" || tool.Tool == "check_agent_configs" {
+			return true
+		}
+	}
+	return false
+}
+
+func localOnlyAgentAnswer(toolResults []AgentToolResult) string {
+	for _, tool := range toolResults {
+		if tool.Tool != "scan_agent_apps" {
+			if tool.Tool == "check_agent_configs" {
+				if status, ok := tool.Data.(AgentProviderInspectStatus); ok {
+					return renderAgentConfigHealthAnswer(status)
+				}
+				data, _ := json.Marshal(tool.Data)
+				var status AgentProviderInspectStatus
+				if err := json.Unmarshal(data, &status); err == nil {
+					return renderAgentConfigHealthAnswer(status)
+				}
+			}
+			continue
+		}
+		if scan, ok := tool.Data.(AgentAppScanResult); ok {
+			return renderAgentAppScanAnswer(scan)
+		}
+		data, _ := json.Marshal(tool.Data)
+		var scan AgentAppScanResult
+		if err := json.Unmarshal(data, &scan); err == nil {
+			return renderAgentAppScanAnswer(scan)
+		}
+	}
+	return "只读本机扫描已完成。"
 }
 
 func (s *AgentService) runRepairTools(req AgentRunRequest, result *AgentRunResult) {
@@ -466,4 +810,81 @@ func summarizeRepairResult(result AgentProviderResult) string {
 		return fmt.Sprintf("%d/%d repairs completed; backup %s", success, len(result.Results), result.BackupID)
 	}
 	return fmt.Sprintf("%d/%d repairs completed", success, len(result.Results))
+}
+
+func summarizeAgentAppScan(scan AgentAppScanResult) string {
+	if len(scan.Items) == 0 {
+		return "Read-only local scan found no known agent apps"
+	}
+	return fmt.Sprintf("Read-only local scan found %d known agent app/config item(s)", len(scan.Items))
+}
+
+func renderAgentAppScanAnswer(scan AgentAppScanResult) string {
+	var builder strings.Builder
+	builder.WriteString("只读本机扫描已完成")
+	if scan.OS != "" {
+		builder.WriteString("（")
+		builder.WriteString(scan.OS)
+		builder.WriteString("）")
+	}
+	builder.WriteString("。\n")
+	if len(scan.Items) == 0 {
+		builder.WriteString("没有在常见应用目录和 Agent 配置目录里发现已知 Agent/AI 工具。")
+		return builder.String()
+	}
+	builder.WriteString("发现这些可能的 Agent/AI 工具：\n")
+	for _, item := range scan.Items {
+		builder.WriteString("- ")
+		builder.WriteString(item.Name)
+		builder.WriteString("：")
+		builder.WriteString(item.Kind)
+		if item.Path != "" {
+			builder.WriteString("，")
+			builder.WriteString(item.Path)
+		}
+		builder.WriteString("\n")
+	}
+	builder.WriteString("本次只读取目录名称和路径，没有读取密钥或修改任何文件。")
+	return strings.TrimSpace(builder.String())
+}
+
+func renderAgentConfigHealthAnswer(status AgentProviderInspectStatus) string {
+	var builder strings.Builder
+	healthy := 0
+	for _, target := range status.Targets {
+		if target.Healthy {
+			healthy++
+		}
+	}
+	builder.WriteString("只读健康检查已完成。")
+	if status.TargetURL != "" {
+		builder.WriteString("\nAINexus 目标地址：")
+		builder.WriteString(status.TargetURL)
+	}
+	builder.WriteString(fmt.Sprintf("\n总体：%d/%d 项健康。", healthy, len(status.Targets)))
+	for _, target := range status.Targets {
+		builder.WriteString("\n- ")
+		builder.WriteString(target.Label)
+		if target.Label == "" {
+			builder.WriteString(target.Target)
+		}
+		builder.WriteString("：")
+		if target.Healthy {
+			builder.WriteString("健康")
+		} else if target.Status == "missing" {
+			builder.WriteString("缺失")
+		} else {
+			builder.WriteString("需要处理")
+		}
+		if target.Path != "" {
+			builder.WriteString("，")
+			builder.WriteString(target.Path)
+		}
+		if len(target.Problems) > 0 {
+			builder.WriteString("，")
+			builder.WriteString(strings.Join(target.Problems, "；"))
+		}
+	}
+	builder.WriteString("\n本次只读取配置状态，没有修复、写入或重启任何程序。")
+	return strings.TrimSpace(builder.String())
 }
