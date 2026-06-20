@@ -238,6 +238,7 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 		return fmt.Errorf("invalid endpoint index: %d", index)
 	}
 
+	name = strings.TrimSpace(name)
 	oldName := endpoints[index].Name
 	currentEndpointName := e.proxy.GetCurrentEndpointName()
 	preserveEndpointName := currentEndpointName

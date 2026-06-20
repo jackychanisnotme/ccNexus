@@ -31,6 +31,7 @@ func (a *ConfigStorageAdapter) GetEndpoints() ([]config.StorageEndpoint, error) 
 			Model:       ep.Model,
 			Thinking:    ep.Thinking,
 			ForceStream: ep.ForceStream,
+			ProxyURL:    ep.ProxyURL,
 			Remark:      ep.Remark,
 			SortOrder:   ep.SortOrder,
 		}
@@ -50,6 +51,7 @@ func (a *ConfigStorageAdapter) SaveEndpoint(ep *config.StorageEndpoint) error {
 		Model:       ep.Model,
 		Thinking:    ep.Thinking,
 		ForceStream: ep.ForceStream,
+		ProxyURL:    ep.ProxyURL,
 		Remark:      ep.Remark,
 		SortOrder:   ep.SortOrder,
 	}
@@ -68,6 +70,7 @@ func (a *ConfigStorageAdapter) UpdateEndpoint(ep *config.StorageEndpoint) error 
 		Model:       ep.Model,
 		Thinking:    ep.Thinking,
 		ForceStream: ep.ForceStream,
+		ProxyURL:    ep.ProxyURL,
 		Remark:      ep.Remark,
 		SortOrder:   ep.SortOrder,
 	}
