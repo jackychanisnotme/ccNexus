@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestNormalizeThinkingEffortPreservesProviderDefault(t *testing.T) {
 	tests := map[string]string{
@@ -83,6 +86,23 @@ func (s *fakeConfigStorage) UpdateEndpoint(ep *StorageEndpoint) error {
 		}
 	}
 	s.endpoints = append(s.endpoints, *ep)
+	return nil
+}
+
+func (s *fakeConfigStorage) RenameEndpoint(oldName string, ep *StorageEndpoint) error {
+	oldIndex := -1
+	for i := range s.endpoints {
+		if s.endpoints[i].Name == oldName {
+			oldIndex = i
+		}
+		if s.endpoints[i].Name == ep.Name && s.endpoints[i].Name != oldName {
+			return fmt.Errorf("endpoint %q already exists", ep.Name)
+		}
+	}
+	if oldIndex < 0 {
+		return fmt.Errorf("endpoint %q not found", oldName)
+	}
+	s.endpoints[oldIndex] = *ep
 	return nil
 }
 

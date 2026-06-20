@@ -835,6 +835,7 @@ type StorageAdapter interface {
 	GetEndpoints() ([]StorageEndpoint, error)
 	SaveEndpoint(ep *StorageEndpoint) error
 	UpdateEndpoint(ep *StorageEndpoint) error
+	RenameEndpoint(oldName string, ep *StorageEndpoint) error
 	DeleteEndpoint(name string) error
 	GetConfig(key string) (string, error)
 	SetConfig(key, value string) error
