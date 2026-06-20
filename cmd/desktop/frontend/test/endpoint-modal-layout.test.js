@@ -108,12 +108,34 @@ describe('endpoint modal option layout', () => {
     });
 
     it('portals token pool action menus outside the scrolling table', () => {
+        const closeStart = endpointsSource.indexOf('function closeAllTokenPoolActionMenus()');
+        const openStart = endpointsSource.indexOf('function openTokenPoolActionMenu(', closeStart);
+        const openEnd = endpointsSource.indexOf('function setTokenPoolHint(', openStart);
+        assert.notEqual(closeStart, -1);
+        assert.notEqual(openStart, -1);
+        assert.notEqual(openEnd, -1);
+
+        const closeFunctionSource = endpointsSource.slice(closeStart, openStart);
+        const openFunctionSource = endpointsSource.slice(openStart, openEnd);
+
         assert.match(endpointsSource, /let tokenPoolOpenActionMenu = null;/);
-        assert.match(endpointsSource, /document\.body\.appendChild\(menu\)/);
-        assert.match(endpointsSource, /button\.getBoundingClientRect\(\)/);
+        assert.match(closeFunctionSource, /classList\.remove\([^)]*['"]show['"][^)]*\)/);
+        assert.match(closeFunctionSource, /classList\.remove\([^)]*['"]token-pool-more-menu-portal['"][^)]*\)/);
+        assert.match(closeFunctionSource, /menu\.style\.left\s*=\s*['"]['"]/);
+        assert.match(closeFunctionSource, /menu\.style\.top\s*=\s*['"]['"]/);
+        assert.match(closeFunctionSource, /wrap\.appendChild\(menu\)/);
+
+        assert.match(openFunctionSource, /closeAllTokenPoolActionMenus\(\);/);
+        assert.match(openFunctionSource, /document\.body\.appendChild\(menu\)/);
+        assert.match(openFunctionSource, /button\.getBoundingClientRect\(\)/);
+        assert.match(openFunctionSource, /menu\.getBoundingClientRect\(\)/);
+        assert.match(openFunctionSource, /triggerRect\.bottom[\s\S]*window\.innerHeight/);
+        assert.match(openFunctionSource, /triggerRect\.top[\s\S]*menuRect\.height/);
+        assert.match(openFunctionSource, /Math\.min\([\s\S]*Math\.max\([\s\S]*window\.innerWidth/);
+
         assert.match(endpointsSource, /closeAllTokenPoolActionMenus\(\);/);
         assert.match(endpointsSource, /addEventListener\(['"]scroll['"],\s*closeAllTokenPoolActionMenus,\s*true\)/);
-        assert.match(endpointsSource, /addEventListener\(['"]resize['"],\s*closeAllTokenPoolActionMenus,\s*true\)/);
+        assert.match(endpointsSource, /window\.addEventListener\(['"]resize['"],\s*closeAllTokenPoolActionMenus\)/);
         assert.match(
             cssSource,
             /\.token-pool-more-menu\.token-pool-more-menu-portal\s*{[^}]*position:\s*fixed;/s,
