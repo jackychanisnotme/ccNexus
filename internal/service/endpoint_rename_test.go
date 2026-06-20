@@ -10,6 +10,99 @@ import (
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
+func TestUpdateEndpointRejectsNormalizedDuplicateName(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{
+		{
+			Name:        "Source",
+			APIUrl:      "https://source.example.com/v1",
+			APIKey:      "source-key",
+			AuthMode:    config.AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "openai",
+			Model:       "source-model",
+		},
+		{
+			Name:        "Destination ",
+			APIUrl:      "https://destination.example.com/v1",
+			APIKey:      "destination-key",
+			AuthMode:    config.AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "openai",
+			Model:       "destination-model",
+		},
+	})
+	p := proxy.New(cfg, nil, nil, "test-device")
+	service := NewEndpointService(cfg, p, nil)
+
+	err := service.UpdateEndpoint(
+		0,
+		" Destination ",
+		"https://renamed.example.com/v1",
+		"renamed-key",
+		config.AuthModeAPIKey,
+		"openai",
+		"renamed-model",
+		"",
+		"",
+		false,
+		"renamed",
+	)
+	if err == nil || err.Error() != "endpoint name 'Destination' already exists" {
+		t.Fatalf("UpdateEndpoint() error = %v, want normalized duplicate error", err)
+	}
+
+	endpoints := cfg.GetEndpoints()
+	if len(endpoints) != 2 ||
+		endpoints[0].Name != "Source" ||
+		endpoints[0].APIUrl != "https://source.example.com/v1" ||
+		endpoints[1].Name != "Destination " {
+		t.Fatalf("config changed after rejected normalized duplicate: %#v", endpoints)
+	}
+	if current := p.GetCurrentEndpointName(); current != "Source" {
+		t.Fatalf("proxy current endpoint = %q, want Source", current)
+	}
+}
+
+func TestUpdateEndpointAllowsTrimmingCurrentLegacyName(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "Legacy ",
+		APIUrl:      "https://legacy.example.com/v1",
+		APIKey:      "legacy-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "legacy-model",
+	}})
+	p := proxy.New(cfg, nil, nil, "test-device")
+	service := NewEndpointService(cfg, p, nil)
+
+	if err := service.UpdateEndpoint(
+		0,
+		"Legacy",
+		"https://legacy.example.com/v1",
+		"legacy-key",
+		config.AuthModeAPIKey,
+		"openai",
+		"legacy-model",
+		"",
+		"",
+		false,
+		"",
+	); err != nil {
+		t.Fatalf("UpdateEndpoint() error = %v, want legacy self-trim to succeed", err)
+	}
+
+	endpoints := cfg.GetEndpoints()
+	if len(endpoints) != 1 || endpoints[0].Name != "Legacy" {
+		t.Fatalf("config endpoints = %#v, want trimmed legacy name", endpoints)
+	}
+	if current := p.GetCurrentEndpointName(); current != "Legacy" {
+		t.Fatalf("proxy current endpoint = %q, want Legacy", current)
+	}
+}
+
 func TestUpdateEndpointRenamePreservesTokenPool(t *testing.T) {
 	const (
 		newName  = "Codex New"

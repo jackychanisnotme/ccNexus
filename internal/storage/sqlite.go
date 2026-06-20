@@ -535,7 +535,7 @@ func (s *SQLiteStorage) RenameEndpoint(oldName string, ep *Endpoint) error {
 	}
 
 	var destinationCount int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM endpoints WHERE name=?`, newName).Scan(&destinationCount); err != nil {
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM endpoints WHERE TRIM(name)=? AND id<>?`, newName, sourceID).Scan(&destinationCount); err != nil {
 		return fmt.Errorf("verify destination endpoint %q: %w", newName, err)
 	}
 	if destinationCount != 0 {
