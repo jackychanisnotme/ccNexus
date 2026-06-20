@@ -442,6 +442,106 @@ func TestRenameEndpointRejectsActiveNameCollisionWithoutChanges(t *testing.T) {
 	}
 }
 
+func TestRenameEndpointRejectsNormalizedNameCollisionWithoutChanges(t *testing.T) {
+	store, err := NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+
+	source := Endpoint{
+		Name:        "Source",
+		APIUrl:      "https://source.example.com/v1",
+		APIKey:      "source-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "source-model",
+		Remark:      "source",
+		SortOrder:   1,
+	}
+	if err := store.SaveEndpoint(&source); err != nil {
+		t.Fatalf("save source endpoint: %v", err)
+	}
+	destination := Endpoint{
+		Name:        "Destination ",
+		APIUrl:      "https://destination.example.com/v1",
+		APIKey:      "destination-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "destination-model",
+		Remark:      "destination",
+		SortOrder:   2,
+	}
+	if err := store.SaveEndpoint(&destination); err != nil {
+		t.Fatalf("save destination endpoint: %v", err)
+	}
+
+	credential := EndpointCredential{
+		EndpointName: "Source",
+		ProviderType: ProviderTypeCodex,
+		AccountID:    "source-account",
+		Email:        "source@example.com",
+		AccessToken:  "source-access-token",
+		Status:       "active",
+		Enabled:      true,
+	}
+	if err := store.SaveEndpointCredential(&credential); err != nil {
+		t.Fatalf("save source credential: %v", err)
+	}
+
+	renamed := source
+	renamed.Name = "Destination"
+	renamed.APIUrl = "https://renamed.example.com/v1"
+	renamed.APIKey = "renamed-key"
+	if err := store.RenameEndpoint("Source", &renamed); !errors.Is(err, ErrEndpointNameConflict) {
+		t.Fatalf("RenameEndpoint() error = %v, want errors.Is(_, ErrEndpointNameConflict)", err)
+	}
+
+	endpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get endpoints after rejected rename: %v", err)
+	}
+	if len(endpoints) != 2 {
+		t.Fatalf("endpoints = %#v, want source and padded destination unchanged", endpoints)
+	}
+	endpointsByName := make(map[string]Endpoint, len(endpoints))
+	for _, endpoint := range endpoints {
+		endpointsByName[endpoint.Name] = endpoint
+	}
+	gotSource, exists := endpointsByName["Source"]
+	if !exists ||
+		gotSource.ID != source.ID ||
+		gotSource.APIUrl != source.APIUrl ||
+		gotSource.APIKey != source.APIKey ||
+		gotSource.Remark != source.Remark {
+		t.Fatalf("source endpoint changed after rejected rename: %#v", gotSource)
+	}
+	gotDestination, exists := endpointsByName["Destination "]
+	if !exists ||
+		gotDestination.ID != destination.ID ||
+		gotDestination.APIUrl != destination.APIUrl ||
+		gotDestination.APIKey != destination.APIKey ||
+		gotDestination.Remark != destination.Remark {
+		t.Fatalf("destination endpoint changed after rejected rename: %#v", gotDestination)
+	}
+	if _, exists := endpointsByName["Destination"]; exists {
+		t.Fatalf("canonical destination was created after rejected rename: %#v", endpoints)
+	}
+
+	sourceCredentials, err := store.GetEndpointCredentials("Source")
+	if err != nil {
+		t.Fatalf("get source credentials after rejected rename: %v", err)
+	}
+	if len(sourceCredentials) != 1 ||
+		sourceCredentials[0].ID != credential.ID ||
+		sourceCredentials[0].EndpointName != credential.EndpointName ||
+		sourceCredentials[0].AccessToken != credential.AccessToken {
+		t.Fatalf("source credential changed after rejected rename: %#v", sourceCredentials)
+	}
+}
+
 func TestMigrateDeepSeekThinkingDefaultRunsOnce(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	db, err := sql.Open("sqlite", dbPath)

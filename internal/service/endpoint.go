@@ -273,11 +273,9 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 	currentEndpointName := e.proxy.GetCurrentEndpointName()
 	preserveEndpointName := currentEndpointName
 
-	if oldName != name {
-		for i, ep := range endpoints {
-			if i != index && ep.Name == name {
-				return fmt.Errorf("endpoint name '%s' already exists", name)
-			}
+	for i, ep := range endpoints {
+		if i != index && strings.TrimSpace(ep.Name) == name {
+			return fmt.Errorf("endpoint name '%s' already exists", name)
 		}
 	}
 
