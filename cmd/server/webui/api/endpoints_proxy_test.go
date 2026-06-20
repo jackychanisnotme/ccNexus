@@ -3,7 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -161,6 +161,47 @@ func TestEndpointAPIRenameRejectsActiveCollision(t *testing.T) {
 	}
 }
 
+func TestEndpointAPIRenameRejectsWhitespaceOnlyName(t *testing.T) {
+	store := newAPITestStorage(t)
+	cfg := config.DefaultConfig()
+	cfg.BasicAuthEnabled = false
+	proxyInstance := proxy.New(cfg, nil, store, "test-device")
+	handler := NewHandler(cfg, proxyInstance, store)
+
+	saveAPITestEndpoint(t, store, storage.Endpoint{
+		Name:        "Source",
+		APIUrl:      "https://source.example.com",
+		APIKey:      "source-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "source-model",
+		Remark:      "source-remark",
+		ProxyURL:    "http://127.0.0.1:7890",
+	})
+	original := mustGetStoredEndpoint(t, store, "Source")
+
+	rec := requestJSON(t, handler, http.MethodPut, "/api/endpoints/Source", map[string]any{
+		"name":        "   ",
+		"apiUrl":      "https://changed.example.com",
+		"apiKey":      "changed-key",
+		"authMode":    config.AuthModeAPIKey,
+		"enabled":     false,
+		"transformer": "gemini",
+		"model":       "changed-model",
+		"remark":      "changed-remark",
+		"proxyUrl":    "http://127.0.0.1:7891",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT whitespace-only rename status=%d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+
+	endpoint := mustGetStoredEndpoint(t, store, "Source")
+	if endpoint != original {
+		t.Fatalf("endpoint changed after whitespace-only rename: got %#v, want %#v", endpoint, original)
+	}
+}
+
 func TestClassifyEndpointRenameError(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -171,31 +212,31 @@ func TestClassifyEndpointRenameError(t *testing.T) {
 	}{
 		{
 			name:        "destination conflict",
-			err:         errors.New(`destination endpoint "Destination" already exists`),
+			err:         fmt.Errorf("rename destination: %w", storage.ErrEndpointNameConflict),
 			wantStatus:  http.StatusConflict,
 			wantMessage: "Endpoint with this name already exists",
 		},
 		{
 			name:        "source missing",
-			err:         errors.New(`source endpoint "Missing" not found`),
+			err:         fmt.Errorf("lookup source: %w", storage.ErrEndpointNotFound),
 			wantStatus:  http.StatusNotFound,
 			wantMessage: "Endpoint not found",
 		},
 		{
 			name:        "validation error",
-			err:         errors.New("new endpoint name is required"),
+			err:         fmt.Errorf("validate rename: %w", storage.ErrInvalidEndpointName),
 			wantStatus:  http.StatusBadRequest,
 			wantMessage: "Invalid endpoint name",
 		},
 		{
 			name:        "same names validation error",
-			err:         errors.New("endpoint rename requires different names"),
+			err:         fmt.Errorf("validate different names: %w", storage.ErrInvalidEndpointName),
 			wantStatus:  http.StatusBadRequest,
 			wantMessage: "Invalid endpoint name",
 		},
 		{
 			name:           "internal database error",
-			err:            errors.New(`commit endpoint rename transaction: database is locked; table endpoint_credentials`),
+			err:            fmt.Errorf("commit endpoint rename transaction: %s", "database is locked; table endpoint_credentials"),
 			wantStatus:     http.StatusInternalServerError,
 			wantMessage:    "Failed to rename endpoint",
 			forbiddenTexts: []string{"database is locked", "endpoint_credentials"},
