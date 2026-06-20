@@ -107,6 +107,19 @@ describe('endpoint modal option layout', () => {
         assert.match(endpointsSource, /token-pool-cell-rate/);
     });
 
+    it('portals token pool action menus outside the scrolling table', () => {
+        assert.match(endpointsSource, /let tokenPoolOpenActionMenu = null;/);
+        assert.match(endpointsSource, /document\.body\.appendChild\(menu\)/);
+        assert.match(endpointsSource, /button\.getBoundingClientRect\(\)/);
+        assert.match(endpointsSource, /closeAllTokenPoolActionMenus\(\);/);
+        assert.match(endpointsSource, /addEventListener\(['"]scroll['"],\s*closeAllTokenPoolActionMenus,\s*true\)/);
+        assert.match(endpointsSource, /addEventListener\(['"]resize['"],\s*closeAllTokenPoolActionMenus,\s*true\)/);
+        assert.match(
+            cssSource,
+            /\.token-pool-more-menu\.token-pool-more-menu-portal\s*{[^}]*position:\s*fixed;/s,
+        );
+    });
+
     it('adds an Agent Provider home button and modal controls', () => {
         assert.match(uiSource, /showAgentProviderModal/);
         assert.match(uiSource, /agentProvider\.button/);
