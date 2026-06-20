@@ -534,12 +534,23 @@ func (s *SQLiteStorage) RenameEndpoint(oldName string, ep *Endpoint) error {
 		return fmt.Errorf("verify source endpoint %q: %w", oldName, err)
 	}
 
-	var destinationCount int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM endpoints WHERE TRIM(name)=? AND id<>?`, newName, sourceID).Scan(&destinationCount); err != nil {
+	destinationRows, err := tx.Query(`SELECT id, name FROM endpoints WHERE id<>?`, sourceID)
+	if err != nil {
 		return fmt.Errorf("verify destination endpoint %q: %w", newName, err)
 	}
-	if destinationCount != 0 {
-		return fmt.Errorf("%w: destination endpoint %q already exists", ErrEndpointNameConflict, newName)
+	defer destinationRows.Close()
+	for destinationRows.Next() {
+		var destinationID int64
+		var destinationName string
+		if err := destinationRows.Scan(&destinationID, &destinationName); err != nil {
+			return fmt.Errorf("scan destination endpoint while renaming to %q: %w", newName, err)
+		}
+		if strings.TrimSpace(destinationName) == newName {
+			return fmt.Errorf("%w: destination endpoint %q already exists", ErrEndpointNameConflict, newName)
+		}
+	}
+	if err := destinationRows.Err(); err != nil {
+		return fmt.Errorf("verify destination endpoint %q: %w", newName, err)
 	}
 
 	if _, err := tx.Exec(`
