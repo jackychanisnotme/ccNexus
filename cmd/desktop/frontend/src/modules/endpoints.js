@@ -1434,7 +1434,7 @@ function renderTokenPoolRateLimits(rateLimits) {
     `;
 }
 
-function closeAllTokenPoolActionMenus() {
+export function closeAllTokenPoolActionMenus() {
     if (!tokenPoolOpenActionMenu) {
         return;
     }
@@ -1452,7 +1452,7 @@ function closeAllTokenPoolActionMenus() {
     tokenPoolOpenActionMenu = null;
 }
 
-function openTokenPoolActionMenu(button, menu, wrap) {
+export function openTokenPoolActionMenu(button, menu, wrap) {
     closeAllTokenPoolActionMenus();
     document.body.appendChild(menu);
     menu.classList.add('show', 'token-pool-more-menu-portal');
