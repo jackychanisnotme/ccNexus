@@ -287,9 +287,11 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 		return
 	}
 
+	oldName := name
+
 	// Update fields
-	if req.Name != "" {
-		existing.Name = req.Name
+	if newName := strings.TrimSpace(req.Name); newName != "" {
+		existing.Name = newName
 	}
 	if req.APIUrl != "" {
 		existing.APIUrl = normalizeAPIUrl(req.APIUrl)
@@ -351,10 +353,18 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	existing.Remark = req.Remark
 	existing.UpdatedAt = time.Now()
 
-	if err := h.storage.UpdateEndpoint(existing); err != nil {
-		logger.Error("Failed to update endpoint: %v", err)
-		WriteError(w, http.StatusInternalServerError, "Failed to update endpoint")
-		return
+	if oldName != existing.Name {
+		if err := h.storage.RenameEndpoint(oldName, existing); err != nil {
+			logger.Error("Failed to rename endpoint: %v", err)
+			WriteError(w, http.StatusConflict, err.Error())
+			return
+		}
+	} else {
+		if err := h.storage.UpdateEndpoint(existing); err != nil {
+			logger.Error("Failed to update endpoint: %v", err)
+			WriteError(w, http.StatusInternalServerError, "Failed to update endpoint")
+			return
+		}
 	}
 
 	// Update proxy config

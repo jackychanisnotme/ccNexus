@@ -13,6 +13,152 @@ import (
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
+func TestEndpointAPIRenamePreservesTokenPool(t *testing.T) {
+	const (
+		oldName      = "Codex Old"
+		newName      = "Codex New"
+		credentialID = "stable-account"
+	)
+
+	store := newAPITestStorage(t)
+	cfg := config.DefaultConfig()
+	cfg.BasicAuthEnabled = false
+	proxyInstance := proxy.New(cfg, nil, store, "test-device")
+	handler := NewHandler(cfg, proxyInstance, store)
+
+	saveAPITestEndpoint(t, store, storage.Endpoint{
+		Name:        oldName,
+		APIUrl:      config.CodexTokenPoolAPIURL,
+		AuthMode:    config.AuthModeCodexTokenPool,
+		Enabled:     true,
+		Transformer: config.CodexTokenPoolTransformer,
+		Model:       config.CodexTokenPoolDefaultModel,
+	})
+	credential := storage.EndpointCredential{
+		EndpointName: oldName,
+		ProviderType: storage.ProviderTypeCodex,
+		AccountID:    credentialID,
+		Email:        "codex@example.com",
+		AccessToken:  "access-token",
+		Status:       "active",
+		Enabled:      true,
+	}
+	if err := store.SaveEndpointCredential(&credential); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+	originalCredentialID := credential.ID
+
+	postJSON(t, handler, http.MethodPut, "/api/endpoints/Codex%20Old", map[string]any{
+		"name":        " " + newName + " ",
+		"apiUrl":      config.CodexTokenPoolAPIURL,
+		"authMode":    config.AuthModeCodexTokenPool,
+		"enabled":     true,
+		"transformer": config.CodexTokenPoolTransformer,
+		"model":       config.CodexTokenPoolDefaultModel,
+		"thinking":    config.ThinkingHigh,
+	})
+
+	endpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get endpoints: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("stored endpoints = %#v, want one renamed endpoint", endpoints)
+	}
+	if endpoints[0].Name != newName {
+		t.Fatalf("stored endpoint name = %q, want %q", endpoints[0].Name, newName)
+	}
+	if endpoints[0].AuthMode != config.AuthModeCodexTokenPool {
+		t.Fatalf("stored auth mode = %q, want %q", endpoints[0].AuthMode, config.AuthModeCodexTokenPool)
+	}
+	if endpoints[0].APIUrl != config.CodexTokenPoolAPIURL {
+		t.Fatalf("stored api URL = %q, want %q", endpoints[0].APIUrl, config.CodexTokenPoolAPIURL)
+	}
+	if endpoints[0].Transformer != config.CodexTokenPoolTransformer {
+		t.Fatalf("stored transformer = %q, want %q", endpoints[0].Transformer, config.CodexTokenPoolTransformer)
+	}
+
+	newCredentials, err := store.GetEndpointCredentials(newName)
+	if err != nil {
+		t.Fatalf("get new credentials: %v", err)
+	}
+	if len(newCredentials) != 1 {
+		t.Fatalf("new credentials = %#v, want one credential", newCredentials)
+	}
+	if newCredentials[0].ID != originalCredentialID {
+		t.Fatalf("credential ID = %d, want original ID %d", newCredentials[0].ID, originalCredentialID)
+	}
+	if newCredentials[0].AccountID != credentialID {
+		t.Fatalf("credential account ID = %q, want %q", newCredentials[0].AccountID, credentialID)
+	}
+	oldCredentials, err := store.GetEndpointCredentials(oldName)
+	if err != nil {
+		t.Fatalf("get old credentials: %v", err)
+	}
+	if len(oldCredentials) != 0 {
+		t.Fatalf("old credentials = %#v, want none", oldCredentials)
+	}
+
+	configEndpoints := handler.config.GetEndpoints()
+	if len(configEndpoints) != 1 {
+		t.Fatalf("config endpoints = %#v, want one renamed endpoint", configEndpoints)
+	}
+	if configEndpoints[0].Name != newName {
+		t.Fatalf("config endpoint name = %q, want %q", configEndpoints[0].Name, newName)
+	}
+}
+
+func TestEndpointAPIRenameRejectsActiveCollision(t *testing.T) {
+	store := newAPITestStorage(t)
+	cfg := config.DefaultConfig()
+	cfg.BasicAuthEnabled = false
+	proxyInstance := proxy.New(cfg, nil, store, "test-device")
+	handler := NewHandler(cfg, proxyInstance, store)
+
+	saveAPITestEndpoint(t, store, storage.Endpoint{
+		Name:        "Source",
+		APIUrl:      "https://source.example.com",
+		APIKey:      "source-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "source-model",
+		SortOrder:   0,
+	})
+	saveAPITestEndpoint(t, store, storage.Endpoint{
+		Name:        "Destination",
+		APIUrl:      "https://destination.example.com",
+		APIKey:      "destination-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "destination-model",
+		SortOrder:   1,
+	})
+
+	rec := requestJSON(t, handler, http.MethodPut, "/api/endpoints/Source", map[string]any{
+		"name":        "Destination",
+		"apiUrl":      "https://source-renamed.example.com",
+		"apiKey":      "source-key",
+		"authMode":    config.AuthModeAPIKey,
+		"enabled":     true,
+		"transformer": "openai",
+		"model":       "updated-model",
+	})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("PUT collision status=%d body=%s, want 409", rec.Code, rec.Body.String())
+	}
+
+	source := mustGetStoredEndpoint(t, store, "Source")
+	if source.APIUrl != "https://source.example.com" || source.Model != "source-model" {
+		t.Fatalf("source endpoint changed after collision: %#v", source)
+	}
+	destination := mustGetStoredEndpoint(t, store, "Destination")
+	if destination.APIUrl != "https://destination.example.com" || destination.Model != "destination-model" {
+		t.Fatalf("destination endpoint changed after collision: %#v", destination)
+	}
+}
+
 func TestEndpointAPIProxyURLPersistsThroughCreateUpdateAndClone(t *testing.T) {
 	store := newAPITestStorage(t)
 	cfg := config.DefaultConfig()
@@ -36,7 +182,7 @@ func TestEndpointAPIProxyURLPersistsThroughCreateUpdateAndClone(t *testing.T) {
 	}
 
 	postJSON(t, handler, http.MethodPut, "/api/endpoints/Source", map[string]any{
-		"name":        "Source",
+		"name":        "",
 		"apiUrl":      "https://api.example.com",
 		"authMode":    config.AuthModeAPIKey,
 		"enabled":     true,
@@ -107,6 +253,16 @@ func TestFetchModelsUsesProxyURLFromRequest(t *testing.T) {
 func postJSON(t *testing.T, handler http.Handler, method, path string, payload map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 
+	rec := requestJSON(t, handler, method, path, payload)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s %s status=%d body=%s", method, path, rec.Code, rec.Body.String())
+	}
+	return rec
+}
+
+func requestJSON(t *testing.T, handler http.Handler, method, path string, payload map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
@@ -115,9 +271,6 @@ func postJSON(t *testing.T, handler http.Handler, method, path string, payload m
 	req := httptest.NewRequest(method, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("%s %s status=%d body=%s", method, path, rec.Code, rec.Body.String())
-	}
 	return rec
 }
 
