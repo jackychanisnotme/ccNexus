@@ -10,6 +10,12 @@ import (
 )
 
 func TestUpdateEndpointRenamePreservesTokenPool(t *testing.T) {
+	const (
+		newName  = "Codex New"
+		proxyURL = "http://127.0.0.1:7890"
+		remark   = "renamed token pool"
+	)
+
 	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
 	if err != nil {
 		t.Fatalf("create storage: %v", err)
@@ -57,21 +63,29 @@ func TestUpdateEndpointRenamePreservesTokenPool(t *testing.T) {
 
 	if err := service.UpdateEndpoint(
 		0,
-		"Codex New",
+		newName+" ",
 		config.CodexTokenPoolAPIURL,
 		"",
 		config.AuthModeCodexTokenPool,
 		config.CodexTokenPoolTransformer,
 		config.CodexTokenPoolDefaultModel,
-		"",
-		"",
-		false,
-		"",
+		config.ThinkingHigh,
+		proxyURL,
+		true,
+		remark,
 	); err != nil {
 		t.Fatalf("rename endpoint: %v", err)
 	}
 
-	renamedCredentials, err := store.GetEndpointCredentials("Codex New")
+	configEndpoints := cfg.GetEndpoints()
+	if len(configEndpoints) != 1 {
+		t.Fatalf("config endpoints = %#v, want one endpoint", configEndpoints)
+	}
+	if configEndpoints[0].Name != newName {
+		t.Fatalf("config endpoint name = %q, want %q", configEndpoints[0].Name, newName)
+	}
+
+	renamedCredentials, err := store.GetEndpointCredentials(newName)
 	if err != nil {
 		t.Fatalf("get renamed credentials: %v", err)
 	}
@@ -97,15 +111,76 @@ func TestUpdateEndpointRenamePreservesTokenPool(t *testing.T) {
 	if len(storedEndpoints) != 1 {
 		t.Fatalf("stored endpoints = %#v, want one endpoint", storedEndpoints)
 	}
-	if storedEndpoints[0].Name != "Codex New" {
-		t.Fatalf("stored endpoint name = %q, want %q", storedEndpoints[0].Name, "Codex New")
+	stored := storedEndpoints[0]
+	if stored.Name != newName {
+		t.Fatalf("stored endpoint name = %q, want %q", stored.Name, newName)
+	}
+	if stored.ProxyURL != proxyURL {
+		t.Fatalf("stored endpoint proxy URL = %q, want %q", stored.ProxyURL, proxyURL)
+	}
+	if stored.Thinking != config.ThinkingHigh {
+		t.Fatalf("stored endpoint thinking = %q, want %q", stored.Thinking, config.ThinkingHigh)
+	}
+	if !stored.ForceStream {
+		t.Fatal("stored endpoint force stream = false, want true")
+	}
+	if stored.Remark != remark {
+		t.Fatalf("stored endpoint remark = %q, want %q", stored.Remark, remark)
+	}
+}
+
+func TestConfigStorageAdapterPreservesProxyURL(t *testing.T) {
+	const (
+		initialProxyURL = "http://127.0.0.1:7890"
+		updatedProxyURL = "http://127.0.0.1:7891"
+	)
+
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	adapter := storage.NewConfigStorageAdapter(store)
+	endpoint := config.StorageEndpoint{
+		Name:        "Proxy Endpoint",
+		APIUrl:      "https://api.example.com/v1",
+		APIKey:      "test-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		ProxyURL:    initialProxyURL,
+	}
+	if err := adapter.SaveEndpoint(&endpoint); err != nil {
+		t.Fatalf("save endpoint through adapter: %v", err)
 	}
 
-	configEndpoints := cfg.GetEndpoints()
-	if len(configEndpoints) != 1 {
-		t.Fatalf("config endpoints = %#v, want one endpoint", configEndpoints)
+	storedEndpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get stored endpoints: %v", err)
 	}
-	if configEndpoints[0].Name != "Codex New" {
-		t.Fatalf("config endpoint name = %q, want %q", configEndpoints[0].Name, "Codex New")
+	if len(storedEndpoints) != 1 || storedEndpoints[0].ProxyURL != initialProxyURL {
+		t.Fatalf("stored endpoints after save = %#v, want proxy URL %q", storedEndpoints, initialProxyURL)
+	}
+
+	adaptedEndpoints, err := adapter.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get endpoints through adapter: %v", err)
+	}
+	if len(adaptedEndpoints) != 1 || adaptedEndpoints[0].ProxyURL != initialProxyURL {
+		t.Fatalf("adapted endpoints = %#v, want proxy URL %q", adaptedEndpoints, initialProxyURL)
+	}
+
+	endpoint.ProxyURL = updatedProxyURL
+	if err := adapter.UpdateEndpoint(&endpoint); err != nil {
+		t.Fatalf("update endpoint through adapter: %v", err)
+	}
+
+	storedEndpoints, err = store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get updated stored endpoints: %v", err)
+	}
+	if len(storedEndpoints) != 1 || storedEndpoints[0].ProxyURL != updatedProxyURL {
+		t.Fatalf("stored endpoints after update = %#v, want proxy URL %q", storedEndpoints, updatedProxyURL)
 	}
 }
