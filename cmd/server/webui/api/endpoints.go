@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -265,6 +266,10 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 		WriteError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	if req.Name != "" && strings.TrimSpace(req.Name) == "" {
+		WriteError(w, http.StatusBadRequest, "Invalid endpoint name")
+		return
+	}
 
 	// Get existing endpoint
 	endpoints, err := h.storage.GetEndpoints()
@@ -378,17 +383,12 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 }
 
 func classifyEndpointRenameError(err error) (int, string) {
-	message := ""
-	if err != nil {
-		message = strings.ToLower(err.Error())
-	}
-
 	switch {
-	case strings.Contains(message, "already exists"):
+	case errors.Is(err, storage.ErrEndpointNameConflict):
 		return http.StatusConflict, "Endpoint with this name already exists"
-	case strings.Contains(message, "not found"):
+	case errors.Is(err, storage.ErrEndpointNotFound):
 		return http.StatusNotFound, "Endpoint not found"
-	case strings.Contains(message, "required"), strings.Contains(message, "different names"):
+	case errors.Is(err, storage.ErrInvalidEndpointName):
 		return http.StatusBadRequest, "Invalid endpoint name"
 	default:
 		return http.StatusInternalServerError, "Failed to rename endpoint"
