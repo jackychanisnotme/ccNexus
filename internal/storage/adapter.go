@@ -74,6 +74,25 @@ func (a *ConfigStorageAdapter) UpdateEndpoint(ep *config.StorageEndpoint) error 
 	return a.storage.UpdateEndpoint(endpoint)
 }
 
+// RenameEndpoint renames and updates an endpoint
+func (a *ConfigStorageAdapter) RenameEndpoint(oldName string, ep *config.StorageEndpoint) error {
+	endpoint := &Endpoint{
+		Name:        ep.Name,
+		APIUrl:      ep.APIUrl,
+		APIKey:      ep.APIKey,
+		AuthMode:    ep.AuthMode,
+		Enabled:     ep.Enabled,
+		Transformer: ep.Transformer,
+		Model:       ep.Model,
+		Thinking:    ep.Thinking,
+		ForceStream: ep.ForceStream,
+		ProxyURL:    ep.ProxyURL,
+		Remark:      ep.Remark,
+		SortOrder:   ep.SortOrder,
+	}
+	return a.storage.RenameEndpoint(oldName, endpoint)
+}
+
 // DeleteEndpoint deletes an endpoint
 func (a *ConfigStorageAdapter) DeleteEndpoint(name string) error {
 	return a.storage.DeleteEndpoint(name)

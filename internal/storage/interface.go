@@ -164,6 +164,7 @@ type Storage interface {
 	GetEndpoints() ([]Endpoint, error)
 	SaveEndpoint(ep *Endpoint) error
 	UpdateEndpoint(ep *Endpoint) error
+	RenameEndpoint(oldName string, ep *Endpoint) error
 	DeleteEndpoint(name string) error
 	GetEndpointCredentials(endpointName string) ([]EndpointCredential, error)
 	GetCredentialByID(id int64) (*EndpointCredential, error)

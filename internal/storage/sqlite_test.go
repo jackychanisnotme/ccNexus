@@ -5,7 +5,273 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/lich0821/ccNexus/internal/config"
 )
+
+func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
+	store, err := NewSQLiteStorage(dbPath)
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+
+	oldEndpoint := Endpoint{
+		Name:        "Codex Old",
+		APIUrl:      config.CodexTokenPoolAPIURL,
+		AuthMode:    config.AuthModeCodexTokenPool,
+		Enabled:     true,
+		Transformer: config.CodexTokenPoolTransformer,
+		Model:       config.CodexTokenPoolDefaultModel,
+		ProxyURL:    "http://127.0.0.1:7890",
+		Remark:      "original",
+		SortOrder:   2,
+	}
+	if err := store.SaveEndpoint(&oldEndpoint); err != nil {
+		t.Fatalf("save old endpoint: %v", err)
+	}
+
+	credential := EndpointCredential{
+		EndpointName: "Codex Old",
+		ProviderType: ProviderTypeCodex,
+		AccountID:    "account-1",
+		Email:        "codex@example.com",
+		AccessToken:  "access-token",
+		Status:       "active",
+		Enabled:      true,
+	}
+	if err := store.SaveEndpointCredential(&credential); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+	credentialID := credential.ID
+
+	rateLimitUpdatedAt := time.Date(2026, 6, 20, 8, 0, 0, 0, time.UTC)
+	rateLimitData := &CodexRateLimitsData{
+		Snapshot: &CodexRateLimitSnapshot{
+			LimitID:   "codex",
+			LimitName: "Codex",
+			Primary: &CodexRateLimitWindow{
+				UsedPercent: 37.5,
+			},
+			PlanType: "plus",
+		},
+		Source: "test",
+	}
+	if err := store.UpsertCredentialRateLimits(credentialID, rateLimitData, "ok", "", rateLimitUpdatedAt); err != nil {
+		t.Fatalf("save credential rate limits: %v", err)
+	}
+
+	usageUpdatedAt := rateLimitUpdatedAt.Add(time.Minute)
+	if err := store.UpsertCredentialUsage(credentialID, "Codex Old", 7, 2, 110, 45, usageUpdatedAt); err != nil {
+		t.Fatalf("save credential usage: %v", err)
+	}
+
+	successAt := usageUpdatedAt.Add(time.Minute)
+	failureAt := successAt.Add(time.Minute)
+	failureReason := "rate_limited"
+	failureStatusCode := 429
+	attemptAt := failureAt.Add(time.Second)
+	if _, err := store.UpsertEndpointRuntimeStatus("Codex Old", EndpointRuntimeStatusPatch{
+		LastSuccessAt:         &successAt,
+		LastFailureAt:         &failureAt,
+		LastFailureReason:     &failureReason,
+		LastFailureStatusCode: &failureStatusCode,
+		LastAttemptAt:         &attemptAt,
+	}); err != nil {
+		t.Fatalf("save endpoint runtime status: %v", err)
+	}
+
+	date := "2026-06-20"
+	oldHistory := DailyStat{
+		EndpointName: "Codex Old",
+		Date:         date,
+		Requests:     5,
+		Errors:       1,
+		InputTokens:  100,
+		OutputTokens: 40,
+		DeviceID:     "device-a",
+		ClientIP:     "192.0.2.10",
+	}
+	staleHistory := DailyStat{
+		EndpointName: "Codex New",
+		Date:         date,
+		Requests:     3,
+		Errors:       2,
+		InputTokens:  60,
+		OutputTokens: 25,
+		DeviceID:     "device-a",
+		ClientIP:     "192.0.2.10",
+	}
+	if err := store.RecordDailyStat(&oldHistory); err != nil {
+		t.Fatalf("save old endpoint history: %v", err)
+	}
+	if err := store.RecordDailyStat(&staleHistory); err != nil {
+		t.Fatalf("save stale destination history: %v", err)
+	}
+
+	renamed := oldEndpoint
+	renamed.Name = "Codex New"
+	renamed.APIUrl = "https://api.example.com/v1"
+	renamed.APIKey = "renamed-api-key"
+	renamed.AuthMode = config.AuthModeAPIKey
+	renamed.Enabled = false
+	renamed.Transformer = "openai"
+	renamed.Model = "gpt-4.1"
+	renamed.Thinking = config.ThinkingHigh
+	renamed.ForceStream = true
+	renamed.ProxyURL = "http://127.0.0.1:7891"
+	renamed.Remark = "renamed"
+	renamed.SortOrder = 7
+	if err := store.RenameEndpoint("Codex Old", &renamed); err != nil {
+		t.Fatalf("rename endpoint: %v", err)
+	}
+
+	credentials, err := store.GetEndpointCredentials("Codex New")
+	if err != nil {
+		t.Fatalf("get renamed credentials: %v", err)
+	}
+	if len(credentials) != 1 {
+		t.Fatalf("renamed credentials = %#v, want one credential", credentials)
+	}
+	renamedCredential := credentials[0]
+	if renamedCredential.ID != credentialID ||
+		renamedCredential.EndpointName != "Codex New" ||
+		renamedCredential.ProviderType != credential.ProviderType ||
+		renamedCredential.AccountID != credential.AccountID ||
+		renamedCredential.Email != credential.Email ||
+		renamedCredential.AccessToken != credential.AccessToken ||
+		renamedCredential.Status != credential.Status ||
+		renamedCredential.Enabled != credential.Enabled {
+		t.Fatalf("renamed credential = %#v, want seeded fields preserved with endpoint name Codex New", renamedCredential)
+	}
+	oldCredentials, err := store.GetEndpointCredentials("Codex Old")
+	if err != nil {
+		t.Fatalf("get old credentials: %v", err)
+	}
+	if len(oldCredentials) != 0 {
+		t.Fatalf("old credentials remain: %#v", oldCredentials)
+	}
+
+	rateLimits, err := store.GetCredentialRateLimits(credentialID)
+	if err != nil {
+		t.Fatalf("get credential rate limits: %v", err)
+	}
+	if rateLimits == nil || rateLimits.Data == nil || rateLimits.Data.Snapshot == nil {
+		t.Fatalf("rate limits missing after rename: %#v", rateLimits)
+	}
+	if rateLimits.CredentialID != credentialID ||
+		rateLimits.Status != "ok" ||
+		rateLimits.UpdatedAt == nil ||
+		!rateLimits.UpdatedAt.Equal(rateLimitUpdatedAt) ||
+		rateLimits.Data.Source != rateLimitData.Source ||
+		rateLimits.Data.Snapshot.LimitID != rateLimitData.Snapshot.LimitID ||
+		rateLimits.Data.Snapshot.LimitName != rateLimitData.Snapshot.LimitName ||
+		rateLimits.Data.Snapshot.PlanType != rateLimitData.Snapshot.PlanType ||
+		rateLimits.Data.Snapshot.Primary == nil ||
+		rateLimits.Data.Snapshot.Primary.UsedPercent != rateLimitData.Snapshot.Primary.UsedPercent {
+		t.Fatalf("rate limits changed after rename: %#v", rateLimits)
+	}
+
+	usageByCredential, err := store.GetCredentialUsageByEndpoint("Codex New")
+	if err != nil {
+		t.Fatalf("get renamed credential usage: %v", err)
+	}
+	usage := usageByCredential[credentialID]
+	if usage == nil ||
+		usage.Requests != 7 ||
+		usage.Errors != 2 ||
+		usage.InputTokens != 110 ||
+		usage.OutputTokens != 45 ||
+		usage.UpdatedAt == nil ||
+		!usage.UpdatedAt.Equal(usageUpdatedAt) {
+		t.Fatalf("renamed credential usage = %#v, want preserved counters", usage)
+	}
+	oldUsage, err := store.GetCredentialUsageByEndpoint("Codex Old")
+	if err != nil {
+		t.Fatalf("get old credential usage: %v", err)
+	}
+	if len(oldUsage) != 0 {
+		t.Fatalf("old credential usage remains: %#v", oldUsage)
+	}
+
+	statuses, err := store.GetEndpointRuntimeStatuses()
+	if err != nil {
+		t.Fatalf("get runtime statuses: %v", err)
+	}
+	status := statuses["Codex New"]
+	if status == nil ||
+		status.LastSuccessAt == nil ||
+		!status.LastSuccessAt.Equal(successAt) ||
+		status.LastFailureAt == nil ||
+		!status.LastFailureAt.Equal(failureAt) ||
+		status.LastFailureReason != failureReason ||
+		status.LastFailureStatusCode != failureStatusCode ||
+		status.LastAttemptAt == nil ||
+		!status.LastAttemptAt.Equal(attemptAt) {
+		t.Fatalf("renamed runtime status = %#v, want complete preserved status", status)
+	}
+	if _, exists := statuses["Codex Old"]; exists {
+		t.Fatalf("old runtime status remains: %#v", statuses["Codex Old"])
+	}
+
+	endpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get renamed endpoint: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("endpoints = %#v, want one renamed endpoint", endpoints)
+	}
+	gotEndpoint := endpoints[0]
+	if gotEndpoint.ID != oldEndpoint.ID ||
+		gotEndpoint.Name != renamed.Name ||
+		gotEndpoint.APIUrl != renamed.APIUrl ||
+		gotEndpoint.APIKey != renamed.APIKey ||
+		gotEndpoint.AuthMode != renamed.AuthMode ||
+		gotEndpoint.Enabled != renamed.Enabled ||
+		gotEndpoint.Transformer != renamed.Transformer ||
+		gotEndpoint.Model != renamed.Model ||
+		gotEndpoint.Thinking != renamed.Thinking ||
+		gotEndpoint.ForceStream != renamed.ForceStream ||
+		gotEndpoint.ProxyURL != renamed.ProxyURL ||
+		gotEndpoint.Remark != renamed.Remark ||
+		gotEndpoint.SortOrder != renamed.SortOrder {
+		t.Fatalf("renamed endpoint = %#v, want %#v with original ID %d", gotEndpoint, renamed, oldEndpoint.ID)
+	}
+
+	var requests, errors, inputTokens, outputTokens int
+	if err := store.db.QueryRow(`
+		SELECT requests, errors, input_tokens, output_tokens
+		FROM daily_stats
+		WHERE endpoint_name=? AND date=? AND device_id=? AND client_ip=?
+	`, "Codex New", date, "device-a", "192.0.2.10").Scan(
+		&requests,
+		&errors,
+		&inputTokens,
+		&outputTokens,
+	); err != nil {
+		t.Fatalf("get exact renamed history row: %v", err)
+	}
+	if requests != 8 || errors != 3 || inputTokens != 160 || outputTokens != 65 {
+		t.Fatalf(
+			"merged history counters = requests:%d errors:%d input:%d output:%d, want 8/3/160/65",
+			requests,
+			errors,
+			inputTokens,
+			outputTokens,
+		)
+	}
+	var oldHistoryCount int
+	if err := store.db.QueryRow(
+		`SELECT COUNT(*) FROM daily_stats WHERE endpoint_name=?`,
+		"Codex Old",
+	).Scan(&oldHistoryCount); err != nil {
+		t.Fatalf("count old history rows: %v", err)
+	}
+	if oldHistoryCount != 0 {
+		t.Fatalf("old history row count = %d, want 0", oldHistoryCount)
+	}
+}
 
 func TestMigrateDeepSeekThinkingDefaultRunsOnce(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
