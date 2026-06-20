@@ -294,6 +294,24 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 
 	if e.storage != nil {
 		configAdapter := storage.NewConfigStorageAdapter(e.storage)
+		if oldName != updatedEndpoint.Name {
+			if err := configAdapter.RenameEndpoint(oldName, &config.StorageEndpoint{
+				Name:        updatedEndpoint.Name,
+				APIUrl:      updatedEndpoint.APIUrl,
+				APIKey:      updatedEndpoint.APIKey,
+				AuthMode:    updatedEndpoint.AuthMode,
+				Enabled:     updatedEndpoint.Enabled,
+				Transformer: updatedEndpoint.Transformer,
+				Model:       updatedEndpoint.Model,
+				Thinking:    updatedEndpoint.Thinking,
+				ForceStream: updatedEndpoint.ForceStream,
+				ProxyURL:    updatedEndpoint.ProxyURL,
+				Remark:      updatedEndpoint.Remark,
+				SortOrder:   index,
+			}); err != nil {
+				return fmt.Errorf("failed to rename endpoint: %w", err)
+			}
+		}
 		if err := e.config.SaveToStorage(configAdapter); err != nil {
 			return fmt.Errorf("failed to save config: %w", err)
 		}
