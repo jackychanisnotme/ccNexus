@@ -7,7 +7,22 @@ import (
 	"testing"
 
 	"github.com/lich0821/ccNexus/internal/config"
+	"github.com/lich0821/ccNexus/internal/storage"
 )
+
+func TestCodexEndpointTestUsesStableClientIdentity(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true}`))
+	credential := &storage.EndpointCredential{ProviderType: storage.ProviderTypeCodex}
+
+	applyCodexCredentialHeadersForTest(req, credential, []byte(`{"model":"gpt-5.5","stream":true}`))
+
+	if got := req.Header.Get("Version"); got != "0.141.0" {
+		t.Fatalf("Version = %q, want %q", got, "0.141.0")
+	}
+	if got := req.Header.Get("User-Agent"); !strings.Contains(got, "codex_cli_rs/0.141.0") {
+		t.Fatalf("User-Agent = %q, want stable Codex identity", got)
+	}
+}
 
 func TestFetchModelsUsesProxyURL(t *testing.T) {
 	cfg := config.DefaultConfig()

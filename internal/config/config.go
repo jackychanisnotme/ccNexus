@@ -30,9 +30,11 @@ const (
 	ThinkingHigh   = "high"
 	ThinkingXHigh  = "xhigh"
 
-	CodexTokenPoolAPIURL      = "https://chatgpt.com/backend-api/codex"
+	CodexTokenPoolAPIURL       = "https://chatgpt.com/backend-api/codex"
 	CodexTokenPoolTransformer  = "openai2"
 	CodexTokenPoolDefaultModel = "gpt-5-codex"
+	CodexClientVersion         = "0.141.0"
+	CodexUserAgent             = "codex_cli_rs/0.141.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
 
 	ClaudeOAuthTokenPoolAPIURL       = "https://api.anthropic.com"
 	ClaudeOAuthTokenPoolTransformer  = "claude"

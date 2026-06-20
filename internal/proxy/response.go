@@ -40,6 +40,9 @@ func (p *Proxy) handleNonStreamingResponse(w http.ResponseWriter, resp *http.Res
 		logger.Error("[%s] Failed to transform response: %v", endpoint.Name, err)
 		return 0, 0, err
 	}
+	if normalizedResp, changed := normalizeOpenAIResponsesToolSearchArguments(transformedResp, false); changed {
+		transformedResp = normalizedResp
+	}
 
 	logger.DebugLog("[%s] Transformed Response: %s", endpoint.Name, string(transformedResp))
 

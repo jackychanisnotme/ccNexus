@@ -38,6 +38,30 @@ func TestEnsureCodexResponsesPayload(t *testing.T) {
 	}
 }
 
+func TestCodexProxyUsesStableClientIdentity(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:        "Codex Pool",
+		APIUrl:      config.CodexTokenPoolAPIURL,
+		AuthMode:    config.AuthModeCodexTokenPool,
+		Transformer: config.CodexTokenPoolTransformer,
+		Model:       "gpt-5.5",
+	}
+	body := []byte(`{"model":"gpt-5.5","stream":true,"input":"ping"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
+	credential := &storage.EndpointCredential{ProviderType: storage.ProviderTypeCodex}
+
+	proxyReq, err := buildProxyRequest(req, endpoint, "test-token", body, "cx_resp_openai2", credential)
+	if err != nil {
+		t.Fatalf("buildProxyRequest failed: %v", err)
+	}
+	if got := proxyReq.Header.Get("Version"); got != "0.141.0" {
+		t.Fatalf("Version = %q, want %q", got, "0.141.0")
+	}
+	if got := proxyReq.Header.Get("User-Agent"); !strings.Contains(got, "codex_cli_rs/0.141.0") {
+		t.Fatalf("User-Agent = %q, want stable Codex identity", got)
+	}
+}
+
 func TestEnsureCodexResponsesPayloadOverridesStoreAndStream(t *testing.T) {
 	raw := []byte(`{"model":"gpt-4.1","store":true}`)
 	out := ensureCodexResponsesPayload(raw)

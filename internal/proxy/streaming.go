@@ -1531,7 +1531,14 @@ func formatRequestSize(bytes int) string {
 func (p *Proxy) transformStreamEvent(eventData []byte, trans transformer.Transformer, transformerName string, streamCtx *transformer.StreamContext) ([]byte, error) {
 	// Use the unified interface method instead of type assertion switch
 	// All transformers now implement TransformResponseWithContext
-	return trans.TransformResponseWithContext(eventData, true, streamCtx)
+	transformedEvent, err := trans.TransformResponseWithContext(eventData, true, streamCtx)
+	if err != nil {
+		return nil, err
+	}
+	if normalizedEvent, changed := normalizeOpenAIResponsesToolSearchArguments(transformedEvent, true); changed {
+		transformedEvent = normalizedEvent
+	}
+	return transformedEvent, nil
 }
 
 // extractTokensFromEvent extracts token counts from SSE event

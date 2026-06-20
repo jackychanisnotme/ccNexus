@@ -167,8 +167,8 @@ func (p *Proxy) fetchCodexRateLimitsForCredential(ctx context.Context, endpoint 
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", codexUserAgent)
-	req.Header.Set("Version", codexClientVersion)
+	req.Header.Set("User-Agent", config.CodexUserAgent)
+	req.Header.Set("Version", config.CodexClientVersion)
 	if accountID := strings.TrimSpace(credential.AccountID); accountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", accountID)
 	}

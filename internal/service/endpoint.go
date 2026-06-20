@@ -71,9 +71,6 @@ func endpointStorageToConfig(endpoint *storage.Endpoint) config.Endpoint {
 const (
 	testMessage   = "你是什么模型?"
 	testMaxTokens = 16
-
-	codexTestClientVersion = "0.101.0"
-	codexTestUserAgent     = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
 )
 
 // EndpointService handles endpoint management operations
@@ -1356,9 +1353,9 @@ func applyCodexCredentialHeadersForTest(req *http.Request, credential *storage.E
 		return
 	}
 
-	ensureHeader(req.Header, "Version", codexTestClientVersion)
+	ensureHeader(req.Header, "Version", config.CodexClientVersion)
 	ensureHeader(req.Header, "Session_id", uuid.NewString())
-	ensureHeader(req.Header, "User-Agent", codexTestUserAgent)
+	ensureHeader(req.Header, "User-Agent", config.CodexUserAgent)
 	if isStreamingPayload(payload) {
 		req.Header.Set("Accept", "text/event-stream")
 	} else if len(payload) > 0 {

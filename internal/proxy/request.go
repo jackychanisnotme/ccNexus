@@ -29,11 +29,6 @@ import (
 	"github.com/lich0821/ccNexus/internal/transformer/cx/responses"
 )
 
-const (
-	codexClientVersion = "0.101.0"
-	codexUserAgent     = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
-)
-
 // prepareTransformerForClient creates transformer based on client format and endpoint
 func prepareTransformerForClient(clientFormat ClientFormat, endpoint config.Endpoint) (transformer.Transformer, error) {
 	endpointTransformer := endpoint.Transformer
@@ -256,9 +251,9 @@ func applyCodexCredentialHeaders(req *http.Request, credential *storage.Endpoint
 	}
 
 	// Match Codex client headers for oauth credentials.
-	ensureHeader(req.Header, "Version", codexClientVersion)
+	ensureHeader(req.Header, "Version", config.CodexClientVersion)
 	ensureHeader(req.Header, "Session_id", uuid.NewString())
-	ensureHeader(req.Header, "User-Agent", codexUserAgent)
+	ensureHeader(req.Header, "User-Agent", config.CodexUserAgent)
 
 	if isStreamingRequest(payload) {
 		req.Header.Set("Accept", "text/event-stream")
