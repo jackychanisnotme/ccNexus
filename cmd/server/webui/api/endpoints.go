@@ -356,7 +356,8 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	if oldName != existing.Name {
 		if err := h.storage.RenameEndpoint(oldName, existing); err != nil {
 			logger.Error("Failed to rename endpoint: %v", err)
-			WriteError(w, http.StatusConflict, err.Error())
+			status, message := classifyEndpointRenameError(err)
+			WriteError(w, status, message)
 			return
 		}
 	} else {
@@ -374,6 +375,24 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 
 	existing.APIKey = maskAPIKey(existing.APIKey)
 	WriteSuccess(w, existing)
+}
+
+func classifyEndpointRenameError(err error) (int, string) {
+	message := ""
+	if err != nil {
+		message = strings.ToLower(err.Error())
+	}
+
+	switch {
+	case strings.Contains(message, "already exists"):
+		return http.StatusConflict, "Endpoint with this name already exists"
+	case strings.Contains(message, "not found"):
+		return http.StatusNotFound, "Endpoint not found"
+	case strings.Contains(message, "required"), strings.Contains(message, "different names"):
+		return http.StatusBadRequest, "Invalid endpoint name"
+	default:
+		return http.StatusInternalServerError, "Failed to rename endpoint"
+	}
 }
 
 // deleteEndpoint deletes an endpoint
