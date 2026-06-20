@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,11 @@ import (
 )
 
 func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
+	const (
+		legacyOldName    = " Codex Old "
+		canonicalNewName = "Codex New"
+	)
+
 	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	store, err := NewSQLiteStorage(dbPath)
 	if err != nil {
@@ -18,7 +24,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	defer store.Close()
 
 	oldEndpoint := Endpoint{
-		Name:        "Codex Old",
+		Name:        legacyOldName,
 		APIUrl:      config.CodexTokenPoolAPIURL,
 		AuthMode:    config.AuthModeCodexTokenPool,
 		Enabled:     true,
@@ -33,7 +39,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	}
 
 	credential := EndpointCredential{
-		EndpointName: "Codex Old",
+		EndpointName: legacyOldName,
 		ProviderType: ProviderTypeCodex,
 		AccountID:    "account-1",
 		Email:        "codex@example.com",
@@ -63,7 +69,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	}
 
 	usageUpdatedAt := rateLimitUpdatedAt.Add(time.Minute)
-	if err := store.UpsertCredentialUsage(credentialID, "Codex Old", 7, 2, 110, 45, usageUpdatedAt); err != nil {
+	if err := store.UpsertCredentialUsage(credentialID, legacyOldName, 7, 2, 110, 45, usageUpdatedAt); err != nil {
 		t.Fatalf("save credential usage: %v", err)
 	}
 
@@ -72,7 +78,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	failureReason := "rate_limited"
 	failureStatusCode := 429
 	attemptAt := failureAt.Add(time.Second)
-	if _, err := store.UpsertEndpointRuntimeStatus("Codex Old", EndpointRuntimeStatusPatch{
+	if _, err := store.UpsertEndpointRuntimeStatus(legacyOldName, EndpointRuntimeStatusPatch{
 		LastSuccessAt:         &successAt,
 		LastFailureAt:         &failureAt,
 		LastFailureReason:     &failureReason,
@@ -84,7 +90,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 
 	date := "2026-06-20"
 	oldHistory := DailyStat{
-		EndpointName: "Codex Old",
+		EndpointName: legacyOldName,
 		Date:         date,
 		Requests:     5,
 		Errors:       1,
@@ -94,7 +100,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 		ClientIP:     "192.0.2.10",
 	}
 	staleHistory := DailyStat{
-		EndpointName: "Codex New",
+		EndpointName: canonicalNewName,
 		Date:         date,
 		Requests:     3,
 		Errors:       2,
@@ -111,7 +117,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	}
 
 	renamed := oldEndpoint
-	renamed.Name = "Codex New"
+	renamed.Name = "  Codex New  "
 	renamed.APIUrl = "https://api.example.com/v1"
 	renamed.APIKey = "renamed-api-key"
 	renamed.AuthMode = config.AuthModeAPIKey
@@ -123,11 +129,14 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	renamed.ProxyURL = "http://127.0.0.1:7891"
 	renamed.Remark = "renamed"
 	renamed.SortOrder = 7
-	if err := store.RenameEndpoint("Codex Old", &renamed); err != nil {
+	if err := store.RenameEndpoint(legacyOldName, &renamed); err != nil {
 		t.Fatalf("rename endpoint: %v", err)
 	}
+	if renamed.Name != canonicalNewName {
+		t.Fatalf("renamed endpoint name = %q, want trimmed name %q", renamed.Name, canonicalNewName)
+	}
 
-	credentials, err := store.GetEndpointCredentials("Codex New")
+	credentials, err := store.GetEndpointCredentials(canonicalNewName)
 	if err != nil {
 		t.Fatalf("get renamed credentials: %v", err)
 	}
@@ -136,7 +145,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	}
 	renamedCredential := credentials[0]
 	if renamedCredential.ID != credentialID ||
-		renamedCredential.EndpointName != "Codex New" ||
+		renamedCredential.EndpointName != canonicalNewName ||
 		renamedCredential.ProviderType != credential.ProviderType ||
 		renamedCredential.AccountID != credential.AccountID ||
 		renamedCredential.Email != credential.Email ||
@@ -145,7 +154,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 		renamedCredential.Enabled != credential.Enabled {
 		t.Fatalf("renamed credential = %#v, want seeded fields preserved with endpoint name Codex New", renamedCredential)
 	}
-	oldCredentials, err := store.GetEndpointCredentials("Codex Old")
+	oldCredentials, err := store.GetEndpointCredentials(legacyOldName)
 	if err != nil {
 		t.Fatalf("get old credentials: %v", err)
 	}
@@ -173,7 +182,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 		t.Fatalf("rate limits changed after rename: %#v", rateLimits)
 	}
 
-	usageByCredential, err := store.GetCredentialUsageByEndpoint("Codex New")
+	usageByCredential, err := store.GetCredentialUsageByEndpoint(canonicalNewName)
 	if err != nil {
 		t.Fatalf("get renamed credential usage: %v", err)
 	}
@@ -187,7 +196,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 		!usage.UpdatedAt.Equal(usageUpdatedAt) {
 		t.Fatalf("renamed credential usage = %#v, want preserved counters", usage)
 	}
-	oldUsage, err := store.GetCredentialUsageByEndpoint("Codex Old")
+	oldUsage, err := store.GetCredentialUsageByEndpoint(legacyOldName)
 	if err != nil {
 		t.Fatalf("get old credential usage: %v", err)
 	}
@@ -199,7 +208,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get runtime statuses: %v", err)
 	}
-	status := statuses["Codex New"]
+	status := statuses[canonicalNewName]
 	if status == nil ||
 		status.LastSuccessAt == nil ||
 		!status.LastSuccessAt.Equal(successAt) ||
@@ -211,8 +220,8 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 		!status.LastAttemptAt.Equal(attemptAt) {
 		t.Fatalf("renamed runtime status = %#v, want complete preserved status", status)
 	}
-	if _, exists := statuses["Codex Old"]; exists {
-		t.Fatalf("old runtime status remains: %#v", statuses["Codex Old"])
+	if _, exists := statuses[legacyOldName]; exists {
+		t.Fatalf("old runtime status remains: %#v", statuses[legacyOldName])
 	}
 
 	endpoints, err := store.GetEndpoints()
@@ -244,7 +253,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 		SELECT requests, errors, input_tokens, output_tokens
 		FROM daily_stats
 		WHERE endpoint_name=? AND date=? AND device_id=? AND client_ip=?
-	`, "Codex New", date, "device-a", "192.0.2.10").Scan(
+	`, canonicalNewName, date, "device-a", "192.0.2.10").Scan(
 		&requests,
 		&errors,
 		&inputTokens,
@@ -264,12 +273,67 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	var oldHistoryCount int
 	if err := store.db.QueryRow(
 		`SELECT COUNT(*) FROM daily_stats WHERE endpoint_name=?`,
-		"Codex Old",
+		legacyOldName,
 	).Scan(&oldHistoryCount); err != nil {
 		t.Fatalf("count old history rows: %v", err)
 	}
 	if oldHistoryCount != 0 {
 		t.Fatalf("old history row count = %d, want 0", oldHistoryCount)
+	}
+}
+
+func TestRenameEndpointClassifiesValidationAndMissingErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		oldName  string
+		endpoint *Endpoint
+		want     error
+	}{
+		{
+			name:     "nil endpoint",
+			oldName:  "Source",
+			endpoint: nil,
+			want:     ErrInvalidEndpointName,
+		},
+		{
+			name:     "blank old name",
+			oldName:  " \t ",
+			endpoint: &Endpoint{Name: "Destination"},
+			want:     ErrInvalidEndpointName,
+		},
+		{
+			name:     "blank new name",
+			oldName:  "Source",
+			endpoint: &Endpoint{Name: " \t "},
+			want:     ErrInvalidEndpointName,
+		},
+		{
+			name:     "same name",
+			oldName:  "Source",
+			endpoint: &Endpoint{Name: " Source "},
+			want:     ErrInvalidEndpointName,
+		},
+		{
+			name:     "missing source",
+			oldName:  "Missing",
+			endpoint: &Endpoint{Name: "Destination"},
+			want:     ErrEndpointNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, err := NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+			if err != nil {
+				t.Fatalf("open storage: %v", err)
+			}
+			defer store.Close()
+
+			err = store.RenameEndpoint(tt.oldName, tt.endpoint)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("RenameEndpoint() error = %v, want errors.Is(_, %v)", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -327,8 +391,8 @@ func TestRenameEndpointRejectsActiveNameCollisionWithoutChanges(t *testing.T) {
 	renamed.Name = "Destination"
 	renamed.APIUrl = "https://renamed.example.com/v1"
 	renamed.APIKey = "renamed-key"
-	if err := store.RenameEndpoint("Source", &renamed); err == nil {
-		t.Fatal("rename endpoint succeeded despite active destination collision")
+	if err := store.RenameEndpoint("Source", &renamed); !errors.Is(err, ErrEndpointNameConflict) {
+		t.Fatalf("RenameEndpoint() error = %v, want errors.Is(_, ErrEndpointNameConflict)", err)
 	}
 
 	endpoints, err := store.GetEndpoints()

@@ -500,18 +500,17 @@ func (s *SQLiteStorage) RenameEndpoint(oldName string, ep *Endpoint) error {
 	defer s.mu.Unlock()
 
 	if ep == nil {
-		return fmt.Errorf("endpoint is required")
+		return fmt.Errorf("%w: endpoint is required", ErrInvalidEndpointName)
 	}
-	oldName = strings.TrimSpace(oldName)
 	newName := strings.TrimSpace(ep.Name)
-	if oldName == "" {
-		return fmt.Errorf("old endpoint name is required")
+	if strings.TrimSpace(oldName) == "" {
+		return fmt.Errorf("%w: old endpoint name is required", ErrInvalidEndpointName)
 	}
 	if newName == "" {
-		return fmt.Errorf("new endpoint name is required")
+		return fmt.Errorf("%w: new endpoint name is required", ErrInvalidEndpointName)
 	}
 	if oldName == newName {
-		return fmt.Errorf("endpoint rename requires different names")
+		return fmt.Errorf("%w: endpoint rename requires different names", ErrInvalidEndpointName)
 	}
 	ep.Name = newName
 	normalizeEndpointAuthMode(ep)
@@ -530,7 +529,7 @@ func (s *SQLiteStorage) RenameEndpoint(oldName string, ep *Endpoint) error {
 	var sourceID int64
 	if err := tx.QueryRow(`SELECT id FROM endpoints WHERE name=?`, oldName).Scan(&sourceID); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("source endpoint %q not found", oldName)
+			return fmt.Errorf("%w: source endpoint %q", ErrEndpointNotFound, oldName)
 		}
 		return fmt.Errorf("verify source endpoint %q: %w", oldName, err)
 	}
@@ -540,7 +539,7 @@ func (s *SQLiteStorage) RenameEndpoint(oldName string, ep *Endpoint) error {
 		return fmt.Errorf("verify destination endpoint %q: %w", newName, err)
 	}
 	if destinationCount != 0 {
-		return fmt.Errorf("destination endpoint %q already exists", newName)
+		return fmt.Errorf("%w: destination endpoint %q already exists", ErrEndpointNameConflict, newName)
 	}
 
 	if _, err := tx.Exec(`
