@@ -293,6 +293,7 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	}
 
 	oldName := name
+	currentEndpointName := h.proxy.GetCurrentEndpointName()
 
 	// Update fields
 	if newName := strings.TrimSpace(req.Name); newName != "" {
@@ -365,6 +366,9 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 			WriteError(w, status, message)
 			return
 		}
+		if currentEndpointName == oldName {
+			currentEndpointName = existing.Name
+		}
 	} else {
 		if err := h.storage.UpdateEndpoint(existing); err != nil {
 			logger.Error("Failed to update endpoint: %v", err)
@@ -374,7 +378,7 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	}
 
 	// Update proxy config
-	if err := h.reloadConfig(); err != nil {
+	if err := h.reloadConfigPreservingCurrentName(currentEndpointName); err != nil {
 		logger.Error("Failed to reload config: %v", err)
 	}
 
@@ -577,6 +581,10 @@ func (h *Handler) handleReorderEndpoints(w http.ResponseWriter, r *http.Request)
 
 // reloadConfig reloads the configuration from storage and updates the proxy
 func (h *Handler) reloadConfig() error {
+	return h.reloadConfigPreservingCurrentName(h.proxy.GetCurrentEndpointName())
+}
+
+func (h *Handler) reloadConfigPreservingCurrentName(name string) error {
 	adapter := storage.NewConfigStorageAdapter(h.storage)
 	cfg, err := config.LoadFromStorage(adapter)
 	if err != nil {
@@ -584,7 +592,7 @@ func (h *Handler) reloadConfig() error {
 	}
 
 	h.config = cfg
-	if err := h.proxy.UpdateConfig(cfg); err != nil {
+	if err := h.proxy.UpdateConfigPreservingCurrentName(cfg, name); err != nil {
 		return err
 	}
 	h.resetCodexAuthManager()
