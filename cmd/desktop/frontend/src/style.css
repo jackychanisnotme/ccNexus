@@ -2763,6 +2763,9 @@ body {
 .token-pool-more-menu.token-pool-more-menu-portal {
     position: fixed;
     right: auto;
+    width: max-content;
+    max-width: calc(100vw - 16px);
+    box-sizing: border-box;
     z-index: 10000;
 }
 

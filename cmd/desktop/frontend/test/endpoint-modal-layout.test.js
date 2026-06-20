@@ -140,6 +140,18 @@ describe('endpoint modal option layout', () => {
             cssSource,
             /\.token-pool-more-menu\.token-pool-more-menu-portal\s*{[^}]*position:\s*fixed;/s,
         );
+        assert.match(
+            cssSource,
+            /\.token-pool-more-menu\.token-pool-more-menu-portal\s*{[^}]*width:\s*max-content;/s,
+        );
+        assert.match(
+            cssSource,
+            /\.token-pool-more-menu\.token-pool-more-menu-portal\s*{[^}]*max-width:\s*calc\(100vw\s*-\s*16px\);/s,
+        );
+        assert.match(
+            cssSource,
+            /\.token-pool-more-menu\.token-pool-more-menu-portal\s*{[^}]*box-sizing:\s*border-box;/s,
+        );
     });
 
     it('adds an Agent Provider home button and modal controls', () => {
