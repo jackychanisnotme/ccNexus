@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -126,6 +127,88 @@ func TestUpdateEndpointRenamePreservesTokenPool(t *testing.T) {
 	}
 	if stored.Remark != remark {
 		t.Fatalf("stored endpoint remark = %q, want %q", stored.Remark, remark)
+	}
+}
+
+func TestUpdateEndpointRenameFailureLeavesLiveConfigAndProxyUnchanged(t *testing.T) {
+	const (
+		oldName       = "Codex Old"
+		storedName    = "Codex Legacy"
+		newName       = "Codex New"
+		updatedRemark = "should not reach live config"
+	)
+
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	storedEndpoint := storage.Endpoint{
+		Name:        storedName,
+		APIUrl:      config.CodexTokenPoolAPIURL,
+		AuthMode:    config.AuthModeCodexTokenPool,
+		Enabled:     true,
+		Transformer: config.CodexTokenPoolTransformer,
+		Model:       config.CodexTokenPoolDefaultModel,
+		SortOrder:   0,
+	}
+	if err := store.SaveEndpoint(&storedEndpoint); err != nil {
+		t.Fatalf("save endpoint: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        oldName,
+		APIUrl:      config.CodexTokenPoolAPIURL,
+		AuthMode:    config.AuthModeCodexTokenPool,
+		Enabled:     true,
+		Transformer: config.CodexTokenPoolTransformer,
+		Model:       config.CodexTokenPoolDefaultModel,
+	}})
+	p := proxy.New(cfg, nil, store, "test-device")
+	service := NewEndpointService(cfg, p, store)
+
+	err = service.UpdateEndpoint(
+		0,
+		newName,
+		config.CodexTokenPoolAPIURL,
+		"",
+		config.AuthModeCodexTokenPool,
+		config.CodexTokenPoolTransformer,
+		config.CodexTokenPoolDefaultModel,
+		config.ThinkingHigh,
+		"",
+		true,
+		updatedRemark,
+	)
+	if !errors.Is(err, storage.ErrEndpointNotFound) {
+		t.Fatalf("rename endpoint error = %v, want errors.Is(_, ErrEndpointNotFound)", err)
+	}
+
+	configEndpoints := cfg.GetEndpoints()
+	if len(configEndpoints) != 1 {
+		t.Fatalf("config endpoints = %#v, want one endpoint", configEndpoints)
+	}
+	if configEndpoints[0].Name != oldName {
+		t.Fatalf("config endpoint name = %q, want %q", configEndpoints[0].Name, oldName)
+	}
+	if configEndpoints[0].Remark == updatedRemark {
+		t.Fatalf("config endpoint remark = %q, want unchanged remark", configEndpoints[0].Remark)
+	}
+	if current := p.GetCurrentEndpointName(); current != oldName {
+		t.Fatalf("proxy current endpoint = %q, want %q", current, oldName)
+	}
+
+	storedEndpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get stored endpoints: %v", err)
+	}
+	if len(storedEndpoints) != 1 {
+		t.Fatalf("stored endpoints = %#v, want one endpoint", storedEndpoints)
+	}
+	if storedEndpoints[0].Name != storedName {
+		t.Fatalf("stored endpoint name = %q, want %q", storedEndpoints[0].Name, storedName)
 	}
 }
 

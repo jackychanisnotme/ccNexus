@@ -89,6 +89,36 @@ func NewEndpointService(cfg *config.Config, p *proxy.Proxy, s *storage.SQLiteSto
 	}
 }
 
+func cloneConfigForEndpointUpdate(cfg *config.Config, endpoints []config.Endpoint) *config.Config {
+	temp := config.DefaultConfig()
+	temp.Port = cfg.GetPort()
+	temp.ListenMode = cfg.GetListenMode()
+	temp.PortLocked = cfg.IsPortLocked()
+	temp.BasicAuthEnabled = cfg.GetBasicAuthEnabled()
+	temp.BasicAuthUsername = cfg.GetBasicAuthUsername()
+	temp.BasicAuthPassword = cfg.GetBasicAuthPassword()
+	temp.Endpoints = endpoints
+	temp.LogLevel = cfg.GetLogLevel()
+	temp.Language = cfg.GetLanguage()
+	temp.Theme = cfg.GetTheme()
+	temp.ThemeAuto = cfg.GetThemeAuto()
+	temp.AutoLightTheme = cfg.GetAutoLightTheme()
+	temp.AutoDarkTheme = cfg.GetAutoDarkTheme()
+	temp.WindowWidth, temp.WindowHeight = cfg.GetWindowSize()
+	temp.CloseWindowBehavior = cfg.GetCloseWindowBehavior()
+	temp.ClaudeNotificationEnabled, temp.ClaudeNotificationType = cfg.GetClaudeNotification()
+	temp.ModelsCacheTTL = cfg.ModelsCacheTTL
+	temp.ModelsCacheRefreshEnabled = cfg.ModelsCacheRefreshEnabled
+	temp.WebDAV = cfg.GetWebDAV()
+	temp.Backup = cfg.GetBackup()
+	temp.Update = cfg.Update
+	temp.Terminal = cfg.Terminal
+	temp.Proxy = cfg.GetProxy()
+	temp.CodexProxy = cfg.GetCodexProxy()
+	temp.Failover = cfg.GetFailover()
+	return temp
+}
+
 // normalizeAPIUrl ensures the API URL has the correct format
 func normalizeAPIUrl(apiUrl string) string {
 	return strings.TrimSuffix(apiUrl, "/")
@@ -283,13 +313,9 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 		preserveEndpointName = updatedEndpoint.Name
 	}
 
-	e.config.UpdateEndpoints(endpoints)
+	updatedConfig := cloneConfigForEndpointUpdate(e.config, endpoints)
 
-	if err := e.config.Validate(); err != nil {
-		return err
-	}
-
-	if err := e.proxy.UpdateConfigPreservingCurrentName(e.config, preserveEndpointName); err != nil {
+	if err := updatedConfig.Validate(); err != nil {
 		return err
 	}
 
@@ -313,9 +339,15 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 				return fmt.Errorf("failed to rename endpoint: %w", err)
 			}
 		}
-		if err := e.config.SaveToStorage(configAdapter); err != nil {
+		if err := updatedConfig.SaveToStorage(configAdapter); err != nil {
 			return fmt.Errorf("failed to save config: %w", err)
 		}
+	}
+
+	e.config.ReplaceWith(updatedConfig)
+
+	if err := e.proxy.UpdateConfigPreservingCurrentName(e.config, preserveEndpointName); err != nil {
+		return err
 	}
 
 	if oldName != name {
