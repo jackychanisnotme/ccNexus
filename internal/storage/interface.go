@@ -1,6 +1,15 @@
 package storage
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var (
+	ErrInvalidEndpointName  = errors.New("invalid endpoint name")
+	ErrEndpointNotFound     = errors.New("endpoint not found")
+	ErrEndpointNameConflict = errors.New("endpoint name conflict")
+)
 
 const (
 	ProviderTypeCodex       = "codex"
