@@ -29,6 +29,7 @@ class FakeElement {
     constructor(rect = {}) {
         this.children = [];
         this.classList = new FakeClassList();
+        this.listeners = new Map();
         this.parentElement = null;
         this.rect = rect;
         this.style = { left: '', top: '' };
@@ -63,6 +64,42 @@ class FakeElement {
 
     getBoundingClientRect() {
         return this.rect;
+    }
+
+    addEventListener(type, callback) {
+        const callbacks = this.listeners.get(type) || [];
+        callbacks.push(callback);
+        this.listeners.set(type, callbacks);
+    }
+
+    dispatch(type, event) {
+        (this.listeners.get(type) || []).forEach((callback) => callback(event));
+    }
+
+    closest(selector) {
+        const className = selector.startsWith('.') ? selector.slice(1) : '';
+        let element = this;
+        while (element) {
+            if (className && element.classList.contains(className)) {
+                return element;
+            }
+            element = element.parentElement;
+        }
+        return null;
+    }
+
+    querySelector(selector) {
+        const className = selector.startsWith('.') ? selector.slice(1) : '';
+        for (const child of this.children) {
+            if (className && child.classList.contains(className)) {
+                return child;
+            }
+            const match = child.querySelector(selector);
+            if (match) {
+                return match;
+            }
+        }
+        return null;
     }
 }
 
@@ -101,7 +138,8 @@ const filterEndpoints = (value) => value;
 const isFilterActive = () => false;
 const updateFilterStats = () => {};
 `;
-const endpointsSource = readFileSync(endpointsPath, 'utf8').replace(/^import .*;\s*$/gm, '');
+const endpointsSource = readFileSync(endpointsPath, 'utf8').replace(/^import .*;\s*$/gm, '')
+    + '\nexport { closeAllTokenPoolActionMenus, openTokenPoolActionMenu, bindTokenPoolMoreToggle };\n';
 const endpointsModule = await import(`data:text/javascript;base64,${Buffer.from(dependencyStubs + endpointsSource).toString('base64')}`);
 
 after(() => {
@@ -113,6 +151,9 @@ function createMenuFixture() {
     const wrap = new FakeElement();
     const button = new FakeElement({ top: 175, right: 315, bottom: 195 });
     const menu = new FakeElement({ width: 100, height: 60 });
+    wrap.classList.add('token-pool-more-wrap');
+    button.classList.add('token-pool-more-toggle');
+    menu.classList.add('token-pool-more-menu');
     body.appendChild(wrap);
     wrap.appendChild(button);
     wrap.appendChild(menu);
@@ -120,13 +161,24 @@ function createMenuFixture() {
 }
 
 describe('token pool action menu portal lifecycle', () => {
-    it('portals and positions the production menu helper above a bottom-edge trigger', () => {
-        const { openTokenPoolActionMenu, closeAllTokenPoolActionMenus } = endpointsModule;
-        assert.equal(typeof openTokenPoolActionMenu, 'function');
+    it('binds the production toggle click to portal and position its menu', () => {
+        const { bindTokenPoolMoreToggle, closeAllTokenPoolActionMenus } = endpointsModule;
         const { wrap, button, menu } = createMenuFixture();
+        let defaultPrevented = false;
+        let propagationStopped = false;
 
-        openTokenPoolActionMenu(button, menu, wrap);
+        bindTokenPoolMoreToggle(button);
+        button.dispatch('click', {
+            preventDefault() {
+                defaultPrevented = true;
+            },
+            stopPropagation() {
+                propagationStopped = true;
+            }
+        });
 
+        assert.equal(defaultPrevented, true);
+        assert.equal(propagationStopped, true);
         assert.equal(menu.parentElement, body);
         assert.equal(menu.classList.contains('show'), true);
         assert.equal(menu.classList.contains('token-pool-more-menu-portal'), true);

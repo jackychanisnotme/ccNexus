@@ -1434,7 +1434,7 @@ function renderTokenPoolRateLimits(rateLimits) {
     `;
 }
 
-export function closeAllTokenPoolActionMenus() {
+function closeAllTokenPoolActionMenus() {
     if (!tokenPoolOpenActionMenu) {
         return;
     }
@@ -1452,7 +1452,7 @@ export function closeAllTokenPoolActionMenus() {
     tokenPoolOpenActionMenu = null;
 }
 
-export function openTokenPoolActionMenu(button, menu, wrap) {
+function openTokenPoolActionMenu(button, menu, wrap) {
     closeAllTokenPoolActionMenus();
     document.body.appendChild(menu);
     menu.classList.add('show', 'token-pool-more-menu-portal');
@@ -1475,6 +1475,25 @@ export function openTokenPoolActionMenu(button, menu, wrap) {
     menu.style.left = `${left}px`;
     menu.style.top = `${Math.max(viewportMargin, top)}px`;
     tokenPoolOpenActionMenu = { menu, wrap };
+}
+
+function bindTokenPoolMoreToggle(button) {
+    const wrap = button.closest('.token-pool-more-wrap');
+    const menu = wrap?.querySelector('.token-pool-more-menu');
+    button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (!menu || !wrap) {
+            return;
+        }
+
+        if (tokenPoolOpenActionMenu?.menu === menu) {
+            closeAllTokenPoolActionMenus();
+        } else {
+            openTokenPoolActionMenu(button, menu, wrap);
+        }
+    });
 }
 
 document.addEventListener('click', closeAllTokenPoolActionMenus);
@@ -1572,22 +1591,7 @@ async function loadTokenPoolData(index) {
     });
 
     bodyEl.querySelectorAll('.token-pool-more-toggle').forEach((button) => {
-        const wrap = button.closest('.token-pool-more-wrap');
-        const menu = wrap?.querySelector('.token-pool-more-menu');
-        button.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-
-            if (!menu || !wrap) {
-                return;
-            }
-
-            if (tokenPoolOpenActionMenu?.menu === menu) {
-                closeAllTokenPoolActionMenus();
-            } else {
-                openTokenPoolActionMenu(button, menu, wrap);
-            }
-        });
+        bindTokenPoolMoreToggle(button);
     });
 
     bodyEl.querySelectorAll('.token-pool-more-menu').forEach((menu) => {
