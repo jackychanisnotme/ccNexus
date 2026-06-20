@@ -1515,6 +1515,7 @@ async function loadTokenPoolData(index) {
         return;
     }
 
+    closeAllTokenPoolActionMenus();
     const modal = ensureTokenPoolModal();
     setTokenPoolHint(modal, t('tokenPool.loading'));
     const raw = await window.go.main.App.GetEndpointCredentials(index);
@@ -1549,7 +1550,6 @@ async function loadTokenPoolData(index) {
     const bodyEl = modal.querySelector('#tokenPoolTableBody');
     const mode = getTokenPoolManagerMode(index);
     statsEl.innerHTML = renderTokenPoolStats(stats);
-    closeAllTokenPoolActionMenus();
     bodyEl.innerHTML = renderTokenPoolRows(credentials, { mode });
     setTokenPoolHint(modal, '');
 

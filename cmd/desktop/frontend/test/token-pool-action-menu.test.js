@@ -101,6 +101,10 @@ class FakeElement {
         }
         return null;
     }
+
+    querySelectorAll() {
+        return [];
+    }
 }
 
 function createEventTarget(properties = {}) {
@@ -139,7 +143,7 @@ const isFilterActive = () => false;
 const updateFilterStats = () => {};
 `;
 const endpointsSource = readFileSync(endpointsPath, 'utf8').replace(/^import .*;\s*$/gm, '')
-    + '\nexport { closeAllTokenPoolActionMenus, openTokenPoolActionMenu, bindTokenPoolMoreToggle };\n';
+    + '\nexport { closeAllTokenPoolActionMenus, openTokenPoolActionMenu, bindTokenPoolMoreToggle, loadTokenPoolData };\n';
 const endpointsModule = await import(`data:text/javascript;base64,${Buffer.from(dependencyStubs + endpointsSource).toString('base64')}`);
 
 after(() => {
@@ -158,6 +162,22 @@ function createMenuFixture() {
     wrap.appendChild(button);
     wrap.appendChild(menu);
     return { wrap, button, menu };
+}
+
+function installTokenPoolLoadFixture(getEndpointCredentials) {
+    const hint = new FakeElement();
+    const stats = new FakeElement();
+    const tableBody = new FakeElement();
+    const modal = new FakeElement();
+    modal.dataset = { language: 'en' };
+    modal.querySelector = (selector) => ({
+        '#tokenPoolHint': hint,
+        '#tokenPoolStats': stats,
+        '#tokenPoolTableBody': tableBody
+    })[selector] || null;
+    document.getElementById = (id) => id === 'tokenPoolModal' ? modal : null;
+    window.go = { main: { App: { GetEndpointCredentials: getEndpointCredentials } } };
+    window.config = { endpoints: [] };
 }
 
 describe('token pool action menu portal lifecycle', () => {
@@ -222,5 +242,48 @@ describe('token pool action menu portal lifecycle', () => {
         assert.equal(menu.classList.contains('show'), false);
         assert.equal(menu.style.left, '');
         assert.equal(menu.style.top, '');
+    });
+
+    it('closes an open menu synchronously when token pool refresh starts', async () => {
+        const { loadTokenPoolData, openTokenPoolActionMenu } = endpointsModule;
+        const { wrap, button, menu } = createMenuFixture();
+        let resolveCredentials;
+        const credentialsPending = new Promise((resolve) => {
+            resolveCredentials = resolve;
+        });
+        installTokenPoolLoadFixture(() => credentialsPending);
+        openTokenPoolActionMenu(button, menu, wrap);
+
+        const loadPending = loadTokenPoolData(0);
+
+        try {
+            assert.equal(menu.parentElement, wrap);
+            assert.equal(menu.classList.contains('show'), false);
+            assert.equal(menu.classList.contains('token-pool-more-menu-portal'), false);
+        } finally {
+            resolveCredentials({ success: true, data: { credentials: [], stats: {} } });
+            await loadPending;
+            wrap.remove();
+        }
+    });
+
+    it('closes an open menu before a rejected credential request settles', async () => {
+        const { loadTokenPoolData, openTokenPoolActionMenu } = endpointsModule;
+        const { wrap, button, menu } = createMenuFixture();
+        const requestError = new Error('credentials unavailable');
+        installTokenPoolLoadFixture(() => Promise.reject(requestError));
+        openTokenPoolActionMenu(button, menu, wrap);
+
+        const loadPending = loadTokenPoolData(0);
+        const rejection = assert.rejects(loadPending, requestError);
+
+        try {
+            assert.equal(menu.parentElement, wrap);
+            assert.equal(menu.classList.contains('show'), false);
+            assert.equal(menu.classList.contains('token-pool-more-menu-portal'), false);
+        } finally {
+            await rejection;
+            wrap.remove();
+        }
     });
 });
