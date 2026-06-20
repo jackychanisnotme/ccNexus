@@ -3,8 +3,10 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -159,6 +161,65 @@ func TestEndpointAPIRenameRejectsActiveCollision(t *testing.T) {
 	}
 }
 
+func TestClassifyEndpointRenameError(t *testing.T) {
+	tests := []struct {
+		name           string
+		err            error
+		wantStatus     int
+		wantMessage    string
+		forbiddenTexts []string
+	}{
+		{
+			name:        "destination conflict",
+			err:         errors.New(`destination endpoint "Destination" already exists`),
+			wantStatus:  http.StatusConflict,
+			wantMessage: "Endpoint with this name already exists",
+		},
+		{
+			name:        "source missing",
+			err:         errors.New(`source endpoint "Missing" not found`),
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "Endpoint not found",
+		},
+		{
+			name:        "validation error",
+			err:         errors.New("new endpoint name is required"),
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "Invalid endpoint name",
+		},
+		{
+			name:        "same names validation error",
+			err:         errors.New("endpoint rename requires different names"),
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "Invalid endpoint name",
+		},
+		{
+			name:           "internal database error",
+			err:            errors.New(`commit endpoint rename transaction: database is locked; table endpoint_credentials`),
+			wantStatus:     http.StatusInternalServerError,
+			wantMessage:    "Failed to rename endpoint",
+			forbiddenTexts: []string{"database is locked", "endpoint_credentials"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, message := classifyEndpointRenameError(tt.err)
+			if status != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", status, tt.wantStatus)
+			}
+			if message != tt.wantMessage {
+				t.Fatalf("message = %q, want %q", message, tt.wantMessage)
+			}
+			for _, forbidden := range tt.forbiddenTexts {
+				if strings.Contains(message, forbidden) {
+					t.Fatalf("message %q exposes forbidden text %q", message, forbidden)
+				}
+			}
+		})
+	}
+}
+
 func TestEndpointAPIProxyURLPersistsThroughCreateUpdateAndClone(t *testing.T) {
 	store := newAPITestStorage(t)
 	cfg := config.DefaultConfig()
@@ -182,7 +243,7 @@ func TestEndpointAPIProxyURLPersistsThroughCreateUpdateAndClone(t *testing.T) {
 	}
 
 	postJSON(t, handler, http.MethodPut, "/api/endpoints/Source", map[string]any{
-		"name":        "",
+		"name":        "Source",
 		"apiUrl":      "https://api.example.com",
 		"authMode":    config.AuthModeAPIKey,
 		"enabled":     true,
