@@ -142,7 +142,7 @@ describe('endpoint modal option layout', () => {
         );
         assert.match(
             cssSource,
-            /\.token-pool-more-menu\.token-pool-more-menu-portal\s*{[^}]*width:\s*max-content;/s,
+            /\.token-pool-more-menu\.token-pool-more-menu-portal\s*{[^}]*width:\s*160px;/s,
         );
         assert.match(
             cssSource,
