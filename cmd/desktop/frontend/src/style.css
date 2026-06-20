@@ -2760,6 +2760,12 @@ body {
     display: block;
 }
 
+.token-pool-more-menu.token-pool-more-menu-portal {
+    position: fixed;
+    right: auto;
+    z-index: 10000;
+}
+
 .token-pool-more-menu button {
     width: 100%;
     border: none;

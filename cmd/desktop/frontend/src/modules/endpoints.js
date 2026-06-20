@@ -101,6 +101,7 @@ let tokenPoolAuthPollTimer = null;
 let tokenPoolAuthCountdownTimer = null;
 let tokenPoolAuthLoginID = '';
 let tokenPoolAuthPending = false;
+let tokenPoolOpenActionMenu = null;
 let currentEndpointName = '';
 let endpointRuntimeStatuses = {};
 let endpointActiveCounts = {};
@@ -594,6 +595,7 @@ function ensureTokenPoolModal() {
     document.body.appendChild(modal);
 
     const closeModal = () => {
+        closeAllTokenPoolActionMenus();
         modal.classList.remove('active');
     };
 
@@ -603,7 +605,7 @@ function ensureTokenPoolModal() {
         }
     });
     modal.querySelector('.modal-body')?.addEventListener('click', () => {
-        closeAllTokenPoolActionMenus(modal);
+        closeAllTokenPoolActionMenus();
     });
     modal.querySelector('#tokenPoolCloseBtn').addEventListener('click', closeModal);
     modal.querySelector('#tokenPoolImportBtn').addEventListener('click', handleTokenPoolImport);
@@ -1432,11 +1434,52 @@ function renderTokenPoolRateLimits(rateLimits) {
     `;
 }
 
-function closeAllTokenPoolActionMenus(scope = document) {
-    scope.querySelectorAll('.token-pool-more-menu.show').forEach((menu) => {
-        menu.classList.remove('show');
-    });
+function closeAllTokenPoolActionMenus() {
+    if (!tokenPoolOpenActionMenu) {
+        return;
+    }
+
+    const { menu, wrap } = tokenPoolOpenActionMenu;
+    menu.classList.remove('show');
+    menu.classList.remove('token-pool-more-menu-portal');
+    menu.style.left = '';
+    menu.style.top = '';
+    if (wrap.isConnected) {
+        wrap.appendChild(menu);
+    } else {
+        menu.remove();
+    }
+    tokenPoolOpenActionMenu = null;
 }
+
+function openTokenPoolActionMenu(button, menu, wrap) {
+    closeAllTokenPoolActionMenus();
+    document.body.appendChild(menu);
+    menu.classList.add('show', 'token-pool-more-menu-portal');
+
+    const triggerRect = button.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const viewportMargin = 8;
+    const left = Math.max(
+        viewportMargin,
+        Math.min(
+            Math.max(viewportMargin, triggerRect.right - menuRect.width),
+            window.innerWidth - menuRect.width - viewportMargin
+        )
+    );
+    let top = triggerRect.bottom + 4;
+    if (top + menuRect.height > window.innerHeight - viewportMargin) {
+        top = triggerRect.top - menuRect.height - 4;
+    }
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${Math.max(viewportMargin, top)}px`;
+    tokenPoolOpenActionMenu = { menu, wrap };
+}
+
+document.addEventListener('click', closeAllTokenPoolActionMenus);
+window.addEventListener('scroll', closeAllTokenPoolActionMenus, true);
+window.addEventListener('resize', closeAllTokenPoolActionMenus);
 
 function setTokenPoolHint(modal, text) {
     const hintEl = modal.querySelector('#tokenPoolHint');
@@ -1487,6 +1530,7 @@ async function loadTokenPoolData(index) {
     const bodyEl = modal.querySelector('#tokenPoolTableBody');
     const mode = getTokenPoolManagerMode(index);
     statsEl.innerHTML = renderTokenPoolStats(stats);
+    closeAllTokenPoolActionMenus();
     bodyEl.innerHTML = renderTokenPoolRows(credentials, { mode });
     setTokenPoolHint(modal, '');
 
@@ -1507,7 +1551,7 @@ async function loadTokenPoolData(index) {
                 showNotification(tt('tokenPool.failed', { error: message }), 'error');
                 await loadTokenPoolData(tokenPoolCurrentIndex);
             }
-            closeAllTokenPoolActionMenus(bodyEl);
+            closeAllTokenPoolActionMenus();
         });
     });
 
@@ -1528,20 +1572,20 @@ async function loadTokenPoolData(index) {
     });
 
     bodyEl.querySelectorAll('.token-pool-more-toggle').forEach((button) => {
+        const wrap = button.closest('.token-pool-more-wrap');
+        const menu = wrap?.querySelector('.token-pool-more-menu');
         button.addEventListener('click', (event) => {
             event.preventDefault();
             event.stopPropagation();
 
-            const wrap = button.closest('.token-pool-more-wrap');
-            const menu = wrap?.querySelector('.token-pool-more-menu');
-            if (!menu) {
+            if (!menu || !wrap) {
                 return;
             }
 
-            const shouldOpen = !menu.classList.contains('show');
-            closeAllTokenPoolActionMenus(bodyEl);
-            if (shouldOpen) {
-                menu.classList.add('show');
+            if (tokenPoolOpenActionMenu?.menu === menu) {
+                closeAllTokenPoolActionMenus();
+            } else {
+                openTokenPoolActionMenu(button, menu, wrap);
             }
         });
     });
@@ -1549,6 +1593,7 @@ async function loadTokenPoolData(index) {
     bodyEl.querySelectorAll('.token-pool-more-menu').forEach((menu) => {
         menu.addEventListener('click', (event) => {
             event.stopPropagation();
+            closeAllTokenPoolActionMenus();
         });
     });
 
@@ -1575,12 +1620,12 @@ async function loadTokenPoolData(index) {
             event.preventDefault();
             event.stopPropagation();
             const credentialID = String(button.dataset.id || '');
-            const row = button.closest('tr');
+            const row = tokenPoolOpenActionMenu?.wrap.closest('tr') || button.closest('tr');
             const accountText = row?.querySelector('td code')?.textContent?.trim() || '';
             const label = accountText || '';
             const usage = tokenPoolUsageCache.get(credentialID) || null;
             showTokenPoolUsageDialog(label, usage);
-            closeAllTokenPoolActionMenus(bodyEl);
+            closeAllTokenPoolActionMenus();
         });
     });
 
@@ -1606,7 +1651,7 @@ async function loadTokenPoolData(index) {
                 const message = error?.message || String(error);
                 showNotification(tt('tokenPool.failed', { error: message }), 'error');
             }
-            closeAllTokenPoolActionMenus(bodyEl);
+            closeAllTokenPoolActionMenus();
         });
     });
 
@@ -1617,7 +1662,7 @@ async function loadTokenPoolData(index) {
                 showNotification(t('tokenPool.invalidCredentialId'), 'error');
                 return;
             }
-            const row = button.closest('tr');
+            const row = tokenPoolOpenActionMenu?.wrap.closest('tr') || button.closest('tr');
             const accountText = row?.querySelector('td code')?.textContent?.trim() || '';
             const label = accountText ? `${accountText} (#${credentialID})` : `#${credentialID}`;
             const modal = ensureTokenPoolModal();
@@ -1644,7 +1689,7 @@ async function loadTokenPoolData(index) {
                 showNotification(localized, 'error');
                 setTokenPoolHint(modal, localized);
             } finally {
-                closeAllTokenPoolActionMenus(bodyEl);
+                closeAllTokenPoolActionMenus();
             }
         });
     });
@@ -1656,7 +1701,7 @@ async function loadTokenPoolData(index) {
                 showNotification(t('tokenPool.invalidCredentialId'), 'error');
                 return;
             }
-            const row = button.closest('tr');
+            const row = tokenPoolOpenActionMenu?.wrap.closest('tr') || button.closest('tr');
             const accountText = row?.querySelector('td code')?.textContent?.trim() || '';
             const label = accountText ? `${accountText} (#${credentialID})` : `#${credentialID}`;
             const modal = ensureTokenPoolModal();
@@ -1677,7 +1722,7 @@ async function loadTokenPoolData(index) {
                 setTokenPoolHint(modal, localized);
                 await loadTokenPoolData(tokenPoolCurrentIndex);
             } finally {
-                closeAllTokenPoolActionMenus(bodyEl);
+                closeAllTokenPoolActionMenus();
             }
         });
     });
@@ -1711,7 +1756,7 @@ async function loadTokenPoolData(index) {
                 });
                 showNotification(tt('tokenPool.failed', { error: message }), 'error');
             }
-            closeAllTokenPoolActionMenus(bodyEl);
+            closeAllTokenPoolActionMenus();
         });
     });
 }
