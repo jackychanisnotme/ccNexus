@@ -110,6 +110,80 @@ func TestEndpointAPIRenamePreservesTokenPool(t *testing.T) {
 	}
 }
 
+func TestEndpointAPIRenamePreservesCurrentEndpoint(t *testing.T) {
+	const (
+		firstName   = "First"
+		oldName     = "Second"
+		newName     = "Renamed"
+		secondURL   = "https://second.example.com"
+		secondKey   = "second-key"
+		secondModel = "second-model"
+	)
+
+	store := newAPITestStorage(t)
+	cfg := config.DefaultConfig()
+	cfg.BasicAuthEnabled = false
+	proxyInstance := proxy.New(cfg, nil, store, "test-device")
+	handler := NewHandler(cfg, proxyInstance, store)
+
+	saveAPITestEndpoint(t, store, storage.Endpoint{
+		Name:        firstName,
+		APIUrl:      "https://first.example.com",
+		APIKey:      "first-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "first-model",
+		SortOrder:   0,
+	})
+	saveAPITestEndpoint(t, store, storage.Endpoint{
+		Name:        oldName,
+		APIUrl:      secondURL,
+		APIKey:      secondKey,
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       secondModel,
+		SortOrder:   1,
+	})
+	if err := handler.reloadConfig(); err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if err := proxyInstance.SetCurrentEndpoint(oldName); err != nil {
+		t.Fatalf("set current endpoint: %v", err)
+	}
+
+	postJSON(t, handler, http.MethodPut, "/api/endpoints/"+oldName, map[string]any{
+		"name":        newName,
+		"apiUrl":      secondURL,
+		"apiKey":      secondKey,
+		"authMode":    config.AuthModeAPIKey,
+		"enabled":     true,
+		"transformer": "openai",
+		"model":       secondModel,
+	})
+
+	if got := proxyInstance.GetCurrentEndpointName(); got != newName {
+		t.Fatalf("proxy current endpoint = %q, want renamed endpoint %q", got, newName)
+	}
+	renamed := mustGetStoredEndpoint(t, store, newName)
+	if renamed.APIUrl != secondURL || renamed.APIKey != secondKey || renamed.Model != secondModel {
+		t.Fatalf("stored renamed endpoint = %#v", renamed)
+	}
+	foundRenamed := false
+	for _, endpoint := range handler.config.GetEndpoints() {
+		if endpoint.Name == oldName {
+			t.Fatalf("config still contains old endpoint name %q", oldName)
+		}
+		if endpoint.Name == newName {
+			foundRenamed = true
+		}
+	}
+	if !foundRenamed {
+		t.Fatalf("config endpoints = %#v, want renamed endpoint %q", handler.config.GetEndpoints(), newName)
+	}
+}
+
 func TestEndpointAPIRenameRejectsActiveCollision(t *testing.T) {
 	store := newAPITestStorage(t)
 	cfg := config.DefaultConfig()
