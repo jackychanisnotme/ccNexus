@@ -495,6 +495,199 @@ func (s *SQLiteStorage) UpdateEndpoint(ep *Endpoint) error {
 	return err
 }
 
+func (s *SQLiteStorage) RenameEndpoint(oldName string, ep *Endpoint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if ep == nil {
+		return fmt.Errorf("endpoint is required")
+	}
+	oldName = strings.TrimSpace(oldName)
+	newName := strings.TrimSpace(ep.Name)
+	if oldName == "" {
+		return fmt.Errorf("old endpoint name is required")
+	}
+	if newName == "" {
+		return fmt.Errorf("new endpoint name is required")
+	}
+	if oldName == newName {
+		return fmt.Errorf("endpoint rename requires different names")
+	}
+	ep.Name = newName
+	normalizeEndpointAuthMode(ep)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin endpoint rename transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var sourceID int64
+	if err := tx.QueryRow(`SELECT id FROM endpoints WHERE name=?`, oldName).Scan(&sourceID); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("source endpoint %q not found", oldName)
+		}
+		return fmt.Errorf("verify source endpoint %q: %w", oldName, err)
+	}
+
+	var destinationCount int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM endpoints WHERE name=?`, newName).Scan(&destinationCount); err != nil {
+		return fmt.Errorf("verify destination endpoint %q: %w", newName, err)
+	}
+	if destinationCount != 0 {
+		return fmt.Errorf("destination endpoint %q already exists", newName)
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO daily_stats (
+			endpoint_name, date, requests, errors, input_tokens, output_tokens, device_id, client_ip, created_at
+		)
+		SELECT ?, date, requests, errors, input_tokens, output_tokens, device_id, client_ip, created_at
+		FROM daily_stats
+		WHERE endpoint_name=?
+		ON CONFLICT(endpoint_name, date, device_id, client_ip) DO UPDATE SET
+			requests=daily_stats.requests + excluded.requests,
+			errors=daily_stats.errors + excluded.errors,
+			input_tokens=daily_stats.input_tokens + excluded.input_tokens,
+			output_tokens=daily_stats.output_tokens + excluded.output_tokens
+	`, newName, oldName); err != nil {
+		return fmt.Errorf("merge endpoint history from %q to %q: %w", oldName, newName, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM daily_stats WHERE endpoint_name=?`, oldName); err != nil {
+		return fmt.Errorf("remove source endpoint history %q: %w", oldName, err)
+	}
+
+	if _, err := tx.Exec(`UPDATE endpoint_credentials SET endpoint_name=? WHERE endpoint_name=?`, newName, oldName); err != nil {
+		return fmt.Errorf("rename endpoint credentials from %q to %q: %w", oldName, newName, err)
+	}
+	if _, err := tx.Exec(`UPDATE credential_usage SET endpoint_name=? WHERE endpoint_name=?`, newName, oldName); err != nil {
+		return fmt.Errorf("rename credential usage from %q to %q: %w", oldName, newName, err)
+	}
+
+	type runtimeStatusRow struct {
+		endpointName          string
+		lastSuccessAt         sql.NullTime
+		lastFailureAt         sql.NullTime
+		lastFailureReason     sql.NullString
+		lastFailureStatusCode sql.NullInt64
+		lastAttemptAt         sql.NullTime
+		updatedAt             sql.NullTime
+	}
+
+	statusRows, err := tx.Query(`
+		SELECT endpoint_name, last_success_at, last_failure_at, last_failure_reason,
+			last_failure_status_code, last_attempt_at, updated_at
+		FROM endpoint_runtime_status
+		WHERE endpoint_name IN (?, ?)
+	`, oldName, newName)
+	if err != nil {
+		return fmt.Errorf("load endpoint runtime statuses: %w", err)
+	}
+	var sourceStatus, destinationStatus *runtimeStatusRow
+	for statusRows.Next() {
+		var status runtimeStatusRow
+		if err := statusRows.Scan(
+			&status.endpointName,
+			&status.lastSuccessAt,
+			&status.lastFailureAt,
+			&status.lastFailureReason,
+			&status.lastFailureStatusCode,
+			&status.lastAttemptAt,
+			&status.updatedAt,
+		); err != nil {
+			statusRows.Close()
+			return fmt.Errorf("scan endpoint runtime status: %w", err)
+		}
+		if status.endpointName == oldName {
+			sourceStatus = &status
+		} else {
+			destinationStatus = &status
+		}
+	}
+	if err := statusRows.Err(); err != nil {
+		statusRows.Close()
+		return fmt.Errorf("iterate endpoint runtime statuses: %w", err)
+	}
+	if err := statusRows.Close(); err != nil {
+		return fmt.Errorf("close endpoint runtime statuses: %w", err)
+	}
+
+	if sourceStatus != nil {
+		winner := sourceStatus
+		if destinationStatus != nil &&
+			destinationStatus.updatedAt.Valid &&
+			(!sourceStatus.updatedAt.Valid || destinationStatus.updatedAt.Time.After(sourceStatus.updatedAt.Time)) {
+			winner = destinationStatus
+		}
+		if _, err := tx.Exec(
+			`DELETE FROM endpoint_runtime_status WHERE endpoint_name IN (?, ?)`,
+			oldName,
+			newName,
+		); err != nil {
+			return fmt.Errorf("remove endpoint runtime statuses: %w", err)
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO endpoint_runtime_status (
+				endpoint_name, last_success_at, last_failure_at, last_failure_reason,
+				last_failure_status_code, last_attempt_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`,
+			newName,
+			winner.lastSuccessAt,
+			winner.lastFailureAt,
+			winner.lastFailureReason,
+			winner.lastFailureStatusCode,
+			winner.lastAttemptAt,
+			winner.updatedAt,
+		); err != nil {
+			return fmt.Errorf("store merged endpoint runtime status: %w", err)
+		}
+	}
+
+	result, err := tx.Exec(`
+		UPDATE endpoints SET
+			name=?, api_url=?, api_key=?, auth_mode=?, enabled=?, transformer=?, model=?,
+			thinking=?, force_stream=?, proxy_url=?, remark=?, sort_order=?, updated_at=CURRENT_TIMESTAMP
+		WHERE name=?
+	`,
+		newName,
+		ep.APIUrl,
+		ep.APIKey,
+		ep.AuthMode,
+		ep.Enabled,
+		ep.Transformer,
+		ep.Model,
+		ep.Thinking,
+		ep.ForceStream,
+		ep.ProxyURL,
+		ep.Remark,
+		ep.SortOrder,
+		oldName,
+	)
+	if err != nil {
+		return fmt.Errorf("rename endpoint from %q to %q: %w", oldName, newName, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check renamed endpoint row: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("rename endpoint from %q to %q affected %d rows, want 1", oldName, newName, affected)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit endpoint rename from %q to %q: %w", oldName, newName, err)
+	}
+	committed = true
+	ep.ID = sourceID
+	return nil
+}
+
 func (s *SQLiteStorage) DeleteEndpoint(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
