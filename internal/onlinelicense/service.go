@@ -37,6 +37,7 @@ type Store interface {
 	GetCard(id int64) (*CardRecord, error)
 	ListCards() ([]CardRecord, error)
 	DisableCard(id int64, now time.Time) error
+	DeleteCard(id int64) error
 	ActivateCard(cardHash, deviceID string, now time.Time, platform, appVersion, ipAddress string) (*ActivationRecord, error)
 	ActiveActivationCount(cardID int64) (int, error)
 	FindActivation(cardID int64, deviceID string) (*ActivationRecord, error)
@@ -47,6 +48,7 @@ type Store interface {
 	TouchActivation(id int64, now time.Time, platform, appVersion, ipAddress string) error
 	DisableActivation(id int64, now time.Time) error
 	AddAudit(action, targetType string, targetID int64, detail string, now time.Time) error
+	ListAudit(limit int) ([]AuditRecord, error)
 }
 
 type Service struct {
@@ -61,6 +63,7 @@ type ticketPayload struct {
 	LicenseID    int64     `json:"licenseId"`
 	ActivationID int64     `json:"activationId"`
 	DeviceID     string    `json:"deviceId"`
+	Plan         Plan      `json:"plan"`
 	ExpiresAt    time.Time `json:"expiresAt"`
 	NextCheckAt  time.Time `json:"nextCheckAt"`
 	GraceUntil   time.Time `json:"graceUntil"`
@@ -196,6 +199,7 @@ func (s *Service) Refresh(req RefreshRequest) (*ActivationResult, error) {
 		return nil, err
 	}
 	activation.LastCheckedAt = now
+	_ = s.store.AddAudit("refresh", "activation", activation.ID, payload.DeviceID, now)
 	return s.resultFor(activation, now, "license refreshed")
 }
 
@@ -222,6 +226,7 @@ func (s *Service) VerifyTicket(ticket, deviceID string, now time.Time) (*TicketS
 		LicenseID:    payload.LicenseID,
 		ActivationID: payload.ActivationID,
 		DeviceID:     payload.DeviceID,
+		Plan:         payload.Plan,
 		ExpiresAt:    payload.ExpiresAt,
 		NextCheckAt:  payload.NextCheckAt,
 		GraceUntil:   payload.GraceUntil,
@@ -237,6 +242,10 @@ func (s *Service) ListActivations() ([]ActivationRecord, error) {
 	return s.store.ListActivations()
 }
 
+func (s *Service) ListAudit() ([]AuditRecord, error) {
+	return s.store.ListAudit(200)
+}
+
 func (s *Service) DisableCard(id int64) error {
 	now := s.currentTime()
 	if err := s.store.DisableCard(id, now); err != nil {
@@ -245,12 +254,27 @@ func (s *Service) DisableCard(id int64) error {
 	return s.store.AddAudit("disable_card", "card", id, "", now)
 }
 
+func (s *Service) DeleteCard(id int64) error {
+	now := s.currentTime()
+	if err := s.store.DeleteCard(id); err != nil {
+		if errors.Is(err, ErrInvalidCard) {
+			return err
+		}
+		return err
+	}
+	return s.store.AddAudit("delete_card", "card", id, "", now)
+}
+
 func (s *Service) DisableActivation(id int64) error {
 	now := s.currentTime()
 	if err := s.store.DisableActivation(id, now); err != nil {
 		return err
 	}
 	return s.store.AddAudit("disable_activation", "activation", id, "", now)
+}
+
+func (s *Service) RecordAudit(action, targetType string, targetID int64, detail string) error {
+	return s.store.AddAudit(strings.TrimSpace(action), strings.TrimSpace(targetType), targetID, strings.TrimSpace(detail), s.currentTime())
 }
 
 func ResolveDurationDays(plan Plan, customDays int) (int, error) {
@@ -309,17 +333,26 @@ func (s *Service) resultFor(activation *ActivationRecord, now time.Time, message
 	if err != nil {
 		return nil, err
 	}
+	remainingDays := 0
+	if activation.ExpiresAt.After(now) {
+		remainingDays = int(activation.ExpiresAt.Sub(now).Hours() / 24)
+		if activation.ExpiresAt.Sub(now)%(24*time.Hour) > 0 {
+			remainingDays++
+		}
+	}
 	return &ActivationResult{
-		Licensed:     now.Before(activation.ExpiresAt) || now.Equal(activation.ExpiresAt),
-		LicenseID:    activation.CardID,
-		ActivationID: activation.ID,
-		DeviceID:     activation.DeviceID,
-		Status:       activation.Status,
-		ExpiresAt:    payload.ExpiresAt,
-		NextCheckAt:  payload.NextCheckAt,
-		GraceUntil:   payload.GraceUntil,
-		Ticket:       ticket,
-		Message:      message,
+		Licensed:      now.Before(activation.ExpiresAt) || now.Equal(activation.ExpiresAt),
+		LicenseID:     activation.CardID,
+		ActivationID:  activation.ID,
+		DeviceID:      activation.DeviceID,
+		Plan:          payload.Plan,
+		Status:        activation.Status,
+		ExpiresAt:     payload.ExpiresAt,
+		RemainingDays: remainingDays,
+		NextCheckAt:   payload.NextCheckAt,
+		GraceUntil:    payload.GraceUntil,
+		Ticket:        ticket,
+		Message:       message,
 	}, nil
 }
 
@@ -327,23 +360,28 @@ func (s *Service) signTicket(activation *ActivationRecord, now time.Time) (strin
 	if len(s.privateKey) != ed25519.PrivateKeySize {
 		return "", ticketPayload{}, fmt.Errorf("license private key is not configured")
 	}
+	card, err := s.store.GetCard(activation.CardID)
+	if err != nil {
+		return "", ticketPayload{}, err
+	}
 	payload := ticketPayload{
 		Product:      ProductCCNexusPro,
 		LicenseID:    activation.CardID,
 		ActivationID: activation.ID,
 		DeviceID:     activation.DeviceID,
+		Plan:         card.Plan,
 		ExpiresAt:    activation.ExpiresAt.UTC(),
 		NextCheckAt:  now.Add(nextCheckInterval).UTC(),
 		GraceUntil:   now.Add(offlineGracePeriod).UTC(),
 		IssuedAt:     now.UTC(),
 	}
-	canonical, err := canonicalTicket(payload)
+	canonicalVariants, err := canonicalTicketVariants(payload)
 	if err != nil {
 		return "", ticketPayload{}, err
 	}
 	envelope := ticketEnvelope{
 		Payload:   payload,
-		Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(s.privateKey, canonical)),
+		Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(s.privateKey, canonicalVariants[0])),
 	}
 	raw, err := json.Marshal(envelope)
 	if err != nil {
@@ -368,18 +406,36 @@ func (s *Service) decodeAndVerifyTicket(ticket string) (*ticketPayload, error) {
 	if err != nil {
 		return nil, ErrInvalidTicket
 	}
-	canonical, err := canonicalTicket(envelope.Payload)
+	canonicalVariants, err := canonicalTicketVariants(envelope.Payload)
 	if err != nil {
 		return nil, err
 	}
-	if !ed25519.Verify(s.publicKey, canonical, signature) {
+	verified := false
+	for _, canonical := range canonicalVariants {
+		if ed25519.Verify(s.publicKey, canonical, signature) {
+			verified = true
+			break
+		}
+	}
+	if !verified {
 		return nil, ErrInvalidTicket
 	}
 	return &envelope.Payload, nil
 }
 
-func canonicalTicket(payload ticketPayload) ([]byte, error) {
+func canonicalTicketVariants(payload ticketPayload) ([][]byte, error) {
 	type canonical struct {
+		Product      string `json:"product"`
+		LicenseID    int64  `json:"licenseId"`
+		ActivationID int64  `json:"activationId"`
+		DeviceID     string `json:"deviceId"`
+		Plan         Plan   `json:"plan"`
+		ExpiresAt    string `json:"expiresAt"`
+		NextCheckAt  string `json:"nextCheckAt"`
+		GraceUntil   string `json:"graceUntil"`
+		IssuedAt     string `json:"issuedAt"`
+	}
+	type legacyCanonical struct {
 		Product      string `json:"product"`
 		LicenseID    int64  `json:"licenseId"`
 		ActivationID int64  `json:"activationId"`
@@ -389,7 +445,21 @@ func canonicalTicket(payload ticketPayload) ([]byte, error) {
 		GraceUntil   string `json:"graceUntil"`
 		IssuedAt     string `json:"issuedAt"`
 	}
-	return json.Marshal(canonical{
+	current, err := json.Marshal(canonical{
+		Product:      payload.Product,
+		LicenseID:    payload.LicenseID,
+		ActivationID: payload.ActivationID,
+		DeviceID:     payload.DeviceID,
+		Plan:         payload.Plan,
+		ExpiresAt:    payload.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		NextCheckAt:  payload.NextCheckAt.UTC().Format(time.RFC3339Nano),
+		GraceUntil:   payload.GraceUntil.UTC().Format(time.RFC3339Nano),
+		IssuedAt:     payload.IssuedAt.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return nil, err
+	}
+	legacy, err := json.Marshal(legacyCanonical{
 		Product:      payload.Product,
 		LicenseID:    payload.LicenseID,
 		ActivationID: payload.ActivationID,
@@ -399,6 +469,10 @@ func canonicalTicket(payload ticketPayload) ([]byte, error) {
 		GraceUntil:   payload.GraceUntil.UTC().Format(time.RFC3339Nano),
 		IssuedAt:     payload.IssuedAt.UTC().Format(time.RFC3339Nano),
 	})
+	if err != nil {
+		return nil, err
+	}
+	return [][]byte{current, legacy}, nil
 }
 
 func (s *Service) currentTime() time.Time {

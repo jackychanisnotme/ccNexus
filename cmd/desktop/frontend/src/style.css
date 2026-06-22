@@ -70,6 +70,27 @@ body {
     font-size: 13px;
 }
 
+.header-actions {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+.header-tool-buttons {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+.header-action-btn {
+    min-height: 40px;
+    white-space: nowrap;
+}
+
 .container {
     flex: 1;
     overflow-y: auto;
@@ -1041,6 +1062,11 @@ body {
 /* Confirm dialog should be above all other modals */
 #confirmDialog {
     z-index: 1500;
+}
+
+/* Keep the close confirmation above the startup license gate */
+#closeActionDialog {
+    z-index: 1600;
 }
 
 /* Welcome/About Modal with blur background */

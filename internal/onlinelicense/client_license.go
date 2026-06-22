@@ -46,10 +46,13 @@ type ClientState struct {
 	LicenseID     int64     `json:"licenseId"`
 	ActivationID  int64     `json:"activationId"`
 	DeviceID      string    `json:"deviceId"`
+	Plan          Plan      `json:"plan,omitempty"`
+	Status        string    `json:"status,omitempty"`
 	ExpiresAt     time.Time `json:"expiresAt"`
 	NextCheckAt   time.Time `json:"nextCheckAt"`
 	GraceUntil    time.Time `json:"graceUntil"`
 	LastCheckedAt time.Time `json:"lastCheckedAt"`
+	Message       string    `json:"message,omitempty"`
 }
 
 func NewClientService(store ConfigStore, deviceID string, opts ClientOptions) *ClientService {
@@ -101,6 +104,10 @@ func (s *ClientService) Status(now time.Time) (*Status, error) {
 	if err != nil {
 		return nil, err
 	}
+	if isDisabledStatus(state.Status) {
+		status := statusFromClientState(state)
+		return &status, nil
+	}
 	if state.Ticket == "" {
 		return &Status{Product: ProductCCNexusPro, Message: "license is not activated"}, nil
 	}
@@ -121,6 +128,9 @@ func (s *ClientService) IsLicensed(now time.Time) bool {
 }
 
 func (s *ClientService) Activate(cardKey string, now time.Time) (*ActivationResult, error) {
+	if err := s.ensureVerifier(); err != nil {
+		return nil, err
+	}
 	if now.IsZero() {
 		now = s.currentTime()
 	}
@@ -133,10 +143,20 @@ func (s *ClientService) Activate(cardKey string, now time.Time) (*ActivationResu
 	}, &result); err != nil {
 		return nil, err
 	}
+	if _, err := s.verifier.VerifyTicket(result.Ticket, s.deviceID, now); err != nil {
+		return nil, err
+	}
 	if err := s.saveResult(&result, now); err != nil {
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (s *ClientService) ensureVerifier() error {
+	if s == nil || s.verifier == nil || len(s.verifier.publicKey) != ed25519.PublicKeySize {
+		return ErrInvalidTicket
+	}
+	return nil
 }
 
 func (s *ClientService) Refresh(now time.Time) (*ActivationResult, error) {
@@ -154,10 +174,21 @@ func (s *ClientService) Refresh(now time.Time) (*ActivationResult, error) {
 		Platform:   runtime.GOOS,
 		AppVersion: s.version,
 	}, &result); err != nil {
+		if disabled, ok := s.disabledResultFromState(state, err, now); ok {
+			if err := s.saveResult(disabled, now); err != nil {
+				return nil, err
+			}
+			return disabled, nil
+		}
 		return nil, err
 	}
 	if now.IsZero() {
 		now = s.currentTime()
+	}
+	if result.Ticket != "" {
+		if _, err := s.verifier.VerifyTicket(result.Ticket, s.deviceID, now); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.saveResult(&result, now); err != nil {
 		return nil, err
@@ -225,21 +256,89 @@ func (s *ClientService) saveResult(result *ActivationResult, now time.Time) erro
 	if s.store == nil || result == nil {
 		return nil
 	}
+	previous, _ := s.loadState()
+	ticket := result.Ticket
+	if ticket == "" && previous != nil {
+		ticket = previous.Ticket
+	}
+	licenseID := result.LicenseID
+	if licenseID == 0 && previous != nil {
+		licenseID = previous.LicenseID
+	}
+	activationID := result.ActivationID
+	if activationID == 0 && previous != nil {
+		activationID = previous.ActivationID
+	}
+	deviceID := strings.TrimSpace(result.DeviceID)
+	if deviceID == "" && previous != nil {
+		deviceID = previous.DeviceID
+	}
+	plan := result.Plan
+	if plan == "" && previous != nil {
+		plan = previous.Plan
+	}
+	status := strings.TrimSpace(result.Status)
+	if status == "" && result.Licensed {
+		status = ActivationStatusActive
+	}
 	state := ClientState{
-		Ticket:        result.Ticket,
-		LicenseID:     result.LicenseID,
-		ActivationID:  result.ActivationID,
-		DeviceID:      result.DeviceID,
+		Ticket:        ticket,
+		LicenseID:     licenseID,
+		ActivationID:  activationID,
+		DeviceID:      deviceID,
+		Plan:          plan,
+		Status:        status,
 		ExpiresAt:     result.ExpiresAt,
 		NextCheckAt:   result.NextCheckAt,
 		GraceUntil:    result.GraceUntil,
 		LastCheckedAt: now,
+		Message:       strings.TrimSpace(result.Message),
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
 	return s.store.SetConfig(clientStateConfigKey, string(data))
+}
+
+func (s *ClientService) disabledResultFromState(state *ClientState, err error, now time.Time) (*ActivationResult, bool) {
+	message, ok := remoteDisabledMessage(err)
+	if !ok || state == nil {
+		return nil, false
+	}
+	if now.IsZero() {
+		now = s.currentTime()
+	}
+	return &ActivationResult{
+		Licensed:     false,
+		LicenseID:    state.LicenseID,
+		ActivationID: state.ActivationID,
+		DeviceID:     state.DeviceID,
+		Plan:         state.Plan,
+		Status:       ActivationStatusDisabled,
+		ExpiresAt:    state.ExpiresAt,
+		NextCheckAt:  state.NextCheckAt,
+		GraceUntil:   state.GraceUntil,
+		Message:      message,
+	}, true
+}
+
+func remoteDisabledMessage(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	message := strings.TrimSpace(err.Error())
+	switch message {
+	case ErrActivationBlocked.Error(), ErrCardDisabled.Error():
+		return message, true
+	default:
+		return "", false
+	}
+}
+
+func isDisabledStatus(status string) bool {
+	return strings.EqualFold(strings.TrimSpace(status), ActivationStatusDisabled) ||
+		strings.EqualFold(strings.TrimSpace(status), CardStatusDisabled)
 }
 
 func (s *ClientService) currentTime() time.Time {
@@ -256,6 +355,7 @@ func statusFromTicket(ticket *TicketStatus, now time.Time) Status {
 		Licensed:        ticket.Licensed,
 		ExpiresAt:       ticket.ExpiresAt,
 		LastActivatedAt: ticket.NextCheckAt.Add(-nextCheckInterval),
+		LastPlan:        ticket.Plan,
 		Message:         ticket.Message,
 	}
 	if ticket.ExpiresAt.After(now) {
@@ -267,6 +367,24 @@ func statusFromTicket(ticket *TicketStatus, now time.Time) Status {
 		status.Expired = true
 		status.Licensed = false
 		status.Message = "license has expired"
+	}
+	return status
+}
+
+func statusFromClientState(state *ClientState) Status {
+	status := Status{
+		Product:         ProductCCNexusPro,
+		Licensed:        false,
+		ExpiresAt:       state.ExpiresAt,
+		LastPlan:        state.Plan,
+		LastActivatedAt: state.NextCheckAt.Add(-nextCheckInterval),
+		Message:         strings.TrimSpace(state.Message),
+	}
+	if status.LastActivatedAt.IsZero() || state.NextCheckAt.IsZero() {
+		status.LastActivatedAt = time.Time{}
+	}
+	if status.Message == "" {
+		status.Message = "license is disabled"
 	}
 	return status
 }

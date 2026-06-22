@@ -115,6 +115,13 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Initialize UI
     initUI();
 
+    // Listen for close dialog event from backend before any startup gate can block interaction
+    if (window.runtime) {
+        window.runtime.EventsOn('show-close-dialog', () => {
+            showCloseActionDialog();
+        });
+    }
+
     await showStartupLicenseGate();
 
     // Initialize endpoint view mode
@@ -204,13 +211,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     // Initialize update settings
     initUpdateSettings();
-
-    // Listen for close dialog event from backend
-    if (window.runtime) {
-        window.runtime.EventsOn('show-close-dialog', () => {
-            showCloseActionDialog();
-        });
-    }
 
     // Handle Cmd/Ctrl+W to hide window
     window.addEventListener('keydown', (e) => {

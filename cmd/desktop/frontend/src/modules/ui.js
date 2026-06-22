@@ -13,7 +13,15 @@ export function initUI() {
                     <h1>🚀 ${t('app.title')}<span id="broadcast-banner" class="broadcast-banner hidden"></span></h1>
                     <p>${t('header.title')}<span id="festivalToggle" class="festival-toggle hidden" onclick="window.toggleFestivalEffect(); event.stopPropagation();" title="${t('festival.toggle') || '切换氛围效果'}"><span class="festival-toggle-name" id="festivalToggleName"></span><span class="festival-toggle-switch" id="festivalToggleSwitch"></span></span></p>
                 </div>
-                <div style="display: flex; gap: 15px; align-items: center;">
+                <div class="header-actions">
+                    <div class="header-tool-buttons">
+                        <button class="btn btn-secondary header-action-btn" onclick="window.showAgentModal()">
+                            ${t('agent.button')}
+                        </button>
+                        <button class="btn btn-secondary header-action-btn" onclick="window.showAgentProviderModal()">
+                            🔀 ${t('agentProvider.button')}
+                        </button>
+                    </div>
                     <div class="port-display" onclick="window.showEditPortModal()" title="${t('header.port')}">
                         <span style="color: #666; font-size: 15px; position: relative; top: -0.3px;">${t('header.port')}: </span>
                         <span class="port-number" id="proxyPort">3000</span>
@@ -304,12 +312,6 @@ export function initUI() {
                         </button>` : ''}
                         <button class="btn btn-secondary" onclick="window.showDataSyncDialog()">
                             🔄 ${t('webdav.dataSync')}
-                        </button>
-                        <button class="btn btn-secondary" onclick="window.showAgentModal()">
-                            ${t('agent.button')}
-                        </button>
-                        <button class="btn btn-secondary" onclick="window.showAgentProviderModal()">
-                            🔀 ${t('agentProvider.button')}
                         </button>
                         <button class="btn btn-primary" onclick="window.showAddEndpointModal()">
                             ➕ ${t('header.addEndpoint')}

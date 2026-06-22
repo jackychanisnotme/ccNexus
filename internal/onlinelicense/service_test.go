@@ -220,6 +220,20 @@ func TestTicketVerificationAllowsThirtyDayGrace(t *testing.T) {
 	}
 }
 
+func TestActivationResultIncludesRemainingDays(t *testing.T) {
+	now := time.Date(2026, 6, 19, 8, 0, 0, 0, time.UTC)
+	service := newTestService(t, now)
+	card := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanMonthly, Count: 1, MaxDevices: 1})
+
+	result, err := service.Activate(ActivationRequest{CardKey: card.CardKey, DeviceID: "device-a"})
+	if err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	if result.RemainingDays != 30 {
+		t.Fatalf("remaining days = %d, want 30", result.RemainingDays)
+	}
+}
+
 func TestRefreshCanRecoverAfterOfflineGraceWhenServerIsReachable(t *testing.T) {
 	issuedAt := time.Date(2026, 6, 19, 8, 0, 0, 0, time.UTC)
 	current := issuedAt

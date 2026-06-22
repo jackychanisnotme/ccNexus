@@ -455,7 +455,7 @@ export default {
 	        },
         license: {
             title: '授权信息',
-            startupTitle: 'ccNexus Pro 授权',
+            startupTitle: 'AINexus Pro 授权',
             startupDesc: '当前授权未激活或已过期，代理服务尚未启动。请输入在线卡密完成激活。',
             status: '授权状态',
             active: '已授权',
@@ -466,7 +466,7 @@ export default {
             plan: '卡类型',
             refresh: '刷新状态',
             activate: '激活/续期',
-            cardPlaceholder: '请输入 ccNexus Pro 在线卡密',
+            cardPlaceholder: '请输入 AINexus Pro 在线卡密',
             help: '未授权或授权过期时，代理服务不会启动。最近一次在线校验成功后，可离线宽限 30 天。',
             loadFailed: '加载授权状态失败',
             activateSuccess: '授权激活成功',

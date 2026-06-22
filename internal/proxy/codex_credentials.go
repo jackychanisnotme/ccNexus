@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,11 +23,25 @@ const (
 	codexRefreshTimeout = 45 * time.Second
 )
 
+var errCodexRefreshTokenReused = errors.New("codex refresh token reused")
+
 type codexRefreshTokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	IDToken      string `json:"id_token"`
 	ExpiresIn    int64  `json:"expires_in"`
+}
+
+type codexRefreshTokenReuseError struct {
+	message string
+}
+
+func (e *codexRefreshTokenReuseError) Error() string {
+	return e.message
+}
+
+func (e *codexRefreshTokenReuseError) Unwrap() error {
+	return errCodexRefreshTokenReused
 }
 
 func shouldTryCredentialRefresh(credential *storage.EndpointCredential, now time.Time) bool {
@@ -60,6 +75,47 @@ func (p *Proxy) refreshCredential(endpoint config.Endpoint, credential *storage.
 		return nil, fmt.Errorf("refresh token is empty")
 	}
 
+	refreshed, err := p.refreshCredentialOnce(endpoint, credential.ID, func() (*storage.EndpointCredential, error) {
+		return p.refreshCredentialRequest(endpoint, credential, refreshToken)
+	})
+	if err != nil {
+		if errors.Is(err, errCodexRefreshTokenReused) {
+			p.markCredentialReuseInvalid(credential.ID, err.Error())
+		}
+		return nil, err
+	}
+	return refreshed, nil
+}
+
+func (p *Proxy) markCredentialReuseInvalid(credentialID int64, errMsg string) {
+	if p == nil || p.storage == nil || credentialID <= 0 {
+		return
+	}
+	if err := p.storage.MarkCredentialFailure(credentialID, http.StatusUnauthorized, errMsg, time.Now().UTC()); err != nil {
+		logger.Warn("Failed to mark reused codex credential invalid (id=%d): %v", credentialID, err)
+	}
+}
+
+func (p *Proxy) refreshCredentialOnce(endpoint config.Endpoint, credentialID int64, fn func() (*storage.EndpointCredential, error)) (*storage.EndpointCredential, error) {
+	if p == nil || credentialID <= 0 {
+		return fn()
+	}
+
+	call, shared := p.startCredentialRefresh(credentialID)
+	if shared {
+		<-call.done
+		if call.err != nil {
+			return nil, call.err
+		}
+		return call.credential, nil
+	}
+
+	call.credential, call.err = fn()
+	p.finishCredentialRefresh(credentialID, call)
+	return call.credential, call.err
+}
+
+func (p *Proxy) refreshCredentialRequest(endpoint config.Endpoint, credential *storage.EndpointCredential, refreshToken string) (*storage.EndpointCredential, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), codexRefreshTimeout)
 	defer cancel()
 
@@ -87,6 +143,11 @@ func (p *Proxy) refreshCredential(endpoint config.Endpoint, credential *storage.
 		return nil, fmt.Errorf("read refresh response failed: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		if isCodexRefreshTokenReusedResponse(resp.StatusCode, body) {
+			return nil, &codexRefreshTokenReuseError{
+				message: fmt.Sprintf("refresh token reused: please sign in again (%d): %s", resp.StatusCode, truncateForLog(string(body), 2000)),
+			}
+		}
 		return nil, fmt.Errorf("refresh failed (%d): %s", resp.StatusCode, truncateForLog(string(body), 2000))
 	}
 
@@ -133,6 +194,16 @@ func (p *Proxy) refreshCredential(endpoint config.Endpoint, credential *storage.
 	return &updated, nil
 }
 
+func isCodexRefreshTokenReusedResponse(statusCode int, body []byte) bool {
+	if statusCode != http.StatusUnauthorized && statusCode != http.StatusForbidden {
+		return false
+	}
+	lowered := strings.ToLower(string(body))
+	return strings.Contains(lowered, "refresh_token_reused") ||
+		strings.Contains(lowered, "has already been used to generate a new access token") ||
+		strings.Contains(lowered, "please try signing in again")
+}
+
 func (p *Proxy) RefreshCodexCredential(endpoint config.Endpoint, credentialID int64) (*storage.EndpointCredential, error) {
 	if p == nil || p.storage == nil {
 		return nil, fmt.Errorf("token storage is unavailable")
@@ -152,9 +223,14 @@ func (p *Proxy) RefreshCodexCredential(endpoint config.Endpoint, credentialID in
 		return nil, fmt.Errorf("credential not found")
 	}
 
-	refreshed, err := p.refreshCredential(endpoint, cred)
+		refreshed, err := p.refreshCredential(endpoint, cred)
 	if err != nil {
-		p.markCredentialFailure(credentialID, 0, err.Error())
+		if !errors.Is(err, errCodexRefreshTokenReused) {
+			p.markCredentialFailure(credentialID, 0, err.Error())
+		}
+		if errors.Is(err, errCodexRefreshTokenReused) {
+			return nil, fmt.Errorf("%w: please sign in again", err)
+		}
 		return nil, err
 	}
 	return refreshed, nil

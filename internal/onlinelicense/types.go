@@ -42,6 +42,11 @@ type GenerateCardsResult struct {
 	CSV   string          `json:"csv"`
 }
 
+type AdminLoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 type GeneratedCard struct {
 	ID         int64     `json:"id"`
 	CardKey    string    `json:"cardKey,omitempty"`
@@ -86,16 +91,18 @@ type RefreshRequest struct {
 }
 
 type ActivationResult struct {
-	Licensed     bool      `json:"licensed"`
-	LicenseID    int64     `json:"licenseId"`
-	ActivationID int64     `json:"activationId"`
-	DeviceID     string    `json:"deviceId"`
-	Status       string    `json:"status"`
-	ExpiresAt    time.Time `json:"expiresAt"`
-	NextCheckAt  time.Time `json:"nextCheckAt"`
-	GraceUntil   time.Time `json:"graceUntil"`
-	Ticket       string    `json:"ticket"`
-	Message      string    `json:"message"`
+	Licensed      bool      `json:"licensed"`
+	LicenseID     int64     `json:"licenseId"`
+	ActivationID  int64     `json:"activationId"`
+	DeviceID      string    `json:"deviceId"`
+	Plan          Plan      `json:"plan,omitempty"`
+	Status        string    `json:"status"`
+	ExpiresAt     time.Time `json:"expiresAt"`
+	RemainingDays int       `json:"remainingDays"`
+	NextCheckAt   time.Time `json:"nextCheckAt"`
+	GraceUntil    time.Time `json:"graceUntil"`
+	Ticket        string    `json:"ticket"`
+	Message       string    `json:"message"`
 }
 
 type ActivationRecord struct {
@@ -114,11 +121,21 @@ type ActivationRecord struct {
 	Remark        string    `json:"remark,omitempty"`
 }
 
+type AuditRecord struct {
+	ID         int64     `json:"id"`
+	Action     string    `json:"action"`
+	TargetType string    `json:"targetType"`
+	TargetID   int64     `json:"targetId"`
+	Detail     string    `json:"detail,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
 type TicketStatus struct {
 	Licensed     bool      `json:"licensed"`
 	LicenseID    int64     `json:"licenseId"`
 	ActivationID int64     `json:"activationId"`
 	DeviceID     string    `json:"deviceId"`
+	Plan         Plan      `json:"plan,omitempty"`
 	ExpiresAt    time.Time `json:"expiresAt"`
 	NextCheckAt  time.Time `json:"nextCheckAt"`
 	GraceUntil   time.Time `json:"graceUntil"`
@@ -132,6 +149,7 @@ type Status struct {
 	ExpiresAt        time.Time          `json:"expiresAt,omitempty"`
 	RemainingDays    int                `json:"remainingDays"`
 	LastActivatedAt  time.Time          `json:"lastActivatedAt,omitempty"`
+	LastPlan         Plan               `json:"lastPlan,omitempty"`
 	LastCardID       string             `json:"lastCardId,omitempty"`
 	ActivationLedger []ActivationRecord `json:"activationLedger,omitempty"`
 	Message          string             `json:"message,omitempty"`

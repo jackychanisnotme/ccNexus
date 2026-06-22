@@ -142,14 +142,14 @@ function renderLicenseStatus(status, prefix = 'license') {
     }
 }
 
-export async function getLicenseStatusData() {
-    const raw = await window.go.main.App.GetLicenseStatus();
+export async function getLicenseStatusData(force = false) {
+    const raw = await (force ? window.go.main.App.RefreshLicenseStatus() : window.go.main.App.GetLicenseStatus());
     return parseDesktopResult(raw);
 }
 
-export async function refreshLicenseStatus(prefix = 'license') {
+export async function refreshLicenseStatus(prefix = 'license', force = true) {
     try {
-        const status = await getLicenseStatusData();
+        const status = await getLicenseStatusData(force);
         renderLicenseStatus(status, prefix);
         return status;
     } catch (error) {
@@ -204,7 +204,7 @@ export async function activateStartupLicenseCard() {
     const result = await activateLicenseCardFor('startupLicense');
     if (result?.licensed) {
         document.getElementById('startupLicenseModal')?.classList.remove('active');
-        await refreshLicenseStatus('license');
+        await refreshLicenseStatus('license', false);
     }
     return result;
 }

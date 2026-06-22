@@ -154,6 +154,22 @@ describe('endpoint modal option layout', () => {
         );
     });
 
+    it('keeps AI Agent and Agent Provider beside the top-right port display', () => {
+        assert.match(
+            uiSource,
+            /showAgentModal\(\)[\s\S]*showAgentProviderModal\(\)[\s\S]*class="port-display"/,
+        );
+
+        const toolbarStart = uiSource.indexOf('window.showTerminalModal()');
+        const toolbarEnd = uiSource.indexOf('window.showAddEndpointModal()', toolbarStart);
+        assert.notEqual(toolbarStart, -1);
+        assert.notEqual(toolbarEnd, -1);
+
+        const toolbarSource = uiSource.slice(toolbarStart, toolbarEnd);
+        assert.doesNotMatch(toolbarSource, /showAgentModal/);
+        assert.doesNotMatch(toolbarSource, /showAgentProviderModal/);
+    });
+
     it('adds an Agent Provider home button and modal controls', () => {
         assert.match(uiSource, /showAgentProviderModal/);
         assert.match(uiSource, /agentProvider\.button/);

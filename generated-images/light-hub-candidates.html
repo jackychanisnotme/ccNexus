@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AINexus 图标候选</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f6f8;
+      color: #101828;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+    }
+    p {
+      margin: 0 0 20px;
+      color: #5f6b7a;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #d7dde5;
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(16,24,40,.08);
+    }
+    .shot {
+      background: linear-gradient(180deg, #f9fbfd 0%, #eef3f8 100%);
+      padding: 16px;
+    }
+    .shot img {
+      width: 100%;
+      display: block;
+      border-radius: 14px;
+    }
+    .body {
+      padding: 16px 18px 18px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .thumb {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      overflow: hidden;
+      flex: 0 0 auto;
+      box-shadow: 0 4px 10px rgba(16,24,40,.12);
+    }
+    .thumb img { width: 100%; height: 100%; display: block; }
+    h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .desc {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.55;
+      color: #5f6b7a;
+    }
+    .footer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 14px;
+      color: #667085;
+      font-size: 13px;
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>AINexus 图标新一版</h1>
+    <p>浅色背景，多进多出的中枢效果。推荐优先看第 1 张。</p>
+    <div class="grid">
+      <article class="card">
+        <div class="shot"><img src="ainexus-icon-hub-radial.png" alt="Hub radial icon"></div>
+        <div class="body">
+          <div class="row">
+            <div class="thumb"><img src="ainexus-icon-hub-radial.png" alt=""></div>
+            <h2>1. Radial Hub</h2>
+          </div>
+          <p class="desc">多方向输入和输出最直接，中心枢纽感最强，缩小后依然容易读。</p>
+          <div class="footer">32px 预览也保留了中心和通道层次。</div>
+        </div>
+      </article>
+      <article class="card">
+        <div class="shot"><img src="ainexus-icon-manifold.png" alt="Manifold icon"></div>
+        <div class="body">
+          <div class="row">
+            <div class="thumb"><img src="ainexus-icon-manifold.png" alt=""></div>
+            <h2>2. Manifold</h2>
+          </div>
+          <p class="desc">结构更机械，像分流总管，组织感强，但信息密度稍高。</p>
+          <div class="footer">更偏工具感和工程感。</div>
+        </div>
+      </article>
+      <article class="card">
+        <div class="shot"><img src="ainexus-icon-interwoven.png" alt="Interwoven icon"></div>
+        <div class="body">
+          <div class="row">
+            <div class="thumb"><img src="ainexus-icon-interwoven.png" alt=""></div>
+            <h2>3. Interwoven</h2>
+          </div>
+          <p class="desc">更柔和、更流动，视觉高级，但“中枢路由”读感没有前两张直接。</p>
+          <div class="footer">适合想要更品牌化的方向。</div>
+        </div>
+      </article>
+    </div>
+  </div>
+</body>
+</html>

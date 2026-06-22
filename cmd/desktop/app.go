@@ -61,6 +61,8 @@ type desktopImportCredentialsRequest struct {
 	Remark string                        `json:"remark"`
 }
 
+const desktopLicenseRefreshInterval = 5 * time.Minute
+
 // App struct
 type App struct {
 	ctx          context.Context
@@ -70,6 +72,8 @@ type App struct {
 	ctxMutex     sync.RWMutex
 	trayIcon     []byte
 	proxyStarted bool
+
+	licenseRefreshMu sync.Mutex
 
 	// Services
 	stats         *service.StatsService
@@ -201,7 +205,8 @@ func (a *App) startup(ctx context.Context) {
 	a.initTray()
 
 	if a.license != nil {
-		go a.license.MaybeRefresh(time.Now())
+		go a.refreshLicenseFromServer("startup")
+		go a.runLicenseRefreshLoop(ctx)
 	}
 	a.startProxyIfLicensed()
 	time.Sleep(300 * time.Millisecond)
@@ -228,6 +233,62 @@ func (a *App) startProxyIfLicensed() {
 			a.proxyStarted = false
 		}
 	}()
+}
+
+func (a *App) runLicenseRefreshLoop(ctx context.Context) {
+	ticker := time.NewTicker(desktopLicenseRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_, _ = a.refreshLicenseFromServer("scheduled")
+		}
+	}
+}
+
+func (a *App) refreshLicenseFromServer(reason string) (*onlinelicense.Status, error) {
+	if a.license == nil {
+		return nil, fmt.Errorf("license service unavailable")
+	}
+	a.licenseRefreshMu.Lock()
+	defer a.licenseRefreshMu.Unlock()
+
+	now := time.Now()
+	localStatus, localErr := a.license.Status(now)
+	if localErr == nil && localStatus != nil && localStatus.Message == "license is not activated" {
+		return localStatus, nil
+	}
+
+	if _, err := a.license.Refresh(now); err != nil {
+		logger.Warn("License refresh failed (%s): %v", reason, err)
+		return nil, err
+	}
+	status, err := a.license.Status(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	a.applyLicenseStatus(status, reason)
+	return status, nil
+}
+
+func (a *App) applyLicenseStatus(status *onlinelicense.Status, reason string) {
+	if status == nil {
+		return
+	}
+	if status.Licensed {
+		a.startProxyIfLicensed()
+		return
+	}
+	if a.proxy == nil || !a.proxyStarted {
+		return
+	}
+	if err := a.proxy.Stop(); err != nil {
+		logger.Warn("Failed to stop proxy after license refresh (%s): %v", reason, err)
+	}
+	a.proxyStarted = false
+	logger.Warn("Proxy stopped because license is not active (%s): %s", reason, status.Message)
 }
 
 // shutdown is called when the app is closing
@@ -267,6 +328,9 @@ func (a *App) ShowWindow() {
 			runtime.WindowSetAlwaysOnTop(ctx, false)
 			break
 		}
+	}
+	if a.license != nil {
+		go a.refreshLicenseFromServer("foreground")
 	}
 }
 
@@ -550,7 +614,7 @@ func (a *App) RefreshEndpointCredential(index int, credentialID int64) string {
 	}
 	refreshed, err := a.proxy.RefreshCodexCredential(*endpoint, credentialID)
 	if err != nil {
-		if a.storage != nil {
+		if a.storage != nil && !strings.Contains(strings.ToLower(err.Error()), "sign in again") {
 			_ = a.storage.MarkCredentialFailure(credentialID, 0, err.Error(), time.Now().UTC())
 		}
 		return desktopErrorJSON(err)
@@ -1135,6 +1199,14 @@ func (a *App) GetLicenseStatus() string {
 		return desktopErrorJSON(fmt.Errorf("license service unavailable"))
 	}
 	status, err := a.license.Status(time.Now())
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	return desktopSuccessJSON(status)
+}
+
+func (a *App) RefreshLicenseStatus() string {
+	status, err := a.refreshLicenseFromServer("manual")
 	if err != nil {
 		return desktopErrorJSON(err)
 	}

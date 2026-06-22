@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -130,7 +131,11 @@ func (p *Proxy) FetchCodexRateLimits(endpoint config.Endpoint, credentialID int6
 					data, status, err = p.fetchCodexRateLimitsForCredential(ctx, endpoint, refreshed, true)
 					cancel()
 				} else {
-					err = refreshErr
+					if errors.Is(refreshErr, errCodexRefreshTokenReused) {
+						err = fmt.Errorf("%w: please sign in again", refreshErr)
+					} else {
+						err = refreshErr
+					}
 				}
 			}
 		}

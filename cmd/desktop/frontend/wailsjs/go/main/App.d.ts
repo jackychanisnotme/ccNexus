@@ -3,6 +3,8 @@
 
 export function ActivateEndpointCredential(arg1:number,arg2:number):Promise<void>;
 
+export function ActivateLicense(arg1:string):Promise<string>;
+
 export function AddEndpoint(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:boolean,arg10:string):Promise<void>;
 
 export function AddProjectDir(arg1:string):Promise<void>;
@@ -92,6 +94,10 @@ export function GetEndpointProxyURL(arg1:number):Promise<string>;
 export function GetEndpointRuntimeStatuses():Promise<string>;
 
 export function GetLanguage():Promise<string>;
+
+export function GetLicenseStatus():Promise<string>;
+
+export function RefreshLicenseStatus():Promise<string>;
 
 export function GetLogLevel():Promise<number>;
 

@@ -455,7 +455,7 @@ export default {
 	        },
         license: {
             title: 'License',
-            startupTitle: 'ccNexus Pro License',
+            startupTitle: 'AINexus Pro License',
             startupDesc: 'The license is inactive or expired, so the proxy service has not started. Enter an online license card to activate it.',
             status: 'Status',
             active: 'Active',
@@ -466,7 +466,7 @@ export default {
             plan: 'Plan',
             refresh: 'Refresh',
             activate: 'Activate/Renew',
-            cardPlaceholder: 'Enter ccNexus Pro online license card',
+            cardPlaceholder: 'Enter AINexus Pro online license card',
             help: 'The proxy service will not start while the license is inactive or expired. After a successful online check, offline grace lasts 30 days.',
             loadFailed: 'Failed to load license status',
             activateSuccess: 'License activated successfully',

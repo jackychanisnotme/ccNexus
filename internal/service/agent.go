@@ -430,15 +430,9 @@ func addAgentAppScanItem(items *[]AgentAppScanItem, seen map[string]bool, item A
 
 func (s *AgentService) callResponses(task string, toolResults []AgentToolResult) (string, error) {
 	payload := map[string]any{
-		"model": "gpt-5",
+		"model":        "gpt-5",
+		"instructions": agentSystemPrompt(),
 		"input": []map[string]any{
-			{
-				"role": "system",
-				"content": []map[string]any{{
-					"type": "input_text",
-					"text": agentSystemPrompt(),
-				}},
-			},
 			{
 				"role": "user",
 				"content": []map[string]any{{

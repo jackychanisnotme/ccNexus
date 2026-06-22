@@ -83,6 +83,7 @@ func (s *SQLiteStore) init() error {
 	CREATE INDEX IF NOT EXISTS idx_license_activations_device ON license_activations(device_id);
 	CREATE INDEX IF NOT EXISTS idx_license_activations_status ON license_activations(status);
 	CREATE INDEX IF NOT EXISTS idx_license_activations_expires ON license_activations(expires_at);
+	CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON admin_audit_logs(created_at);
 	`
 	_, err := s.db.Exec(schema)
 	return err
@@ -151,6 +152,39 @@ func (s *SQLiteStore) ListCards() ([]CardRecord, error) {
 func (s *SQLiteStore) DisableCard(id int64, now time.Time) error {
 	_, err := s.db.Exec(`UPDATE license_cards SET status = ?, disabled_at = ? WHERE id = ?`, CardStatusDisabled, formatTime(now), id)
 	return err
+}
+
+func (s *SQLiteStore) DeleteCard(id int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.Exec(`DELETE FROM license_activations WHERE card_id = ?`, id); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM license_cards WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrInvalidCard
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) ActivateCard(cardHash, deviceID string, now time.Time, platform, appVersion, ipAddress string) (*ActivationRecord, error) {
@@ -441,6 +475,32 @@ func (s *SQLiteStore) AddAudit(action, targetType string, targetID int64, detail
 	return err
 }
 
+func (s *SQLiteStore) ListAudit(limit int) ([]AuditRecord, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.db.Query(`
+		SELECT id, action, target_type, target_id, COALESCE(detail, ''), created_at
+		FROM admin_audit_logs
+		ORDER BY id DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []AuditRecord
+	for rows.Next() {
+		audit, err := scanAudit(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *audit)
+	}
+	return result, rows.Err()
+}
+
 type rowScanner interface {
 	Scan(dest ...interface{}) error
 }
@@ -507,6 +567,16 @@ func scanActivation(row rowScanner) (*ActivationRecord, error) {
 		activation.DisabledAt = parseTime(disabledAt.String)
 	}
 	return activation, nil
+}
+
+func scanAudit(row rowScanner) (*AuditRecord, error) {
+	audit := &AuditRecord{}
+	var createdAt string
+	if err := row.Scan(&audit.ID, &audit.Action, &audit.TargetType, &audit.TargetID, &audit.Detail, &createdAt); err != nil {
+		return nil, err
+	}
+	audit.CreatedAt = parseTime(createdAt)
+	return audit, nil
 }
 
 func formatTime(t time.Time) string {

@@ -261,6 +261,17 @@ func TestAgentRunUsesResponsesThenReturnsAnswer(t *testing.T) {
 		if !strings.Contains(string(mustJSON(t, payload)), "Summarize endpoint status") {
 			t.Fatalf("payload did not include task: %#v", payload)
 		}
+		if instructions, ok := payload["instructions"].(string); !ok || instructions != agentSystemPrompt() {
+			t.Fatalf("expected system prompt in responses instructions, got %#v", payload["instructions"])
+		}
+		input, ok := payload["input"].([]any)
+		if !ok || len(input) != 1 {
+			t.Fatalf("expected one user input message, got %#v", payload["input"])
+		}
+		message, ok := input[0].(map[string]any)
+		if !ok || message["role"] != "user" {
+			t.Fatalf("expected responses input to contain only a user message, got %#v", input[0])
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"output":[{"content":[{"type":"output_text","text":"agent answer"}]}]}`))
 	}))
