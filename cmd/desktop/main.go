@@ -4,6 +4,7 @@ import (
 	"embed"
 	"log"
 	"os"
+	"runtime"
 	"strconv"
 
 	"github.com/lich0821/ccNexus/internal/branding"
@@ -21,6 +22,9 @@ var assets embed.FS
 
 //go:embed build/windows/icon.ico
 var trayIconWindows []byte
+
+//go:embed build/trayicon-macos.png
+var trayIconMacOS []byte
 
 //go:embed build/appicon.png
 var trayIconOther []byte
@@ -42,9 +46,11 @@ func main() {
 
 	// Select appropriate tray icon based on OS
 	var trayIcon []byte
-	if os.PathSeparator == '\\' {
+	if runtime.GOOS == "windows" {
 		// Windows
 		trayIcon = trayIconWindows
+	} else if runtime.GOOS == "darwin" {
+		trayIcon = trayIconMacOS
 	} else {
 		// macOS, Linux, etc.
 		trayIcon = trayIconOther

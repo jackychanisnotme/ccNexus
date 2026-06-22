@@ -14,9 +14,10 @@
         self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
 
         NSImage *icon = [[NSImage alloc] initWithData:iconData];
-        [icon setSize:NSMakeSize(18, 18)];
+        [icon setTemplate:YES];
         [self.statusItem.button setImage:icon];
         [self.statusItem.button setImageScaling:NSImageScaleProportionallyDown];
+        [icon setSize:NSMakeSize(18, 18)];
 
         self.menu = [[NSMenu alloc] init];
 
@@ -60,4 +61,3 @@ void setupTray(void *iconData, int iconLen) {
     NSData *data = [NSData dataWithBytes:iconData length:iconLen];
     [trayDelegate setupTray:data];
 }
-
