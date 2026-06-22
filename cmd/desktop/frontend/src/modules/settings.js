@@ -83,6 +83,132 @@ function collectFailoverSettings() {
     };
 }
 
+function parseDesktopResult(raw) {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!parsed || parsed.success !== true) {
+        throw new Error(parsed?.error || 'unknown error');
+    }
+    return parsed.data;
+}
+
+function formatLicenseDate(value) {
+    if (!value || value === '0001-01-01T00:00:00Z') {
+        return '-';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return '-';
+    }
+    return date.toLocaleString();
+}
+
+function planLabel(plan) {
+    const labels = t('settings.license.plans') || {};
+    return labels[plan] || plan || '-';
+}
+
+function setLicenseMessage(text, type = 'info', prefix = 'license') {
+    const messageEl = document.getElementById(`${prefix}Message`);
+    if (!messageEl) return;
+    messageEl.textContent = text;
+    messageEl.style.color = type === 'error' ? '#ef4444' : type === 'success' ? '#10b981' : '#666';
+}
+
+function renderLicenseStatus(status, prefix = 'license') {
+    const statusText = document.getElementById(`${prefix}StatusText`);
+    const expiresAt = document.getElementById(`${prefix}ExpiresAt`);
+    const remainingDays = document.getElementById(`${prefix}RemainingDays`);
+    const plan = document.getElementById(`${prefix}Plan`);
+
+    if (statusText) {
+        statusText.textContent = status?.licensed
+            ? t('settings.license.active')
+            : status?.expired
+                ? t('settings.license.expired')
+                : t('settings.license.inactive');
+        statusText.style.color = status?.licensed ? '#10b981' : '#ef4444';
+    }
+    if (expiresAt) {
+        expiresAt.textContent = formatLicenseDate(status?.expiresAt);
+    }
+    if (remainingDays) {
+        remainingDays.textContent = status?.licensed ? String(status.remainingDays ?? 0) : '-';
+    }
+    if (plan) {
+        plan.textContent = planLabel(status?.lastPlan);
+    }
+    if (status?.message) {
+        setLicenseMessage(status.message, status.licensed ? 'success' : 'info', prefix);
+    }
+}
+
+export async function getLicenseStatusData() {
+    const raw = await window.go.main.App.GetLicenseStatus();
+    return parseDesktopResult(raw);
+}
+
+export async function refreshLicenseStatus(prefix = 'license') {
+    try {
+        const status = await getLicenseStatusData();
+        renderLicenseStatus(status, prefix);
+        return status;
+    } catch (error) {
+        renderLicenseStatus(null, prefix);
+        setLicenseMessage(`${t('settings.license.loadFailed')}: ${error.message || error}`, 'error', prefix);
+        return null;
+    }
+}
+
+async function activateLicenseCardFor(prefix = 'license') {
+    const input = document.getElementById(`${prefix}CardKey`);
+    const cardKey = input?.value?.trim() || '';
+    if (!cardKey) {
+        setLicenseMessage(t('settings.license.cardRequired'), 'error', prefix);
+        return null;
+    }
+    try {
+        const raw = await window.go.main.App.ActivateLicense(cardKey);
+        const result = parseDesktopResult(raw);
+        renderLicenseStatus(result, prefix);
+        if (input) input.value = '';
+        showNotification(t('settings.license.activateSuccess'), 'success');
+        return result;
+    } catch (error) {
+        setLicenseMessage(`${t('settings.license.activateFailed')}: ${error.message || error}`, 'error', prefix);
+        return null;
+    }
+}
+
+export async function activateLicenseCard() {
+    return activateLicenseCardFor('license');
+}
+
+export async function showStartupLicenseGate() {
+    const modal = document.getElementById('startupLicenseModal');
+    if (!modal) return null;
+
+    const status = await refreshLicenseStatus('startupLicense');
+    if (status?.licensed) {
+        modal.classList.remove('active');
+        return status;
+    }
+
+    modal.classList.add('active');
+    setTimeout(() => {
+        document.getElementById('startupLicenseCardKey')?.focus();
+    }, 0);
+    return status;
+}
+
+export async function activateStartupLicenseCard() {
+    const result = await activateLicenseCardFor('startupLicense');
+    if (result?.licensed) {
+        document.getElementById('startupLicenseModal')?.classList.remove('active');
+        await refreshLicenseStatus('license');
+    }
+    return result;
+}
+
 // Apply theme to body element
 export function applyTheme(theme) {
     // 如果主题没有变化，直接返回
@@ -299,6 +425,7 @@ async function loadCurrentSettings() {
         }
 
         setFailoverControlValues(config);
+        await refreshLicenseStatus();
     } catch (error) {
         console.error('Failed to load settings:', error);
     }

@@ -46,6 +46,37 @@ class Settings {
                 <h1>${t('settings.title')}</h1>
                 <div class="card mt-3">
                     <div class="card-header">
+                        <h3 class="card-title">${t('settings.licenseTitle')}</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="license-summary-grid">
+                            <div>
+                                <div class="network-label">${t('settings.licenseStatus')}</div>
+                                <div id="license-status" class="network-value">-</div>
+                            </div>
+                            <div>
+                                <div class="network-label">${t('settings.licenseExpiresAt')}</div>
+                                <div id="license-expires-at" class="network-value">-</div>
+                            </div>
+                            <div>
+                                <div class="network-label">${t('settings.licenseRemainingDays')}</div>
+                                <div id="license-remaining-days" class="network-value">-</div>
+                            </div>
+                            <div>
+                                <div class="network-label">${t('settings.licensePlan')}</div>
+                                <div id="license-plan" class="network-value">-</div>
+                            </div>
+                        </div>
+                        <div class="form-group mt-3">
+                            <label class="form-label">${t('settings.licenseCard')}</label>
+                            <textarea class="form-input" id="license-card-key" rows="3" placeholder="${t('settings.licenseCardPlaceholder')}"></textarea>
+                        </div>
+                        <button type="button" class="btn btn-secondary" id="license-refresh-btn">${t('settings.licenseRefresh')}</button>
+                        <button type="button" class="btn btn-primary" id="license-activate-btn">${t('settings.licenseActivate')}</button>
+                    </div>
+                </div>
+                <div class="card mt-3">
+                    <div class="card-header">
                         <h3 class="card-title">${t('network.title')}</h3>
                     </div>
                     <div class="card-body">
@@ -92,11 +123,14 @@ class Settings {
         `;
 
         document.getElementById('settings-form').addEventListener('submit', (event) => this.save(event));
+        document.getElementById('license-refresh-btn').addEventListener('click', () => this.loadLicense());
+        document.getElementById('license-activate-btn').addEventListener('click', () => this.activateLicense());
         document.getElementById('network-form').addEventListener('submit', (event) => this.saveNetwork(event));
         document.querySelector('#network-form select[name="listenMode"]').addEventListener('change', (event) => {
             this.toggleNetworkWarning(event.currentTarget.value);
         });
         await this.load();
+        await this.loadLicense();
         await this.loadNetwork();
     }
 
@@ -139,6 +173,62 @@ class Settings {
         } catch (error) {
             notifications.error(`${t('network.failedToLoad')}: ${error.message}`);
         }
+    }
+
+    async loadLicense() {
+        try {
+            const status = await api.getLicenseStatus();
+            this.renderLicense(status);
+        } catch (error) {
+            notifications.error(`${t('settings.licenseLoadFailed')}: ${error.message}`);
+        }
+    }
+
+    async activateLicense() {
+        const input = document.getElementById('license-card-key');
+        const cardKey = input?.value?.trim() || '';
+        if (!cardKey) {
+            notifications.error(t('settings.licenseCardRequired'));
+            return;
+        }
+        try {
+            const result = await api.activateLicense(cardKey);
+            this.renderLicense(result);
+            input.value = '';
+            notifications.success(t('settings.licenseActivated'));
+        } catch (error) {
+            notifications.error(`${t('settings.licenseActivateFailed')}: ${error.message}`);
+        }
+    }
+
+    renderLicense(status) {
+        const setText = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = value || '-';
+        };
+        setText('license-status', status?.licensed ? t('settings.licenseActive') : status?.expired ? t('settings.licenseExpired') : t('settings.licenseInactive'));
+        setText('license-expires-at', this.formatDate(status?.expiresAt));
+        setText('license-remaining-days', status?.licensed ? String(status.remainingDays ?? 0) : '-');
+        setText('license-plan', this.planLabel(status?.lastPlan));
+    }
+
+    formatDate(value) {
+        if (!value || value === '0001-01-01T00:00:00Z') {
+            return '-';
+        }
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
+    }
+
+    planLabel(plan) {
+        const labels = {
+            monthly: t('settings.planMonthly'),
+            quarterly: t('settings.planQuarterly'),
+            half_year: t('settings.planHalfYear'),
+            yearly: t('settings.planYearly'),
+            custom: t('settings.planCustom')
+        };
+        return labels[plan] || plan || '-';
     }
 
     async saveNetwork(event) {

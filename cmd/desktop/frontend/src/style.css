@@ -4065,6 +4065,72 @@ body {
     padding: 25px 30px 15px 30px;
 }
 
+.license-gate-modal {
+    z-index: 1400;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+
+.license-gate-modal .modal-content {
+    max-width: min(560px, 92vw);
+    width: 560px;
+}
+
+.license-gate-modal .modal-header {
+    padding: 24px 30px 12px 30px;
+}
+
+.license-gate-modal .modal-header h2 {
+    color: var(--text-primary);
+}
+
+.license-gate-modal .modal-body {
+    padding: 8px 30px 18px 30px;
+}
+
+.license-gate-copy {
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.6;
+    margin-bottom: 16px;
+}
+
+.license-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.license-status-grid > div {
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    min-width: 0;
+    padding: 10px;
+}
+
+.license-status-grid > div > div {
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.4;
+    margin-top: 4px;
+    overflow-wrap: anywhere;
+}
+
+.license-card-input {
+    min-height: 92px;
+    resize: vertical;
+}
+
+.license-message {
+    color: #666;
+    font-size: 12px;
+    line-height: 1.5;
+    margin-top: 8px;
+}
+
 /* Auto Theme Config Modal Styles */
 #autoThemeConfigModal {
     /* 子弹窗不需要重复的模糊效果 */

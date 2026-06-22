@@ -3,18 +3,23 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/lich0821/ccNexus/cmd/server/webui/api"
 	"github.com/lich0821/ccNexus/internal/branding"
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/onlinelicense"
 	"github.com/lich0821/ccNexus/internal/proxy"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
@@ -22,6 +27,8 @@ import (
 func main() {
 	// Parse command line flags
 	portFlag := flag.Int("port", 0, "Force specific port (locked, cannot be changed via API)")
+	activateFlag := flag.String("activate", "", "Activate license card and exit")
+	licenseStatusFlag := flag.Bool("license-status", false, "Print license status and exit")
 	flag.Parse()
 	dataDir := resolveDataDir()
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
@@ -41,6 +48,40 @@ func main() {
 		os.Exit(1)
 	}
 	defer sqliteStorage.Close()
+
+	deviceID, err := sqliteStorage.GetOrCreateDeviceID()
+	if err != nil {
+		logger.Warn("Failed to get device ID: %v, using default", err)
+		deviceID = "default"
+	}
+
+	licenseService, licenseErr := onlinelicense.NewConfiguredClientService(sqliteStorage, deviceID, "server")
+	if *activateFlag != "" {
+		if licenseErr != nil {
+			logger.Error("License unavailable: %v", licenseErr)
+			os.Exit(1)
+		}
+		result, err := licenseService.Activate(*activateFlag, timeNow())
+		if err != nil {
+			logger.Error("License activation failed: %v", err)
+			os.Exit(1)
+		}
+		printJSON(result)
+		return
+	}
+	if *licenseStatusFlag {
+		if licenseErr != nil {
+			logger.Error("License unavailable: %v", licenseErr)
+			os.Exit(1)
+		}
+		status, err := licenseService.Status(timeNow())
+		if err != nil {
+			logger.Error("License status failed: %v", err)
+			os.Exit(1)
+		}
+		printJSON(status)
+		return
+	}
 
 	cfg, err := loadConfig(sqliteStorage)
 	if err != nil {
@@ -77,12 +118,22 @@ func main() {
 		logger.Error("Invalid configuration: %v", err)
 		os.Exit(1)
 	}
-
-	deviceID, err := sqliteStorage.GetOrCreateDeviceID()
-	if err != nil {
-		logger.Warn("Failed to get device ID: %v, using default", err)
-		deviceID = "default"
+	if licenseErr != nil {
+		logger.Error("Online license public key unavailable: %v", licenseErr)
+		logger.Error("Set CCNEXUS_LICENSE_PUBLIC_KEY and activate online with -activate <cardKey>")
+		os.Exit(1)
 	}
+	if !licenseService.IsLicensed(timeNow()) {
+		status, err := licenseService.Status(timeNow())
+		if err != nil {
+			logger.Error("Unable to read license status: %v", err)
+		} else {
+			logger.Error("License is not active; starting license-only admin server (status: %s, expiresAt: %s)", status.Message, status.ExpiresAt.Format(time.RFC3339))
+		}
+		startLicenseOnlyServer(cfg, licenseService, dataDir, dbPath)
+		return
+	}
+	licenseService.MaybeRefresh(timeNow())
 
 	statsAdapter := storage.NewStatsStorageAdapter(sqliteStorage)
 	p := proxy.New(cfg, statsAdapter, sqliteStorage, deviceID)
@@ -92,7 +143,7 @@ func main() {
 
 	// Initialize and register Web UI (optional plugin)
 	// If webui package is not available, this will be skipped at compile time
-	if err := registerWebUI(mux, cfg, p, sqliteStorage); err != nil {
+	if err := registerWebUI(mux, cfg, p, sqliteStorage, api.NewLicenseAdapter(licenseService)); err != nil {
 		logger.Warn("Web UI not available: %v", err)
 	} else {
 		logger.Info("Web UI available at /ui/")
@@ -123,6 +174,111 @@ func main() {
 
 	logger.Info("%s stopped", branding.Name)
 }
+
+var timeNow = func() time.Time { return time.Now().UTC() }
+
+func printJSON(v interface{}) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to marshal JSON: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(data))
+}
+
+func startLicenseOnlyServer(cfg *config.Config, licenseService *onlinelicense.ClientService, dataDir, dbPath string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/license/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeLicenseJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "method not allowed"})
+			return
+		}
+		status, err := licenseService.Status(timeNow())
+		if err != nil {
+			writeLicenseJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+			return
+		}
+		writeLicenseJSON(w, http.StatusOK, map[string]interface{}{"success": true, "data": status})
+	})
+	mux.HandleFunc("/api/license/activate", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeLicenseJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			CardKey string `json:"cardKey"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeLicenseJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "invalid request body"})
+			return
+		}
+		result, err := licenseService.Activate(req.CardKey, timeNow())
+		if err != nil {
+			writeLicenseJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+			return
+		}
+		writeLicenseJSON(w, http.StatusOK, map[string]interface{}{"success": true, "data": result})
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && r.URL.Path != "/ui/" && r.URL.Path != "/admin" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(licenseOnlyHTML))
+	})
+
+	server := &http.Server{
+		Addr:    cfg.GetListenAddr(),
+		Handler: mux,
+	}
+	logger.Info("%s license-only admin listening on %s (data dir: %s, db: %s)", branding.Name, cfg.GetListenAddr(), dataDir, dbPath)
+	logger.Info("Open http://%s/ui/ or activate with: ccnexus-server -activate <cardKey>", cfg.GetListenAddr())
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("License-only server stopped with error: %v", err)
+		os.Exit(1)
+	}
+}
+
+func writeLicenseJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+const licenseOnlyHTML = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AINexus License</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f6f7fb;color:#1f2937}
+    main{max-width:720px;margin:10vh auto;padding:32px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 18px 50px rgba(15,23,42,.08)}
+    h1{margin:0 0 8px;font-size:24px} p{color:#6b7280;line-height:1.6}
+    textarea{box-sizing:border-box;width:100%;min-height:110px;margin:16px 0;padding:12px;border:1px solid #d1d5db;border-radius:6px;font:14px ui-monospace,monospace}
+    button{background:#2563eb;color:#fff;border:0;border-radius:6px;padding:10px 16px;font-weight:600;cursor:pointer}
+    button.secondary{background:#4b5563}
+    #status{margin-top:16px;padding:12px;border-radius:6px;background:#f3f4f6;white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AINexus 授权</h1>
+    <p>当前授权未激活或已过期，代理服务未启动。请输入卡密激活/续期；激活成功后重启 server 即可恢复代理服务。</p>
+    <textarea id="card" placeholder="请输入授权卡密"></textarea>
+    <button onclick="activate()">激活/续期</button>
+    <button class="secondary" onclick="status()">刷新状态</button>
+    <div id="status">加载中...</div>
+  </main>
+  <script>
+    async function request(path, options){const r=await fetch(path,options);const j=await r.json();if(!r.ok)throw new Error(j.error||'request failed');return j.data||j}
+    async function status(){try{const s=await request('/api/license/status');document.getElementById('status').textContent=JSON.stringify(s,null,2)}catch(e){document.getElementById('status').textContent=e.message}}
+    async function activate(){try{const cardKey=document.getElementById('card').value.trim();const s=await request('/api/license/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cardKey})});document.getElementById('status').textContent='激活成功，请重启 server。\n'+JSON.stringify(s,null,2)}catch(e){document.getElementById('status').textContent=e.message}}
+    status()
+  </script>
+</body>
+</html>`
 
 func resolveDataDir() string {
 	if dir := branding.LookupEnv("AINEXUS_DATA_DIR", "CCNEXUS_DATA_DIR"); dir != "" {

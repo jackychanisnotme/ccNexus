@@ -12,7 +12,7 @@ import { showDataSyncDialog } from './modules/webdav.js'
 import { initTips } from './modules/tips.js'
 import { initTerminal } from './modules/terminal.js'
 import { initSession } from './modules/session.js'
-import { showSettingsModal, closeSettingsModal, saveSettings, applyTheme, initTheme, showAutoThemeConfigModal, closeAutoThemeConfigModal, saveAutoThemeConfig } from './modules/settings.js'
+import { showSettingsModal, closeSettingsModal, saveSettings, applyTheme, initTheme, showAutoThemeConfigModal, closeAutoThemeConfigModal, saveAutoThemeConfig, refreshLicenseStatus, activateLicenseCard, showStartupLicenseGate, activateStartupLicenseCard } from './modules/settings.js'
 import { checkUpdatesOnStartup, checkForUpdates, initUpdateSettings } from './modules/updater.js'
 import { initBroadcast } from './modules/broadcast.js'
 import { initFilterDropdowns, clearAllFilters } from './modules/filters.js'
@@ -114,6 +114,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     // Initialize UI
     initUI();
+
+    await showStartupLicenseGate();
 
     // Initialize endpoint view mode
     initEndpointViewMode();
@@ -289,6 +291,10 @@ window.saveSettings = saveSettings;
 window.showAutoThemeConfigModal = showAutoThemeConfigModal;
 window.closeAutoThemeConfigModal = closeAutoThemeConfigModal;
 window.saveAutoThemeConfig = saveAutoThemeConfig;
+window.refreshLicenseStatus = refreshLicenseStatus;
+window.activateLicenseCard = activateLicenseCard;
+window.showStartupLicenseGate = showStartupLicenseGate;
+window.activateStartupLicenseCard = activateStartupLicenseCard;
 
 // History modal functions
 window.closeHistoryModal = async () => {

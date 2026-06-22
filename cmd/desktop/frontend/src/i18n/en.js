@@ -453,6 +453,33 @@ export default {
 	            tokenUnavailable: 'Token unavailable (sec)',
 	            configError: 'Config error (sec)'
 	        },
+        license: {
+            title: 'License',
+            startupTitle: 'ccNexus Pro License',
+            startupDesc: 'The license is inactive or expired, so the proxy service has not started. Enter an online license card to activate it.',
+            status: 'Status',
+            active: 'Active',
+            inactive: 'Inactive',
+            expired: 'Expired',
+            expiresAt: 'Expires At',
+            remainingDays: 'Remaining Days',
+            plan: 'Plan',
+            refresh: 'Refresh',
+            activate: 'Activate/Renew',
+            cardPlaceholder: 'Enter ccNexus Pro online license card',
+            help: 'The proxy service will not start while the license is inactive or expired. After a successful online check, offline grace lasts 30 days.',
+            loadFailed: 'Failed to load license status',
+            activateSuccess: 'License activated successfully',
+            activateFailed: 'License activation failed',
+            cardRequired: 'Please enter a license card',
+            plans: {
+                monthly: 'Monthly',
+                quarterly: 'Quarterly',
+                half_year: 'Half year',
+                yearly: 'Yearly',
+                custom: 'Custom'
+            }
+        },
 	        claudeNotification: 'Notification Method',
         notificationOptions: {
             disabled: 'Disabled',
