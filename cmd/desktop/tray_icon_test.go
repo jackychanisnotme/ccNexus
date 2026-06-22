@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"regexp"
-	"strings"
 	"testing"
 )
 
@@ -14,8 +13,9 @@ func TestMainUsesDedicatedMacOSTrayIcon(t *testing.T) {
 	}
 
 	mainSource := string(source)
-	if !strings.Contains(mainSource, "//go:embed build/trayicon-macos.png") {
-		t.Error("main.go must embed build/trayicon-macos.png for the macOS tray")
+	macOSEmbed := regexp.MustCompile(`(?m)^//go:embed build/trayicon-macos\.png\s*\n\s*var\s+trayIconMacOS\s+\[\]byte\s*$`)
+	if !macOSEmbed.MatchString(mainSource) {
+		t.Error("main.go must embed build/trayicon-macos.png into trayIconMacOS")
 	}
 
 	darwinBranch := regexp.MustCompile(`else\s+if\s+runtime\.GOOS\s*==\s*"darwin"\s*\{\s*trayIcon\s*=\s*trayIconMacOS\s*\}`)
