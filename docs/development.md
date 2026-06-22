@@ -1,57 +1,125 @@
 # 开发指南
 
-## 环境准备
+## 环境要求
 
-- Go 1.22+
+- Go 1.24+
 - Node.js 18+
 - Wails CLI v2
+- 桌面平台所需的 Wails 系统依赖
 
 ```bash
-# 安装 Wails CLI
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-# 检查环境依赖
 wails doctor
 ```
 
-## 开发模式
+## 桌面应用开发
+
+桌面应用使用 Wails v2，前端由 Vite 构建，界面代码为原生 JavaScript/CSS。
 
 ```bash
-# 安装前端依赖
-cd frontend && npm install && cd ..
+cd cmd/desktop/frontend
+npm install
 
-# 启动开发模式（支持热重载）
+cd ..
 wails dev
 ```
 
-## 构建发布
+`wails dev` 会启动前端热重载服务并运行桌面应用。
+
+## 桌面应用构建
+
+在 `cmd/desktop` 目录执行：
 
 ```bash
-npm run build           # 当前平台
-npm run build:prod      # 生产环境优化
-npm run build:windows   # Windows
-npm run build:macos     # macOS
-npm run build:linux     # Linux
+wails build
+wails build -platform linux/amd64
+wails build -platform darwin/amd64
+wails build -platform windows/amd64
 ```
 
-构建产物位于 `build/bin/` 目录。
+构建产物位于 `cmd/desktop/build/bin/`。跨平台构建仍需满足 Wails 对目标平台工具链的要求。
+
+## 服务器模式
+
+从仓库根目录运行：
+
+```bash
+go run ./cmd/server
+```
+
+或构建独立二进制：
+
+```bash
+cd cmd/server
+go build -ldflags="-s -w" -o ainexus-server .
+./ainexus-server
+```
+
+默认监听 `127.0.0.1:3000`，Web 管理界面位于 `http://127.0.0.1:3000/ui/`。
+
+## 分发站点
+
+`site/` 是独立的 Vue 3 + TypeScript + Vite 项目：
+
+```bash
+cd site
+npm install
+npm run dev
+```
+
+构建和测试：
+
+```bash
+npm run build
+npm test
+```
+
+## 测试与代码质量
+
+在仓库根目录执行：
+
+```bash
+go test ./... -count=1
+go vet ./...
+go fmt ./...
+```
+
+运行重点模块测试：
+
+```bash
+go test -v ./internal/proxy/...
+go test -v ./internal/transformer/convert/...
+```
+
+桌面前端测试文件位于 `cmd/desktop/frontend/test/`，站点测试通过 `cd site && npm test` 运行。
+
+## Docker
+
+```bash
+cd cmd/server
+docker compose up -d --build
+```
+
+详细配置见 [Docker 部署指南](README_DOCKER.md)。
 
 ## 项目结构
 
-```
+```text
 AINexus/
-├── main.go                 # 应用入口
-├── app.go                  # 核心应用逻辑
+├── cmd/
+│   ├── desktop/              # Wails 桌面应用
+│   │   ├── frontend/         # Vite + 原生 JavaScript/CSS
+│   │   └── main.go
+│   └── server/               # 无头服务器与嵌入式 Web UI
+│       ├── webui/
+│       ├── Dockerfile
+│       └── main.go
 ├── internal/
-│   ├── proxy/              # HTTP 代理核心
-│   ├── transformer/        # API 格式转换器
-│   ├── storage/            # SQLite 数据存储
-│   ├── config/             # 配置管理
-│   ├── webdav/             # WebDAV 同步
-│   ├── logger/             # 日志系统
-│   └── tray/               # 系统托盘
-└── frontend/               # 前端代码
-    ├── src/modules/        # 功能模块
-    ├── src/i18n/           # 国际化
-    └── src/themes/         # 主题样式
+│   ├── config/               # 配置与端点规则
+│   ├── proxy/                # HTTP 代理、轮换与故障转移
+│   ├── storage/              # SQLite 存储
+│   ├── transformer/          # API 协议转换
+│   ├── webdav/               # WebDAV 同步
+│   └── tray/                 # 桌面系统托盘
+└── site/                     # Vue 3 分发站点
 ```

@@ -11,6 +11,7 @@ services:
       - ./ainexus/:/data
     environment:
       - AINEXUS_PORT=3000
+      - AINEXUS_LISTEN_MODE=lan
       - AINEXUS_DATA_DIR=/data
       - AINEXUS_DB_PATH=/data/ainexus.db
       - TZ=Asia/Shanghai

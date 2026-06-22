@@ -14,51 +14,137 @@
 
 </div>
 
-AINexus is more than a smart endpoint rotation proxy for Claude Code, Codex CLI, Hermes Agent, and OpenClaw. It is an API resource management system for AI development workflows, bringing endpoints, models, API keys, Codex Token Pools, quota snapshots, usage statistics, and backups into one local control plane. It also works as a stable local API provider: point Hermes, OpenClaw, Codex, Claude Code, and compatible clients at AINexus once, then hot-switch between upstream providers, accounts, and models without repeatedly editing every tool's config.
+AINexus is a local API provider and resource management hub for Claude Code, Codex CLI, Hermes Agent, OpenClaw, and other AI development tools. It manages endpoints, models, API keys, token pools, quotas, statistics, and backups while providing hot switching and automatic failover across upstream providers, accounts, and models.
 
 > [!IMPORTANT]
-> This fork maintains the Optimized line, with extra compatibility for Codex CLI, Claude Code, Hermes Agent, OpenClaw, OpenAI Responses API, DeepSeek, and Kimi/Moonshot.
+> This repository maintains **AINexus Optimized**, with a focus on Codex CLI, OpenAI Responses API, Claude Code, concurrent multi-endpoint workloads, and robust upstream error recovery.
 >
-> Latest release: [`AINexus Optimized`](https://github.com/jackychanisnotme/AINexus/releases/latest)
+> [Download the latest release](https://github.com/jackychanisnotme/AINexus/releases/latest)
 
-## Features
+## Quick Start
 
-- **One Local API Provider**: Connect Claude Code, Codex CLI, Hermes Agent, OpenClaw, OpenAI Chat/Responses-compatible clients, and model tools to one local base URL
-- **Hot Switching Across Clients**: Point Hermes, OpenClaw, Codex, and Claude Code provider/base URLs at AINexus, then switch the current endpoint, enable or disable endpoints, or adjust priority in AINexus to move clients to a new upstream, account, or model without changing each client again
-- **API Resource Management**: Manage endpoints, models, API keys, Token Pools, quota snapshots, usage statistics, and backup data in one place
-- **Endpoint Rotation and Failover**: Rotate across enabled endpoints and skip failing upstreams automatically
-- **Protocol Conversion**: Convert between Claude, OpenAI Chat, OpenAI Responses, Gemini, DeepSeek, and Kimi/Moonshot formats
-- **Codex Token Pool**: Bulk import `access_token/refresh_token`, rotate credentials, refresh after 401s, isolate invalid tokens, and target the ChatGPT Codex backend automatically
-- **Credential Usage and Rate Insights**: Capture Codex quota snapshots and show per-credential requests, errors, token usage, and recent activity
-- **Endpoint-Level Reasoning Control**: Set `low` / `medium` / `high` / `xhigh` reasoning effort, or explicitly disable upstream thinking where supported
-- **Forced Streaming Upstream Mode**: Use streaming upstream requests for providers that reject non-streaming calls while aggregating output for non-streaming clients
-- **Model and Compatibility APIs**: Serve `/v1/models`, `/models`, `/api/tags`, `/version`, `/props`, `/health`, and `/stats` for client discovery and monitoring
-- **Live Statistics**: Event-driven usage updates with today/yesterday/week/month views
-- **Desktop and Server Modes**: Use the Wails desktop app locally, or run `cmd/server` headlessly on a server, NAS, or Docker host
-- **Backup and Sync**: Support WebDAV, local backups, and S3-compatible storage
+### Desktop App
 
-## Design Trade-Offs vs. the Original Project
+Download the package for your platform from [Releases](https://github.com/jackychanisnotme/AINexus/releases/latest):
 
-The Optimized line keeps the original [lich0821/AINexus](https://github.com/lich0821/AINexus) idea of one local proxy gateway, while shifting the focus from simple rotation to long-running, multi-endpoint, concurrent AI workflows. The original design is smaller and easier to reason about; the Optimized line puts more weight on resilience, observability, and Codex/Responses compatibility.
+- **macOS**: Extract the `.zip`, move `AINexus.app` to Applications, and use right-click → Open on first launch if needed
+- **Windows**: Extract `windows-amd64.zip`, then run `AINexus.exe`
+- **Linux**: Build from source, or use server mode/Docker
 
-| Area | Original Strength | Optimized Improvement |
-|------|-------------------|-----------------------|
-| Failover model | Global endpoint rotation after failures, direct and easy to inspect | Request-local fallback that avoids changing the global default endpoint for unrelated requests |
-| Error handling | Simple policy with low maintenance overhead | Classifies quota exhaustion, rate limits, upstream 5xx, network errors, API key failures, and wrapped invalid requests |
-| Endpoint recovery | Minimal hidden state, highly predictable behavior | Configurable cooldowns with auto-return or deprioritization for recovered endpoints |
-| Streaming reliability | Compact traditional proxy behavior | SSE heartbeat, forced upstream streaming, streaming error classification, and semantic empty-output detection |
-| Operations visibility | Basic logs and stats | Request IDs, attempt headers, retry reasons, endpoint runtime state, and per-credential usage/quota snapshots |
+After launch, click "Add Endpoint" and enter the API URL, key, authentication mode, transformer, and model. The default proxy address is `http://127.0.0.1:3000`.
 
-For a lightweight local rotation proxy, the original version remains refreshingly simple. For running Claude Code, Codex CLI, Hermes Agent, OpenClaw, Token Pools, and multiple third-party upstreams together for long sessions while sharing one hot-switchable API provider across clients, the Optimized line provides stronger isolation, recovery, and visibility.
+### Server Mode
 
-## Client Compatibility
+Go 1.24+ is required:
 
-| Client | Recommended Entry | Status |
-|--------|-------------------|--------|
-| Claude Code | Claude / Anthropic-compatible gateway | Stable |
-| Codex CLI | OpenAI Responses API, preferably with the `openai2` transformer | Stable |
-| Hermes Agent | Claude or OpenAI-compatible gateway, depending on the client protocol | Stable |
-| OpenClaw | Claude or OpenAI-compatible gateway | Stable |
+```bash
+go run ./cmd/server
+```
+
+After startup:
+
+- API provider: `http://127.0.0.1:3000`
+- Web management UI: `http://127.0.0.1:3000/ui/`
+- Health check: `http://127.0.0.1:3000/health`
+
+Server mode enables Basic Auth by default with username `admin`. If no password is configured on first launch, AINexus generates one and prints it to the log once.
+
+### Docker Compose
+
+Before first launch, make sure the `environment` section in `cmd/server/docker-compose.yml` contains:
+
+```yaml
+- AINEXUS_LISTEN_MODE=lan
+```
+
+The container must listen on all interfaces for Docker's published host port to reach it. Then run:
+
+```bash
+cd cmd/server
+docker compose up -d --build
+docker compose logs -f ainexus
+```
+
+The default Compose file maps host port `3021` to container port `3000`:
+
+- Web management UI: `http://127.0.0.1:3021/ui/`
+- Health check: `http://127.0.0.1:3021/health`
+
+Data is stored in `cmd/server/ainexus/`. Read the generated first-launch password from the container logs. See the [Docker Deployment Guide](README_DOCKER.md) for details.
+
+## Configure Clients
+
+### Claude Code
+
+Edit `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "ainexus",
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3000",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"
+  }
+}
+```
+
+Some models do not support 64k output. Adjust or remove `CLAUDE_CODE_MAX_OUTPUT_TOKENS` according to the upstream model.
+
+### Codex CLI
+
+Use the Responses API in the Codex configuration:
+
+```toml
+model_provider = "AINexus"
+model = "gpt-5-codex"
+preferred_auth_method = "apikey"
+
+[model_providers.AINexus]
+name = "AINexus"
+base_url = "http://127.0.0.1:3000/v1"
+wire_api = "responses"
+experimental_bearer_token = "ainexus-local"
+```
+
+If your Codex CLI version still requires `~/.codex/auth.json`, add a placeholder API key:
+
+```json
+{"OPENAI_API_KEY":"ainexus-local"}
+```
+
+The client-side API key only satisfies the client's configuration requirement. AINexus manages the actual upstream credentials through endpoints or token pools.
+
+## Add Endpoints
+
+Common transformers:
+
+| Transformer | Upstream protocol | Typical use |
+|-------------|-------------------|-------------|
+| `claude` | Claude / Anthropic | Official or compatible Claude APIs |
+| `openai` | OpenAI Chat Completions | OpenAI Chat-compatible upstreams |
+| `openai2` | OpenAI Responses | Codex CLI and Responses-compatible upstreams |
+| `gemini` | Google Gemini | Native Gemini APIs |
+| `deepseek` | OpenAI Chat-compatible | DeepSeek |
+| `kimi` | OpenAI Chat-compatible | Kimi / Moonshot |
+
+Transformers other than `claude` normally require a target model.
+
+To use a Codex Token Pool:
+
+1. Select `Codex Token Pool` as the authentication mode
+2. Import token JSON records containing `access_token` and `refresh_token`
+3. AINexus configures the Codex upstream and `openai2` transformer, then manages rotation, refresh, quota snapshots, and invalid-token isolation
+
+## Core Capabilities
+
+- **One local API provider** for multiple AI clients
+- **Endpoint rotation and failover** with request-local fallback that avoids cross-request state pollution
+- **Protocol conversion** across Claude, OpenAI Chat, OpenAI Responses, Gemini, DeepSeek, and Kimi/Moonshot
+- **Token pool management** with credential rotation, 401 refresh, invalid-token isolation, quotas, and usage statistics
+- **Reasoning and streaming controls** with endpoint-level effort, thinking disablement, forced upstream streaming, and SSE heartbeat
+- **Live monitoring** for requests, classified errors, endpoint runtime state, request IDs, and per-credential usage
+- **Model and compatibility APIs** at `/v1/models`, `/models`, `/api/tags`, `/version`, `/props`, `/health`, and `/stats`
+- **Backup and sync** through WebDAV, local backups, and S3-compatible storage
 
 <table>
   <tr>
@@ -67,86 +153,68 @@ For a lightweight local rotation proxy, the original version remains refreshingl
   </tr>
 </table>
 
-## Quick Start
-
-### 1. Download and Install
-
-[Download the latest release from this fork](https://github.com/jackychanisnotme/AINexus/releases/latest)
-
-- **macOS**: Extract the `.zip`, move `AINexus.app` to Applications, then right-click → Open for the first run
-- **Windows**: Download `windows-amd64.zip`, extract it, then run `AINexus.exe`
-- **Linux**: Build from source, or use server mode/Docker
-- **Server mode**: `cd cmd/server && go run main.go`
-
-### 2. Add Endpoints
-
-Click "Add Endpoint", then fill in the API URL, key, auth mode, transformer, and target model.
-
-Common transformers:
-- `claude`: Claude / Anthropic-compatible APIs
-- `openai`: OpenAI Chat Completions-compatible APIs
-- `openai2`: OpenAI Responses API, recommended for Codex CLI
-- `gemini`: Google Gemini
-- `deepseek`: DeepSeek Chat-compatible APIs
-- `kimi`: Kimi / Moonshot-compatible APIs
-
-For Codex Token Pool mode:
-- Set auth mode to `Codex Token Pool`
-- Import token JSON records in the Token Pool page (`access_token` + `refresh_token`)
-- AINexus will lock the upstream URL and `openai2` transformer, then handle token rotation, 401-triggered refresh, quota snapshots, and lifecycle statuses
-
-Optional enhancements:
-- Enable endpoint reasoning and select the effort level for providers that support it
-- Enable forced streaming when an upstream only accepts streaming requests
-- Use the model fetch button next to the model field to pull upstream model IDs
-
-### 3. Configure Clients
-
-#### Claude Code
-`~/.claude/settings.json`
-```json
-{
-  "env": {
-    "ANTHROPIC_AUTH_TOKEN": "anything, not important",
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3000",
-    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000", // Some models may not support 64k
-  }
-  // Other settings
-}
-
-```
-
-#### Codex CLI
-Responses API is recommended:
-```toml
-model_provider = "AINexus"
-model = "gpt-5-codex"
-preferred_auth_method = "apikey"
-
-[model_providers.AINexus]
-name = "AINexus"
-base_url = "http://localhost:3000/v1"
-wire_api = "responses"  # or "chat"
-
-# Other settings
-```
-
-`~/.codex/auth.json` can be ignored because AINexus handles endpoint or Token Pool authentication.
-
 ## Runtime Modes
 
-| Mode | Entry | Best For |
+| Mode | Entry | Best for |
 |------|-------|----------|
-| Desktop | `cmd/desktop` | Local GUI, tray app, visual endpoint and Token Pool management |
-| Server | `cmd/server` | Remote servers, NAS, Docker, and headless HTTP proxy usage |
+| Desktop | `cmd/desktop` | Local GUI, tray operation, visual management |
+| Server | `cmd/server` | Servers, NAS, Docker, and web management |
 
-Server mode supports `AINEXUS_PORT`, `AINEXUS_LOG_LEVEL`, `AINEXUS_DB_PATH`, `AINEXUS_DATA_DIR`, `AINEXUS_BASIC_AUTH_USERNAME`, and `AINEXUS_BASIC_AUTH_PASSWORD`.
+Server mode supports:
+
+| Environment variable | Description | Default |
+|----------------------|-------------|---------|
+| `AINEXUS_PORT` | HTTP listening port | `3000` |
+| `AINEXUS_LISTEN_MODE` | `local` for loopback only; `lan` for all interfaces | `local`; published Docker ports require `lan` |
+| `AINEXUS_LOG_LEVEL` | `0` debug, `1` info, `2` warning, `3` error | `1` |
+| `AINEXUS_DATA_DIR` | Data directory | User data directory; `/data` in the container |
+| `AINEXUS_DB_PATH` | SQLite database path | `ainexus.db` under the data directory |
+| `AINEXUS_BASIC_AUTH_ENABLED` | Protect the Web UI and management API | `true` |
+| `AINEXUS_BASIC_AUTH_USERNAME` | Basic Auth username | `admin` |
+| `AINEXUS_BASIC_AUTH_PASSWORD` | Basic Auth password | Randomly generated on first launch |
+
+> [!WARNING]
+> When using `AINEXUS_LISTEN_MODE=lan` or exposing the service publicly, set a strong password and restrict access with a firewall or HTTPS reverse proxy. Basic Auth protects the Web UI and management API, but it is not a replacement for a proper network boundary.
+
+## Differences from the Original Project
+
+AINexus Optimized keeps the unified proxy design of [lich0821/AINexus](https://github.com/lich0821/AINexus) and adds safeguards for long-running, concurrent client workloads:
+
+- Request-local fallback and endpoint cooldowns to reduce cross-request interference
+- More precise classification for quota, rate limit, 5xx, network, and authentication failures
+- SSE heartbeat, forced upstream streaming, and empty-output detection
+- Request IDs, retry reasons, endpoint runtime state, and per-credential statistics
+
+The original design remains a good reference for lightweight local rotation. Optimized is intended for shared providers, token pools, and more complex recovery requirements.
+
+## Develop from Source
+
+```bash
+# Desktop development with hot reload
+cd cmd/desktop/frontend
+npm install
+cd ..
+wails dev
+
+# Build the server
+cd ../../cmd/server
+go build -ldflags="-s -w" -o ainexus-server .
+
+# Run all tests from the repository root
+cd ../..
+go test ./... -count=1
+```
+
+See the [Development Guide](development_en.md) for complete prerequisites and cross-platform build commands.
 
 ## Documentation
 
 - [Configuration Guide](configuration_en.md)
+- [Docker Deployment Guide](README_DOCKER.md)
 - [Development Guide](development_en.md)
 - [FAQ](FAQ_en.md)
+- [Distribution Site Development](../site/README.md)
+- [Commercial Delivery Templates](distribution/README.md)
 
 ## License
 

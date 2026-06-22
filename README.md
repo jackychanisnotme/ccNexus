@@ -14,51 +14,137 @@
 
 </div>
 
-AINexus 不只是 Claude Code、Codex CLI、Hermes Agent 与 OpenClaw 的智能端点轮换代理，也是一套面向 AI 开发工作流的 API 资源管理系统。它把端点、模型、密钥、Codex Token Pool、额度、统计和备份统一管理起来，并对外提供一个稳定的本地 API Provider：Hermes、OpenClaw、Codex、Claude Code 等客户端只需指向 AINexus，就可以在不同上游、账号、模型之间热切换，无需反复修改每个工具的配置。
+AINexus 是面向 Claude Code、Codex CLI、Hermes Agent、OpenClaw 等 AI 开发工具的本地 API Provider 与资源管理中枢。它统一管理端点、模型、API Key、Token Pool、额度、统计和备份，并在多个上游、账号和模型之间提供热切换与自动故障转移。
 
 > [!IMPORTANT]
-> 当前仓库维护 Optimized 版本，重点增强 Codex CLI、Claude Code、Hermes Agent、OpenClaw、OpenAI Responses API、DeepSeek、Kimi 等兼容场景。
+> 当前仓库维护 **AINexus Optimized**，重点增强 Codex CLI、OpenAI Responses API、Claude Code、多端点并发和复杂上游错误恢复。
 >
-> 最新发布：[`AINexus Optimized`](https://github.com/jackychanisnotme/AINexus/releases/latest)
+> [下载最新版本](https://github.com/jackychanisnotme/AINexus/releases/latest)
 
-## 功能特性
+## 快速开始
 
-- **统一 API Provider**：Claude Code、Codex CLI、Hermes Agent、OpenClaw、OpenAI Chat/Responses 兼容客户端都可以接入同一个本地地址
-- **多客户端热切换**：把 Hermes、OpenClaw、Codex、Claude Code 的 provider/base URL 都指向 AINexus 后，在 AINexus 中切换当前端点、启停端点或调整优先级，客户端即可无感切到新的上游、账号或模型
-- **API 资源管理**：集中管理端点、模型、API Key、Token Pool、额度快照、用量统计和备份数据
-- **多端点轮换与故障转移**：按顺序轮换可用端点，失败自动跳过并切换，降低单个上游异常对工作流的影响
-- **多协议格式转换**：支持 Claude、OpenAI Chat、OpenAI Responses、Gemini、DeepSeek、Kimi/Moonshot 等格式互转
-- **Codex Token Pool**：批量导入 `access_token/refresh_token`，自动轮换、401 后刷新、失效隔离，并固定适配 ChatGPT Codex 后端
-- **Token Pool 额度与用量统计**：捕获 Codex 额度快照，按单条凭证展示请求数、错误数、Token 用量和最近使用状态
-- **端点级推理控制**：为支持的端点配置 `low` / `medium` / `high` / `xhigh` 推理强度，也可显式关闭上游 thinking
-- **上游强制流式兼容**：当上游拒绝非流式请求时，可强制使用流式上游并为非流式客户端聚合结果
-- **模型聚合与兼容接口**：提供 `/v1/models`、`/models`、`/api/tags`、`/version`、`/props`、`/health`、`/stats` 等接口，便于客户端探测和监控
-- **实时统计与可视化**：事件驱动更新，支持今日/昨日/本周/本月快速切换，并可按端点、凭证维度查看
-- **桌面端 + 服务器端**：Wails 桌面应用适合本机使用，`cmd/server` 无头模式适合服务器、NAS 或 Docker 部署
-- **备份同步**：支持 WebDAV、本地备份和 S3 兼容存储，便于多设备迁移配置与统计数据
+### 桌面应用
 
-## 与初代版本的设计取舍
+从 [Releases](https://github.com/jackychanisnotme/AINexus/releases/latest) 下载对应平台的安装包：
 
-Optimized 版本延续了 [lich0821/AINexus](https://github.com/lich0821/AINexus) 初代项目“本地统一代理入口”的核心思路，但把重点从简单轮换扩展到长期运行、多端点并发和复杂上游错误恢复。初代逻辑更直接，适合轻量场景；Optimized 版本更强调韧性、可观测性和 Codex/Responses 兼容。
+- **macOS**：解压 `.zip`，将 `AINexus.app` 移入「应用程序」；首次运行可右键选择「打开」
+- **Windows**：解压 `windows-amd64.zip`，运行 `AINexus.exe`
+- **Linux**：建议从源码构建，或使用服务器模式/Docker
 
-| 维度 | 初代版本优势 | Optimized 版本增强 |
-|------|--------------|--------------------|
-| 故障切换模型 | 失败后全局轮换端点，行为直观，排查简单 | 单次请求内 fallback，不轻易改变全局默认端点，并发请求互不污染 |
-| 错误识别 | 策略简单，维护成本低 | 区分额度耗尽、限流、上游 5xx、网络异常、API Key 失效、客户端 invalid request 等场景 |
-| 端点恢复 | 没有额外状态，结果容易预测 | 失败端点进入可配置冷却，恢复后可自动返回或降优先级，减少反复打坏端点 |
-| 流式稳定性 | 实现简洁，接近传统 HTTP 代理行为 | 支持 SSE heartbeat、上游强制流式、流式错误分类和 200 但空输出的语义检测 |
-| 运维可见性 | 基础日志和统计 | Request ID、重试次数、失败原因、端点运行态与凭证级用量/额度快照 |
+启动后点击「添加端点」，填写 API 地址、密钥、认证方式、转换器和模型。默认代理地址为 `http://127.0.0.1:3000`。
 
-如果只需要一个简单的本地轮换代理，初代设计非常清爽；如果要把 Claude Code、Codex CLI、Hermes Agent、OpenClaw、Token Pool 和多个第三方上游长期放在一起跑，并在这些客户端之间共享同一个可热切换的 API Provider，Optimized 版本提供了更细的隔离、恢复和观测能力。
+### 服务器模式
 
-## 客户端兼容状态
+要求 Go 1.24+：
 
-| 客户端 | 推荐接入方式 | 当前状态 |
-|--------|--------------|----------|
-| Claude Code | Claude / Anthropic 兼容入口 | 稳定支持 |
-| Codex CLI | OpenAI Responses API，推荐 `openai2` 转换器 | 稳定支持 |
-| Hermes Agent | 按其客户端协议选择 Claude 或 OpenAI 兼容入口 | 稳定支持 |
-| OpenClaw | Claude 或 OpenAI 兼容入口 | 稳定支持 |
+```bash
+go run ./cmd/server
+```
+
+启动后访问：
+
+- API Provider：`http://127.0.0.1:3000`
+- Web 管理界面：`http://127.0.0.1:3000/ui/`
+- 健康检查：`http://127.0.0.1:3000/health`
+
+服务器模式默认启用 Basic Auth，用户名为 `admin`。首次启动且未配置密码时，程序会生成随机密码并在日志中显示一次。
+
+### Docker Compose
+
+首次启动前，确认 `cmd/server/docker-compose.yml` 的 `environment` 包含：
+
+```yaml
+- AINEXUS_LISTEN_MODE=lan
+```
+
+容器需要监听所有网卡，Docker 的宿主机端口映射才能访问服务。然后执行：
+
+```bash
+cd cmd/server
+docker compose up -d --build
+docker compose logs -f ainexus
+```
+
+默认将宿主机 `3021` 端口映射到容器的 `3000` 端口：
+
+- Web 管理界面：`http://127.0.0.1:3021/ui/`
+- 健康检查：`http://127.0.0.1:3021/health`
+
+数据保存在 `cmd/server/ainexus/`。首次启动密码可从容器日志中查看。更多说明见 [Docker 部署指南](docs/README_DOCKER.md)。
+
+## 配置客户端
+
+### Claude Code
+
+编辑 `~/.claude/settings.json`：
+
+```json
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "ainexus",
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3000",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"
+  }
+}
+```
+
+部分模型不支持 64k 输出，可按上游能力调整或移除 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`。
+
+### Codex CLI
+
+在 Codex 配置中使用 Responses API：
+
+```toml
+model_provider = "AINexus"
+model = "gpt-5-codex"
+preferred_auth_method = "apikey"
+
+[model_providers.AINexus]
+name = "AINexus"
+base_url = "http://127.0.0.1:3000/v1"
+wire_api = "responses"
+experimental_bearer_token = "ainexus-local"
+```
+
+如果你的 Codex CLI 版本仍要求 `~/.codex/auth.json`，可写入占位 API Key：
+
+```json
+{"OPENAI_API_KEY":"ainexus-local"}
+```
+
+客户端侧 API Key 只用于满足客户端配置要求；真正的上游认证由 AINexus 端点或 Token Pool 管理。
+
+## 添加端点
+
+常用转换器：
+
+| 转换器 | 上游协议 | 典型场景 |
+|--------|----------|----------|
+| `claude` | Claude / Anthropic | Claude 官方或兼容接口 |
+| `openai` | OpenAI Chat Completions | OpenAI Chat 兼容上游 |
+| `openai2` | OpenAI Responses | Codex CLI、Responses 兼容上游 |
+| `gemini` | Google Gemini | Gemini 原生接口 |
+| `deepseek` | OpenAI Chat 兼容 | DeepSeek |
+| `kimi` | OpenAI Chat 兼容 | Kimi / Moonshot |
+
+除 `claude` 外的转换器通常需要填写目标模型。
+
+使用 Codex Token Pool 时：
+
+1. 认证方式选择 `Codex Token Pool`
+2. 在 Token Pool 页面导入包含 `access_token` 和 `refresh_token` 的 token JSON
+3. AINexus 自动设置 Codex 上游地址与 `openai2` 转换器，并处理轮换、刷新、额度快照和失效隔离
+
+## 核心能力
+
+- **统一 API Provider**：多个 AI 客户端接入同一个本地地址
+- **多端点轮换与故障转移**：单次请求内 fallback，避免并发请求污染全局默认端点
+- **协议转换**：支持 Claude、OpenAI Chat、OpenAI Responses、Gemini、DeepSeek、Kimi/Moonshot
+- **Token Pool 管理**：凭证轮换、401 刷新、失效隔离、额度与用量统计
+- **推理与流式控制**：端点级 reasoning 强度、关闭 thinking、上游强制流式和 SSE heartbeat
+- **实时监控**：请求统计、错误分类、端点运行态、Request ID 和凭证级用量
+- **模型与兼容接口**：提供 `/v1/models`、`/models`、`/api/tags`、`/version`、`/props`、`/health`、`/stats`
+- **备份同步**：支持 WebDAV、本地备份和 S3 兼容存储
 
 <table>
   <tr>
@@ -67,89 +153,68 @@ Optimized 版本延续了 [lich0821/AINexus](https://github.com/lich0821/AINexus
   </tr>
 </table>
 
-## 快速开始
-
-### 1. 下载安装
-
-[下载当前 fork 最新版本](https://github.com/jackychanisnotme/AINexus/releases/latest)
-
-- **macOS**：下载 `.zip` 后解压，将 `AINexus.app` 移动到「应用程序」，首次运行右键点击 → 打开
-- **Windows**：下载 `windows-amd64.zip` 后解压，运行 `AINexus.exe`
-- **Linux**：可从源码构建，或使用服务器模式/Docker 部署
-- **服务器模式**：`cd cmd/server && go run main.go`
-
-### 2. 添加端点
-
-点击「添加端点」，填写 API 地址、密钥、认证方式、转换器和目标模型。
-
-常用转换器：
-- `claude`：Claude / Anthropic 兼容接口
-- `openai`：OpenAI Chat Completions 兼容接口
-- `openai2`：OpenAI Responses API，推荐给 Codex CLI
-- `gemini`：Google Gemini
-- `deepseek`：DeepSeek Chat 兼容接口
-- `kimi`：Kimi / Moonshot 兼容接口
-
-如需使用 Codex Token Pool：
-- 认证方式选择 `Codex Token Pool`
-- 在 Token Pool 页面导入一批 token JSON（支持 `access_token` + `refresh_token`）
-- 系统会自动设置上游地址与 `openai2` 转换器，并处理 token 轮换、401 后刷新、额度快照和状态管理
-
-可选增强：
-- 对支持 reasoning 的端点启用「推理」，选择推理强度
-- 上游只接受流式时，启用「上游强制流式」
-- 点击模型选择旁的拉取按钮，快速获取上游模型列表
-
-### 3. 配置客户端
-
-#### Claude Code
-`~/.claude/settings.json`
-```json
-{
-  "env": {
-    "ANTHROPIC_AUTH_TOKEN": "随便写，不重要",
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3000",
-    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000", // 有些模型可能不支持 64k
-  }
-  // 其他配置
-}
-
-```
-
-#### Codex CLI
-推荐使用 Responses API：
-```toml
-model_provider = "AINexus"
-model = "gpt-5-codex"
-preferred_auth_method = "apikey"
-
-[model_providers.AINexus]
-name = "AINexus"
-base_url = "http://localhost:3000/v1"
-wire_api = "responses"  # 或 "chat"
-
-# 其他配置
-```
-
-`~/.codex/auth.json` 可以忽略，认证由 AINexus 端点或 Token Pool 负责。
-
 ## 运行模式
 
 | 模式 | 入口 | 适合场景 |
 |------|------|----------|
-| 桌面模式 | `cmd/desktop` | 本机 GUI、托盘运行、可视化端点和 Token Pool 管理 |
-| 服务器模式 | `cmd/server` | 远程服务器、NAS、Docker、无头 API 代理 |
+| 桌面模式 | `cmd/desktop` | 本机 GUI、托盘运行、可视化管理 |
+| 服务器模式 | `cmd/server` | 服务器、NAS、Docker、Web 管理 |
 
-服务器模式支持 `AINEXUS_PORT`、`AINEXUS_LOG_LEVEL`、`AINEXUS_DB_PATH`、`AINEXUS_DATA_DIR`、`AINEXUS_BASIC_AUTH_USERNAME`、`AINEXUS_BASIC_AUTH_PASSWORD` 等环境变量。
+服务器模式支持：
+
+| 环境变量 | 说明 | 默认值 |
+|----------|------|--------|
+| `AINEXUS_PORT` | HTTP 监听端口 | `3000` |
+| `AINEXUS_LISTEN_MODE` | `local` 仅本机；`lan` 监听所有网卡 | `local`；Docker 端口映射需设为 `lan` |
+| `AINEXUS_LOG_LEVEL` | `0` 调试、`1` 信息、`2` 警告、`3` 错误 | `1` |
+| `AINEXUS_DATA_DIR` | 数据目录 | 用户数据目录；容器内为 `/data` |
+| `AINEXUS_DB_PATH` | SQLite 数据库路径 | 数据目录下的 `ainexus.db` |
+| `AINEXUS_BASIC_AUTH_ENABLED` | 是否保护 Web UI 和管理 API | `true` |
+| `AINEXUS_BASIC_AUTH_USERNAME` | Basic Auth 用户名 | `admin` |
+| `AINEXUS_BASIC_AUTH_PASSWORD` | Basic Auth 密码 | 首次启动随机生成 |
+
+> [!WARNING]
+> 使用 `AINEXUS_LISTEN_MODE=lan` 或对公网暴露服务时，请设置强密码，并通过防火墙或 HTTPS 反向代理限制访问。Basic Auth 保护 Web UI 和管理 API，不应替代完整的网络边界保护。
+
+## 与初代版本的差异
+
+AINexus Optimized 延续了 [lich0821/AINexus](https://github.com/lich0821/AINexus) 的统一代理入口设计，并面向长期运行和多客户端并发加强：
+
+- 请求级 fallback 与端点冷却，减少不同请求之间的状态干扰
+- 更细的额度耗尽、限流、5xx、网络和认证错误分类
+- SSE heartbeat、强制上游流式和空输出检测
+- Request ID、重试原因、端点运行态及凭证级统计
+
+轻量、本地、简单轮换场景可以参考初代设计；需要共享 Provider、Token Pool 和复杂错误恢复时，Optimized 版本提供更完整的运行保障。
+
+## 从源码开发
+
+```bash
+# 桌面开发（热重载）
+cd cmd/desktop/frontend
+npm install
+cd ..
+wails dev
+
+# 构建服务器
+cd ../../cmd/server
+go build -ldflags="-s -w" -o ainexus-server .
+
+# 运行全部测试（仓库根目录）
+cd ../..
+go test ./... -count=1
+```
+
+完整依赖和跨平台构建命令见 [开发指南](docs/development.md)。
 
 ## 文档
 
 - [详细配置](docs/configuration.md)
+- [Docker 部署指南](docs/README_DOCKER.md)
 - [开发指南](docs/development.md)
 - [常见问题](docs/FAQ.md)
-- [第一阶段分发验证方案](docs/codex-goal-phase1-distribution.md)
-- [商业交付模板](docs/distribution/README.md)
 - [独立站开发说明](site/README.md)
+- [商业交付模板](docs/distribution/README.md)
 
 ## 许可证
 
