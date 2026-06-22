@@ -16,7 +16,7 @@ test('renders the AINexus brand icon in the header', () => {
         headerTemplate,
         /<img class="app-brand-icon" src="\/ainexus-icon\.png" alt="" aria-hidden="true">/,
     );
-    assert.doesNotMatch(headerTemplate, /<h1>🚀/);
+    assert.doesNotMatch(uiSource, /<h1>🚀/);
 });
 
 test('ships the AINexus header brand icon asset', () => {
