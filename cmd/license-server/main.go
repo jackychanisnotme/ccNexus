@@ -222,7 +222,10 @@ const adminHTML = `<!doctype html>
     button{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;padding:8px 12px;font-weight:700;cursor:pointer;white-space:nowrap}button:hover{filter:brightness(.96)}button:active{transform:translateY(1px)}
     button.secondary{background:#fff;color:var(--accent)}button.danger{border-color:var(--danger);background:var(--danger);color:#fff}.small-btn{padding:6px 9px;font-size:12px}
     table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid #e7ebf0;padding:8px;text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);background:#fafbfc;position:sticky;top:0}
-    .table-wrap{overflow:auto;max-height:430px;border:1px solid #e7ebf0;border-radius:6px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.muted{color:var(--muted)}.status-active{color:var(--ok);font-weight:700}.status-disabled{color:var(--danger);font-weight:700}
+    .table-wrap{overflow:auto;max-height:480px;border:1px solid #e7ebf0;border-radius:6px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.muted{color:var(--muted)}.status-active{color:var(--ok);font-weight:700}.status-disabled,.status-expired{color:var(--danger);font-weight:700}
+    .section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.section-head h2{margin:0}.inline-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}.inline-check input{width:auto;margin:0}
+    .device-detail td{padding:0;background:#f8fafc}.device-detail[hidden]{display:none}.detail-inner{padding:12px 16px}.detail-inner table{background:#fff}.detail-inner th{position:static}.detail-label{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px}
+    dialog{width:min(460px,calc(100% - 32px));border:1px solid var(--line);border-radius:8px;padding:0;color:var(--text);box-shadow:0 18px 55px rgba(23,32,51,.18)}dialog::backdrop{background:rgba(23,32,51,.38)}.dialog-body{padding:18px}.dialog-body h2{font-size:16px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
     #generated{white-space:pre-wrap;word-break:break-all;background:#f8fafc;border:1px solid #e7ebf0;border-radius:6px;padding:10px;margin-top:12px;max-height:180px;overflow:auto}.message{min-height:20px;margin-top:10px;color:var(--danger)}.empty{text-align:center;color:var(--muted);padding:20px!important}
     @media(max-width:980px){.grid{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}.toolbar{width:100%;justify-content:space-between}.row{grid-template-columns:1fr}}
   </style>
@@ -256,16 +259,29 @@ const adminHTML = `<!doctype html>
         <div class="table-wrap"><table><thead><tr><th>ID</th><th>状态</th><th>套餐</th><th>天数</th><th>设备</th><th>客户/备注</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="cards"><tr><td colspan="8" class="empty">加载中</td></tr></tbody></table></div>
       </section>
       <section>
-        <h2>设备激活</h2>
-        <div class="table-wrap"><table><thead><tr><th>ID</th><th>卡ID</th><th>设备ID</th><th>状态</th><th>到期</th><th>最近校验</th><th>平台/版本</th><th>IP</th><th>操作</th></tr></thead><tbody id="activations"><tr><td colspan="9" class="empty">加载中</td></tr></tbody></table></div>
+        <h2>设备授权</h2>
+        <div class="table-wrap"><table><thead><tr><th>设备ID</th><th>状态</th><th>当前到期</th><th>最近校验</th><th>平台/版本</th><th>IP</th><th>兑换次数</th><th>操作</th></tr></thead><tbody id="devices"><tr><td colspan="8" class="empty">加载中</td></tr></tbody></table></div>
       </section>
       <section>
-        <h2>历史记录</h2>
+        <div class="section-head"><h2>历史记录</h2><label class="inline-check"><input id="showRefresh" type="checkbox" onchange="renderHistory()">显示自动刷新</label></div>
         <div class="table-wrap"><table><thead><tr><th>ID</th><th>动作</th><th>对象</th><th>详情</th><th>时间</th></tr></thead><tbody id="history"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table></div>
       </section>
     </div>
   </main>
+  <dialog id="expiryDialog">
+    <form class="dialog-body" onsubmit="submitExpiry(event)">
+      <h2>修改设备到期时间</h2>
+      <div id="expiryDevice" class="mono muted"></div>
+      <label for="expiryInput">新的到期时间</label>
+      <input id="expiryInput" type="datetime-local" step="1" required>
+      <div class="dialog-actions"><button type="button" class="secondary" onclick="expiryDialog.close()">取消</button><button type="submit">保存</button></div>
+    </form>
+  </dialog>
   <script>
+    let historyRows = [];
+    let editingDeviceId = '';
+    const historyBody = document.getElementById('history');
+    const showRefreshInput = document.getElementById('showRefresh');
     async function api(path, options={}) {
       const headers = Object.assign({'Content-Type':'application/json'}, options.headers || {});
       const res = await fetch(path, Object.assign({}, options, {credentials:'same-origin', headers}));
@@ -281,8 +297,10 @@ const adminHTML = `<!doctype html>
     function esc(v){return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
     function dt(v){return v ? new Date(v).toLocaleString() : '-'}
     function setError(err){message.textContent = err ? err.message || String(err) : ''}
-    function statusCell(value){return '<span class="status-'+esc(value)+'">'+esc(value)+'</span>'}
-    function actionName(value){return ({admin_login:'登录',admin_logout:'退出',generate_card:'生成卡密',activate:'激活',refresh:'刷新',disable_card:'禁用卡密',delete_card:'删除卡密',disable_activation:'禁用设备'}[value] || value)}
+    function statusCell(value){const names={active:'有效',disabled:'已禁用',expired:'已到期'};return '<span class="status-'+esc(value)+'">'+esc(names[value]||value)+'</span>'}
+    function actionName(value){return ({admin_login:'登录',admin_logout:'退出',generate_card:'生成卡密',activate:'兑换卡密',refresh:'自动校验',disable_card:'禁用卡密',delete_card:'删除卡密',disable_activation:'禁用授权明细',set_device_expiry:'修改设备到期'}[value] || value)}
+    function planName(value){return ({monthly:'月卡',quarterly:'季卡',half_year:'半年卡',yearly:'年卡',custom:'自定义'}[value] || value)}
+    function toLocalInput(value){const date=new Date(value);date.setMinutes(date.getMinutes()-date.getTimezoneOffset());return date.toISOString().slice(0,19)}
     async function generateCards(){
       setError('');
       try {
@@ -296,18 +314,26 @@ const adminHTML = `<!doctype html>
       const rows = await api('/api/admin/cards');
       cards.innerHTML = rows.length ? rows.map(c => '<tr><td>'+c.id+'</td><td>'+statusCell(c.status)+'</td><td>'+esc(c.plan)+'</td><td>'+c.days+'</td><td>'+c.activations+'/'+c.maxDevices+'</td><td>'+esc(c.customer)+'<br><span class="muted">'+esc(c.remark)+'</span></td><td>'+dt(c.createdAt)+'</td><td><div class="actions">'+(c.status==='active'?'<button class="danger small-btn" onclick="disableCard('+c.id+')">禁用</button>':'')+'<button class="danger small-btn" onclick="deleteCard('+c.id+')">删除</button></div></td></tr>').join('') : '<tr><td colspan="8" class="empty">暂无卡密</td></tr>';
     }
-    async function refreshActivations(){
-      const rows = await api('/api/admin/activations');
-      activations.innerHTML = rows.length ? rows.map(a => '<tr><td>'+a.id+'</td><td>'+a.cardId+'</td><td class="mono">'+esc(a.deviceId)+'</td><td>'+statusCell(a.status)+'</td><td>'+dt(a.expiresAt)+'</td><td>'+dt(a.lastCheckedAt)+'</td><td>'+esc(a.platform)+'<br><span class="muted">'+esc(a.appVersion)+'</span></td><td class="mono">'+esc(a.ipAddress)+'</td><td>'+(a.status==='active'?'<button class="danger small-btn" onclick="disableActivation('+a.id+')">禁用</button>':'-')+'</td></tr>').join('') : '<tr><td colspan="9" class="empty">暂无激活设备</td></tr>';
+    function licenseRows(device){
+      return device.licenses.map(a => '<tr><td>'+a.cardId+'</td><td>'+statusCell(a.status)+'</td><td>'+esc(planName(a.plan))+' / '+a.days+'天</td><td>'+dt(a.activatedAt)+'</td><td>'+dt(a.expiresAt)+'</td><td>'+esc(a.customer)+'<br><span class="muted">'+esc(a.remark)+'</span></td><td>'+(a.status==='active'?'<button class="danger small-btn" onclick="disableActivation('+a.id+')">禁用此明细</button>':'-')+'</td></tr>').join('');
+    }
+    async function refreshDevices(){
+      const rows = await api('/api/admin/devices');
+      devices.innerHTML = rows.length ? rows.map((d,index) => '<tr><td class="mono">'+esc(d.deviceId)+'</td><td>'+statusCell(d.status)+'</td><td>'+dt(d.expiresAt)+'</td><td>'+dt(d.lastCheckedAt)+'</td><td>'+esc(d.platform)+'<br><span class="muted">'+esc(d.appVersion)+'</span></td><td class="mono">'+esc(d.ipAddress)+'</td><td>'+d.licenses.length+'</td><td><div class="actions"><button class="secondary small-btn" onclick="toggleDevice('+index+')">明细</button><button class="small-btn" onclick="openExpiry('+index+')">修改到期</button>'+(d.status==='active'?'<button class="danger small-btn" onclick="disableActivation('+d.currentActivationId+')">禁用当前</button>':'')+'</div></td></tr><tr id="device-detail-'+index+'" class="device-detail" hidden><td colspan="8"><div class="detail-inner"><div class="detail-label">卡密兑换与失效明细</div><table><thead><tr><th>卡ID</th><th>状态</th><th>套餐</th><th>兑换时间</th><th>该次累计到期</th><th>客户/备注</th><th>操作</th></tr></thead><tbody>'+licenseRows(d)+'</tbody></table></div></td></tr>').join('') : '<tr><td colspan="8" class="empty">暂无授权设备</td></tr>';
+      window.deviceRows = rows;
     }
     async function refreshHistory(){
-      const rows = await api('/api/admin/history');
-      history.innerHTML = rows.length ? rows.map(h => '<tr><td>'+h.id+'</td><td>'+esc(actionName(h.action))+'</td><td>'+esc(h.targetType)+' #'+h.targetId+'</td><td class="mono">'+esc(h.detail)+'</td><td>'+dt(h.createdAt)+'</td></tr>').join('') : '<tr><td colspan="5" class="empty">暂无历史记录</td></tr>';
+      historyRows = await api('/api/admin/history');
+      renderHistory();
     }
-    async function disableCard(id){if(confirm('禁用这张卡密？')){try{await api('/api/admin/cards/'+id+'/disable',{method:'POST'});await refreshAll();}catch(err){setError(err);}}}
+    function renderHistory(){const rows=showRefreshInput.checked?historyRows:historyRows.filter(h=>h.action!=='refresh');historyBody.innerHTML=rows.length?rows.map(h=>'<tr><td>'+h.id+'</td><td>'+esc(actionName(h.action))+'</td><td>'+esc(h.targetType)+' #'+h.targetId+'</td><td class="mono">'+esc(h.detail||'-')+'</td><td>'+dt(h.createdAt)+'</td></tr>').join(''):'<tr><td colspan="5" class="empty">暂无历史记录</td></tr>'}
+    function toggleDevice(index){const row=document.getElementById('device-detail-'+index);row.hidden=!row.hidden}
+    function openExpiry(index){const device=window.deviceRows[index];editingDeviceId=device.deviceId;expiryDevice.textContent=device.deviceId;expiryInput.value=toLocalInput(device.expiresAt);expiryDialog.showModal()}
+    async function submitExpiry(event){event.preventDefault();try{await api('/api/admin/devices/expiry',{method:'PATCH',body:JSON.stringify({deviceId:editingDeviceId,expiresAt:new Date(expiryInput.value).toISOString()})});expiryDialog.close();await refreshAll();}catch(err){setError(err)}}
+    async function disableCard(id){if(confirm('禁用这张卡密？该卡对应的激活会立即失效，到期时间会同步调整。')){try{await api('/api/admin/cards/'+id+'/disable',{method:'POST'});await refreshAll();}catch(err){setError(err);}}}
     async function deleteCard(id){if(confirm('删除这张卡密及其设备激活记录？')){try{await api('/api/admin/cards/'+id,{method:'DELETE'});await refreshAll();}catch(err){setError(err);}}}
-    async function disableActivation(id){if(confirm('禁用这个设备激活？')){try{await api('/api/admin/activations/'+id+'/disable',{method:'POST'});await refreshAll();}catch(err){setError(err);}}}
-    async function refreshAll(){setError('');try{await Promise.all([refreshCards(),refreshActivations(),refreshHistory()]);}catch(err){setError(err);}}
+    async function disableActivation(id){if(confirm('禁用这条授权明细？它的到期时间会立即调整。')){try{await api('/api/admin/activations/'+id+'/disable',{method:'POST'});await refreshAll();}catch(err){setError(err);}}}
+    async function refreshAll(){setError('');try{await Promise.all([refreshCards(),refreshDevices(),refreshHistory()]);}catch(err){setError(err);}}
     async function copyGenerated(){try{await navigator.clipboard.writeText(generated.textContent || '');}catch(err){setError(err);}}
     async function logout(){try{await api('/api/admin/logout',{method:'POST'});}finally{location.replace('/admin/login');}}
     refreshAll();

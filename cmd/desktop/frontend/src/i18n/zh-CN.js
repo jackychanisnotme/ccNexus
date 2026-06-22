@@ -799,7 +799,7 @@ export default {
     },
     agent: {
         title: 'AI Agent',
-        button: 'AI Agent',
+        button: 'AI 助手',
         taskPlaceholder: '告诉 AINexus 你想做什么...',
         newChat: '新对话',
         history: '本地记录',
@@ -835,7 +835,7 @@ export default {
     },
     agentProvider: {
         title: 'Agent Provider',
-        button: 'Agent Provider',
+        button: '智能体配置',
         targetUrl: '目标地址',
         detected: '已检测',
         missing: '未初始化',

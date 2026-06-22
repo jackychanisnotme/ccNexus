@@ -3,6 +3,7 @@ package onlinelicense
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -105,6 +106,10 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveAdmin(w, r, h.handleActivations)
 	case strings.HasPrefix(path, "/api/admin/activations/") && strings.HasSuffix(path, "/disable"):
 		h.serveAdminMutation(w, r, h.handleDisableActivation)
+	case path == "/api/admin/devices/expiry":
+		h.serveAdminMutation(w, r, h.handleSetDeviceExpiry)
+	case path == "/api/admin/devices":
+		h.serveAdmin(w, r, h.handleDevices)
 	case path == "/api/admin/history":
 		h.serveAdmin(w, r, h.handleHistory)
 	default:
@@ -292,6 +297,44 @@ func (h *HTTPHandler) handleDisableActivation(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSONSuccess(w, map[string]bool{"disabled": true})
+}
+
+func (h *HTTPHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	devices, err := h.service.ListDevices()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSONSuccess(w, devices)
+}
+
+func (h *HTTPHandler) handleSetDeviceExpiry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req SetDeviceExpiryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.DeviceID) == "" || req.ExpiresAt.IsZero() {
+		writeJSONError(w, http.StatusBadRequest, "device id and expiry are required")
+		return
+	}
+	if err := h.service.SetDeviceExpiry(req.DeviceID, req.ExpiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "device not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSONSuccess(w, map[string]bool{"updated": true})
 }
 
 func (h *HTTPHandler) handleHistory(w http.ResponseWriter, r *http.Request) {

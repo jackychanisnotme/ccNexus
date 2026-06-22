@@ -223,6 +223,77 @@ func TestAdminCanDeleteCardAndViewHistory(t *testing.T) {
 	}
 }
 
+func TestAdminDevicesEndpointGroupsRowsAndAllowsExpiryUpdate(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	cookie := loginAdmin(t, handler)
+	firstKey := generateHTTPCard(t, handler, 1)
+	secondKey := generateHTTPCard(t, handler, 1)
+
+	for _, cardKey := range []string{firstKey, secondKey} {
+		req := httptest.NewRequest(http.MethodPost, "/api/license/activate", strings.NewReader(`{"cardKey":"`+cardKey+`","deviceId":"device-a"}`))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("activate status = %d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/devices", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("devices status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var devices struct {
+		Data []DeviceRecord `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &devices); err != nil {
+		t.Fatalf("decode devices: %v", err)
+	}
+	if len(devices.Data) != 1 || len(devices.Data[0].Licenses) != 2 {
+		t.Fatalf("unexpected devices response: %s", rec.Body.String())
+	}
+
+	wantExpiry := time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC)
+	body := `{"deviceId":"device-a","expiresAt":"` + wantExpiry.Format(time.RFC3339) + `"}`
+	req = httptest.NewRequest(http.MethodPatch, "/api/admin/devices/expiry", strings.NewReader(body))
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set expiry status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/devices", nil)
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if err := json.Unmarshal(rec.Body.Bytes(), &devices); err != nil {
+		t.Fatalf("decode updated devices: %v", err)
+	}
+	if !devices.Data[0].ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("updated expiry = %s, want %s", devices.Data[0].ExpiresAt, wantExpiry)
+	}
+}
+
+func TestAdminEmptyListEndpointsReturnArrays(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	cookie := loginAdmin(t, handler)
+	for _, path := range []string{"/api/admin/cards", "/api/admin/devices", "/api/admin/history"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%s", path, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), `"data":null`) {
+			t.Fatalf("%s returned null list: %s", path, rec.Body.String())
+		}
+	}
+}
+
 func newTestHTTPHandler(t *testing.T) http.Handler {
 	t.Helper()
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "license.db"))

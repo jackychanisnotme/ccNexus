@@ -12,6 +12,8 @@ const modalSource = readFileSync(resolve(frontendRoot, 'src/modules/modal.js'), 
 const endpointsSource = readFileSync(resolve(frontendRoot, 'src/modules/endpoints.js'), 'utf8');
 const agentProviderSource = readFileSync(resolve(frontendRoot, 'src/modules/agentProvider.js'), 'utf8');
 const cssSource = readFileSync(resolve(frontendRoot, 'src/style.css'), 'utf8');
+const zhSource = readFileSync(resolve(frontendRoot, 'src/i18n/zh-CN.js'), 'utf8');
+const enSource = readFileSync(resolve(frontendRoot, 'src/i18n/en.js'), 'utf8');
 
 describe('endpoint modal option layout', () => {
     it('uses horizontal option labels for reasoning and force-stream checkboxes', () => {
@@ -178,6 +180,13 @@ describe('endpoint modal option layout', () => {
         assert.match(agentProviderSource, /RestoreAgentProviderBackup/);
         assert.match(agentProviderSource, /agentProviderTargets/);
         assert.match(cssSource, /\.agent-provider-modal/);
+    });
+
+    it('localizes the agent header buttons in Simplified Chinese', () => {
+        assert.match(zhSource, /agent:\s*{[\s\S]*?button:\s*'AI 助手'/);
+        assert.match(zhSource, /agentProvider:\s*{[\s\S]*?button:\s*'智能体配置'/);
+        assert.match(enSource, /agent:\s*{[\s\S]*?button:\s*'AI Agent'/);
+        assert.match(enSource, /agentProvider:\s*{[\s\S]*?button:\s*'Agent Provider'/);
     });
 
 });

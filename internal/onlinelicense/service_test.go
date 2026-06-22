@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,12 +53,19 @@ func TestGenerateCardsStoresOnlyHashAndEnforcesDeviceLimit(t *testing.T) {
 		t.Fatalf("third device activation succeeded, want device limit error")
 	}
 
+	beforeRepeat, err := service.store.FindActivation(card.ID, "device-a")
+	if err != nil {
+		t.Fatalf("find activation before repeat: %v", err)
+	}
 	again, err := service.Activate(ActivationRequest{CardKey: card.CardKey, DeviceID: "device-a"})
 	if err != nil {
 		t.Fatalf("repeat activation on same device: %v", err)
 	}
 	if again.Status != ActivationStatusActive {
 		t.Fatalf("repeat activation status = %q, want active", again.Status)
+	}
+	if !again.ExpiresAt.Equal(beforeRepeat.ExpiresAt) {
+		t.Fatalf("repeat activation extended expiry from %s to %s", beforeRepeat.ExpiresAt, again.ExpiresAt)
 	}
 }
 
@@ -193,6 +201,180 @@ func TestActivationExtendsFromExistingExpiryWhenRenewing(t *testing.T) {
 	wantAfterExpired := current.AddDate(0, 0, 30)
 	if !thirdActivation.ExpiresAt.Equal(wantAfterExpired) {
 		t.Fatalf("post-expiry renewal = %s, want %s", thirdActivation.ExpiresAt, wantAfterExpired)
+	}
+}
+
+func TestListDevicesGroupsRedemptionsByDevice(t *testing.T) {
+	now := time.Date(2026, 6, 19, 8, 0, 0, 0, time.UTC)
+	current := now
+	store := newTestStore(t)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	service := NewService(store, privateKey, Options{Now: func() time.Time { return current }})
+
+	first := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanMonthly, Count: 1})
+	if _, err := service.Activate(ActivationRequest{CardKey: first.CardKey, DeviceID: "device-a", Platform: "darwin", AppVersion: "6.3.2"}); err != nil {
+		t.Fatalf("activate first card: %v", err)
+	}
+	current = now.AddDate(0, 0, 1)
+	second := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanYearly, Count: 1})
+	secondActivation, err := service.Activate(ActivationRequest{CardKey: second.CardKey, DeviceID: "device-a", Platform: "darwin", AppVersion: "6.3.3"})
+	if err != nil {
+		t.Fatalf("activate second card: %v", err)
+	}
+
+	devices, err := service.ListDevices()
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices = %d, want 1: %#v", len(devices), devices)
+	}
+	device := devices[0]
+	if device.DeviceID != "device-a" || len(device.Licenses) != 2 {
+		t.Fatalf("unexpected grouped device: %#v", device)
+	}
+	if !device.ExpiresAt.Equal(secondActivation.ExpiresAt) {
+		t.Fatalf("device expiry = %s, want %s", device.ExpiresAt, secondActivation.ExpiresAt)
+	}
+	if device.AppVersion != "6.3.3" || device.Status != ActivationStatusActive {
+		t.Fatalf("unexpected device metadata/status: %#v", device)
+	}
+}
+
+func TestDisableCardClampsItsActivationAndRollsDeviceBack(t *testing.T) {
+	now := time.Date(2026, 6, 19, 8, 0, 0, 0, time.UTC)
+	current := now
+	store := newTestStore(t)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	service := NewService(store, privateKey, Options{Now: func() time.Time { return current }})
+
+	first := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanMonthly, Count: 1})
+	firstActivation, err := service.Activate(ActivationRequest{CardKey: first.CardKey, DeviceID: "device-a"})
+	if err != nil {
+		t.Fatalf("activate first card: %v", err)
+	}
+	current = now.AddDate(0, 0, 1)
+	second := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanMonthly, Count: 1})
+	secondActivation, err := service.Activate(ActivationRequest{CardKey: second.CardKey, DeviceID: "device-a"})
+	if err != nil {
+		t.Fatalf("activate second card: %v", err)
+	}
+	if err := service.DisableCard(second.ID); err != nil {
+		t.Fatalf("disable second card: %v", err)
+	}
+
+	disabled, err := store.GetActivation(secondActivation.ActivationID)
+	if err != nil {
+		t.Fatalf("get disabled activation: %v", err)
+	}
+	if disabled.Status != ActivationStatusDisabled || disabled.ExpiresAt.After(current) {
+		t.Fatalf("disabled activation was not clamped: %#v", disabled)
+	}
+	devices, err := service.ListDevices()
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+	if len(devices) != 1 || !devices[0].ExpiresAt.Equal(firstActivation.ExpiresAt) {
+		t.Fatalf("device did not roll back to prior entitlement: %#v", devices)
+	}
+}
+
+func TestSetDeviceExpiryChangesEffectiveExpiryAndWritesAudit(t *testing.T) {
+	now := time.Date(2026, 6, 19, 8, 0, 0, 0, time.UTC)
+	service := newTestService(t, now)
+	first := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanMonthly, Count: 1})
+	if _, err := service.Activate(ActivationRequest{CardKey: first.CardKey, DeviceID: "device-a"}); err != nil {
+		t.Fatalf("activate first card: %v", err)
+	}
+	second := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanMonthly, Count: 1})
+	if _, err := service.Activate(ActivationRequest{CardKey: second.CardKey, DeviceID: "device-a"}); err != nil {
+		t.Fatalf("activate second card: %v", err)
+	}
+
+	wantExpiry := now.AddDate(0, 0, 7)
+	if err := service.SetDeviceExpiry("device-a", wantExpiry); err != nil {
+		t.Fatalf("set device expiry: %v", err)
+	}
+	devices, err := service.ListDevices()
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+	if len(devices) != 1 || !devices[0].ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("device expiry = %#v, want %s", devices, wantExpiry)
+	}
+	history, err := service.ListAudit()
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	found := false
+	for _, item := range history {
+		if item.Action == "set_device_expiry" && strings.Contains(item.Detail, "device-a") && strings.Contains(item.Detail, wantExpiry.Format(time.RFC3339)) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("set_device_expiry audit missing: %#v", history)
+	}
+}
+
+func TestStoreInitClampsLegacyDisabledActivationExpiry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "license.db")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	now := time.Date(2026, 6, 19, 8, 0, 0, 0, time.UTC)
+	card := &CardRecord{
+		CardHash:   HashCardKey("legacy-card"),
+		Plan:       PlanMonthly,
+		Days:       30,
+		MaxDevices: 1,
+		Status:     CardStatusActive,
+		CreatedAt:  now,
+	}
+	if err := store.CreateCard(card); err != nil {
+		t.Fatalf("create card: %v", err)
+	}
+	activation := &ActivationRecord{
+		CardID:        card.ID,
+		DeviceID:      "device-legacy",
+		Status:        ActivationStatusActive,
+		ActivatedAt:   now,
+		ExpiresAt:     now.AddDate(1, 0, 0),
+		LastCheckedAt: now,
+	}
+	if err := store.UpsertActivation(activation); err != nil {
+		t.Fatalf("create activation: %v", err)
+	}
+	disabledAt := now.AddDate(0, 0, 2)
+	if _, err := store.db.Exec(`
+		UPDATE license_activations
+		SET status = ?, disabled_at = ?, expires_at = ?
+		WHERE id = ?
+	`, ActivationStatusDisabled, formatTime(disabledAt), formatTime(now.AddDate(2, 0, 0)), activation.ID); err != nil {
+		t.Fatalf("seed legacy activation: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer reopened.Close()
+	got, err := reopened.GetActivation(activation.ID)
+	if err != nil {
+		t.Fatalf("get migrated activation: %v", err)
+	}
+	if !got.ExpiresAt.Equal(disabledAt) {
+		t.Fatalf("legacy disabled expiry = %s, want %s", got.ExpiresAt, disabledAt)
 	}
 }
 

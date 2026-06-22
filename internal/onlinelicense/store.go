@@ -84,6 +84,10 @@ func (s *SQLiteStore) init() error {
 	CREATE INDEX IF NOT EXISTS idx_license_activations_status ON license_activations(status);
 	CREATE INDEX IF NOT EXISTS idx_license_activations_expires ON license_activations(expires_at);
 	CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON admin_audit_logs(created_at);
+
+	UPDATE license_activations
+	SET expires_at = disabled_at, updated_at = CURRENT_TIMESTAMP
+	WHERE status = 'disabled' AND disabled_at IS NOT NULL AND expires_at > disabled_at;
 	`
 	_, err := s.db.Exec(schema)
 	return err
@@ -138,7 +142,7 @@ func (s *SQLiteStore) ListCards() ([]CardRecord, error) {
 	}
 	defer rows.Close()
 
-	var result []CardRecord
+	result := make([]CardRecord, 0)
 	for rows.Next() {
 		card, err := scanCardWithCount(rows)
 		if err != nil {
@@ -150,8 +154,40 @@ func (s *SQLiteStore) ListCards() ([]CardRecord, error) {
 }
 
 func (s *SQLiteStore) DisableCard(id int64, now time.Time) error {
-	_, err := s.db.Exec(`UPDATE license_cards SET status = ?, disabled_at = ? WHERE id = ?`, CardStatusDisabled, formatTime(now), id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	result, err := tx.Exec(`UPDATE license_cards SET status = ?, disabled_at = ? WHERE id = ?`, CardStatusDisabled, formatTime(now), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrInvalidCard
+	}
+	if _, err := tx.Exec(`
+		UPDATE license_activations
+		SET status = ?, expires_at = CASE WHEN expires_at > ? THEN ? ELSE expires_at END,
+			disabled_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE card_id = ? AND status = ?
+	`, ActivationStatusDisabled, formatTime(now), formatTime(now), formatTime(now), id, ActivationStatusActive); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) DeleteCard(id int64) error {
@@ -229,6 +265,20 @@ func (s *SQLiteStore) ActivateCard(cardHash, deviceID string, now time.Time, pla
 	if err == nil && existing.Status == ActivationStatusDisabled {
 		return nil, ErrActivationBlocked
 	}
+	if err == nil {
+		existing.LastCheckedAt = now
+		existing.Platform = platform
+		existing.AppVersion = appVersion
+		existing.IPAddress = ipAddress
+		if err := upsertActivationTx(tx, existing); err != nil {
+			return nil, err
+		}
+		if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+			return nil, err
+		}
+		committed = true
+		return existing, nil
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		count, err := activeActivationCountTx(tx, card.ID)
 		if err != nil {
@@ -246,9 +296,7 @@ func (s *SQLiteStore) ActivateCard(cardHash, deviceID string, now time.Time, pla
 	}
 
 	base := now
-	if !existing.ExpiresAt.IsZero() && existing.ExpiresAt.After(now) {
-		base = existing.ExpiresAt
-	} else if latest, err := latestActivationForDeviceTx(tx, deviceID); err == nil && latest.ExpiresAt.After(now) {
+	if latest, err := latestActivationForDeviceTx(tx, deviceID); err == nil && latest.ExpiresAt.After(now) {
 		base = latest.ExpiresAt
 	}
 	existing.Status = ActivationStatusActive
@@ -277,6 +325,7 @@ func (s *SQLiteStore) FindActivation(cardID int64, deviceID string) (*Activation
 	row := s.db.QueryRow(`
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
+			c.status, c.plan, c.days,
 			COALESCE(c.customer, ''), COALESCE(c.remark, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
@@ -289,6 +338,7 @@ func (s *SQLiteStore) GetActivation(id int64) (*ActivationRecord, error) {
 	row := s.db.QueryRow(`
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
+			c.status, c.plan, c.days,
 			COALESCE(c.customer, ''), COALESCE(c.remark, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
@@ -301,6 +351,7 @@ func (s *SQLiteStore) LatestActivationForDevice(deviceID string) (*ActivationRec
 	row := s.db.QueryRow(`
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
+			c.status, c.plan, c.days,
 			COALESCE(c.customer, ''), COALESCE(c.remark, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
@@ -315,6 +366,7 @@ func (s *SQLiteStore) ListActivations() ([]ActivationRecord, error) {
 	rows, err := s.db.Query(`
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
+			c.status, c.plan, c.days,
 			COALESCE(c.customer, ''), COALESCE(c.remark, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
@@ -325,7 +377,7 @@ func (s *SQLiteStore) ListActivations() ([]ActivationRecord, error) {
 	}
 	defer rows.Close()
 
-	var result []ActivationRecord
+	result := make([]ActivationRecord, 0)
 	for rows.Next() {
 		activation, err := scanActivation(rows)
 		if err != nil {
@@ -379,6 +431,7 @@ func findActivationTx(tx dbRunner, cardID int64, deviceID string) (*ActivationRe
 	row := tx.QueryRow(`
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
+			c.status, c.plan, c.days,
 			COALESCE(c.customer, ''), COALESCE(c.remark, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
@@ -391,6 +444,7 @@ func latestActivationForDeviceTx(tx dbRunner, deviceID string) (*ActivationRecor
 	row := tx.QueryRow(`
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
+			c.status, c.plan, c.days,
 			COALESCE(c.customer, ''), COALESCE(c.remark, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
@@ -445,6 +499,7 @@ func findActivationForRunner(db dbRunner, cardID int64, deviceID string) (*Activ
 	row := db.QueryRow(`
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
+			c.status, c.plan, c.days,
 			COALESCE(c.customer, ''), COALESCE(c.remark, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
@@ -463,8 +518,81 @@ func (s *SQLiteStore) TouchActivation(id int64, now time.Time, platform, appVers
 }
 
 func (s *SQLiteStore) DisableActivation(id int64, now time.Time) error {
-	_, err := s.db.Exec(`UPDATE license_activations SET status = ?, disabled_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, ActivationStatusDisabled, formatTime(now), id)
-	return err
+	result, err := s.db.Exec(`
+		UPDATE license_activations
+		SET status = ?, expires_at = CASE WHEN expires_at > ? THEN ? ELSE expires_at END,
+			disabled_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, ActivationStatusDisabled, formatTime(now), formatTime(now), formatTime(now), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SetDeviceExpiry(deviceID string, expiresAt, now time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var currentID int64
+	var currentExpiry string
+	err = tx.QueryRow(`
+		SELECT id, expires_at
+		FROM license_activations
+		WHERE device_id = ? AND status = ?
+		ORDER BY expires_at DESC, id DESC
+		LIMIT 1
+	`, deviceID, ActivationStatusActive).Scan(&currentID, &currentExpiry)
+	if err != nil {
+		return err
+	}
+
+	if !expiresAt.After(now) {
+		if _, err := tx.Exec(`
+			UPDATE license_activations
+			SET status = ?, expires_at = ?, disabled_at = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE device_id = ? AND status = ?
+		`, ActivationStatusDisabled, formatTime(expiresAt), formatTime(now), deviceID, ActivationStatusActive); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.Exec(`
+			UPDATE license_activations
+			SET expires_at = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE device_id = ? AND status = ? AND expires_at > ?
+		`, formatTime(expiresAt), deviceID, ActivationStatusActive, formatTime(expiresAt)); err != nil {
+			return err
+		}
+		if parseTime(currentExpiry).Before(expiresAt) {
+			if _, err := tx.Exec(`
+				UPDATE license_activations
+				SET expires_at = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`, formatTime(expiresAt), currentID); err != nil {
+				return err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) AddAudit(action, targetType string, targetID int64, detail string, now time.Time) error {
@@ -490,7 +618,7 @@ func (s *SQLiteStore) ListAudit(limit int) ([]AuditRecord, error) {
 	}
 	defer rows.Close()
 
-	var result []AuditRecord
+	result := make([]AuditRecord, 0)
 	for rows.Next() {
 		audit, err := scanAudit(rows)
 		if err != nil {
@@ -539,6 +667,7 @@ func scanCardWithCount(row rowScanner) (*CardRecord, error) {
 
 func scanActivation(row rowScanner) (*ActivationRecord, error) {
 	activation := &ActivationRecord{}
+	var plan string
 	var activatedAt string
 	var expiresAt string
 	var lastCheckedAt string
@@ -555,12 +684,16 @@ func scanActivation(row rowScanner) (*ActivationRecord, error) {
 		&activation.Platform,
 		&activation.AppVersion,
 		&activation.IPAddress,
+		&activation.CardStatus,
+		&plan,
+		&activation.Days,
 		&activation.Customer,
 		&activation.Remark,
 	); err != nil {
 		return nil, err
 	}
 	activation.ActivatedAt = parseTime(activatedAt)
+	activation.Plan = Plan(plan)
 	activation.ExpiresAt = parseTime(expiresAt)
 	activation.LastCheckedAt = parseTime(lastCheckedAt)
 	if disabledAt.Valid {

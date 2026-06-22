@@ -194,8 +194,27 @@ AINexus/
 - 端口：`24220`
 - 管理后台：`http://207.57.134.147:24220/admin/`
 
+SSH 连接方式（仅从已配置私钥的本机使用）：
+```bash
+ssh -i ~/.ssh/wenche_ai_deploy -p 24070 root@207.57.134.147
+```
+
+共享服务器预检（部署或修改服务前先运行，只读命令优先）：
+```bash
+hostname
+date
+df -h
+free -h
+ss -ltnp
+pm2 list
+ls -la /var/www
+ls -la /etc/nginx/sites-enabled
+nginx -t
+```
+
 维护规则：
 - 修改在线授权前先读 `docs/ccnexus-online-license.md` 和 `docs/ccnexus-online-license-maintenance.md`。
+- 私钥 `~/.ssh/wenche_ai_deploy` 只能在本机使用，不要打印、复制、上传、提交、改名或写入脚本。
 - 共享服务器已有 `wenche-ai` 和 `flower-logistics`，不要删除、重启、改配置或占用它们的目录、PM2 进程、Nginx 配置、端口。
 - 不要占用或改动 `80`、`443`、`24070`、`5432`、`8787`、`24175`。
 - 授权服务初期直连 `0.0.0.0:24220`；以后切域名/HTTPS 时，只新增独立 Nginx 配置，不要改现有项目配置。

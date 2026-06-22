@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/csv"
@@ -47,6 +48,7 @@ type Store interface {
 	UpsertActivation(activation *ActivationRecord) error
 	TouchActivation(id int64, now time.Time, platform, appVersion, ipAddress string) error
 	DisableActivation(id int64, now time.Time) error
+	SetDeviceExpiry(deviceID string, expiresAt, now time.Time) error
 	AddAudit(action, targetType string, targetID int64, detail string, now time.Time) error
 	ListAudit(limit int) ([]AuditRecord, error)
 }
@@ -129,7 +131,10 @@ func (s *Service) GenerateCards(req GenerateCardsRequest) (*GenerateCardsResult,
 		if err := s.store.CreateCard(card); err != nil {
 			return nil, err
 		}
-		_ = s.store.AddAudit("generate_card", "card", card.ID, card.Customer, now)
+		detail := fmt.Sprintf("plan=%s days=%d maxDevices=%d customer=%s remark=%s", card.Plan, card.Days, card.MaxDevices, card.Customer, card.Remark)
+		if err := s.store.AddAudit("generate_card", "card", card.ID, detail, now); err != nil {
+			return nil, err
+		}
 		result.Cards = append(result.Cards, GeneratedCard{
 			ID:         card.ID,
 			CardKey:    cardKey,
@@ -168,7 +173,9 @@ func (s *Service) Activate(req ActivationRequest) (*ActivationResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = s.store.AddAudit("activate", "activation", activation.ID, deviceID, now)
+	if activation.ActivatedAt.Equal(now) {
+		_ = s.store.AddAudit("activate", "activation", activation.ID, deviceID, now)
+	}
 	return s.resultFor(activation, now, "license is active")
 }
 
@@ -184,22 +191,26 @@ func (s *Service) Refresh(req RefreshRequest) (*ActivationResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if activation.Status != ActivationStatusActive {
-		return nil, ErrActivationBlocked
-	}
-	card, err := s.store.GetCard(activation.CardID)
-	if err != nil {
-		return nil, err
-	}
-	if card.Status != CardStatusActive {
-		return nil, ErrCardDisabled
+	card, cardErr := s.store.GetCard(activation.CardID)
+	if activation.Status != ActivationStatusActive || cardErr != nil || card.Status != CardStatusActive {
+		fallback, fallbackErr := s.store.LatestActivationForDevice(payload.DeviceID)
+		if fallbackErr != nil {
+			if activation.Status != ActivationStatusActive {
+				return nil, ErrActivationBlocked
+			}
+			return nil, ErrCardDisabled
+		}
+		fallbackCard, fallbackCardErr := s.store.GetCard(fallback.CardID)
+		if fallbackCardErr != nil || fallbackCard.Status != CardStatusActive {
+			return nil, ErrCardDisabled
+		}
+		activation = fallback
 	}
 	now := s.currentTime()
 	if err := s.store.TouchActivation(activation.ID, now, strings.TrimSpace(req.Platform), strings.TrimSpace(req.AppVersion), strings.TrimSpace(req.IPAddress)); err != nil {
 		return nil, err
 	}
 	activation.LastCheckedAt = now
-	_ = s.store.AddAudit("refresh", "activation", activation.ID, payload.DeviceID, now)
 	return s.resultFor(activation, now, "license refreshed")
 }
 
@@ -242,35 +253,128 @@ func (s *Service) ListActivations() ([]ActivationRecord, error) {
 	return s.store.ListActivations()
 }
 
+func (s *Service) ListDevices() ([]DeviceRecord, error) {
+	activations, err := s.store.ListActivations()
+	if err != nil {
+		return nil, err
+	}
+	now := s.currentTime()
+	devices := make([]DeviceRecord, 0)
+	index := make(map[string]int)
+	for _, activation := range activations {
+		position, ok := index[activation.DeviceID]
+		if !ok {
+			position = len(devices)
+			index[activation.DeviceID] = position
+			devices = append(devices, DeviceRecord{
+				DeviceID: activation.DeviceID,
+				Status:   ActivationStatusDisabled,
+				Licenses: make([]ActivationRecord, 0, 1),
+			})
+		}
+		device := &devices[position]
+		device.Licenses = append(device.Licenses, activation)
+		if device.LastCheckedAt.IsZero() || activation.LastCheckedAt.After(device.LastCheckedAt) {
+			device.LastCheckedAt = activation.LastCheckedAt
+			device.Platform = activation.Platform
+			device.AppVersion = activation.AppVersion
+			device.IPAddress = activation.IPAddress
+		}
+		if activation.Status == ActivationStatusActive && (device.CurrentActivationID == 0 || activation.ExpiresAt.After(device.ExpiresAt)) {
+			device.CurrentActivationID = activation.ID
+			device.ExpiresAt = activation.ExpiresAt
+		}
+	}
+	for i := range devices {
+		device := &devices[i]
+		if device.CurrentActivationID == 0 {
+			if len(device.Licenses) > 0 {
+				device.CurrentActivationID = device.Licenses[0].ID
+				device.ExpiresAt = device.Licenses[0].ExpiresAt
+			}
+			continue
+		}
+		if device.ExpiresAt.After(now) {
+			device.Status = ActivationStatusActive
+		} else {
+			device.Status = "expired"
+		}
+	}
+	return devices, nil
+}
+
 func (s *Service) ListAudit() ([]AuditRecord, error) {
 	return s.store.ListAudit(200)
 }
 
 func (s *Service) DisableCard(id int64) error {
 	now := s.currentTime()
+	card, err := s.store.GetCard(id)
+	if err != nil {
+		return err
+	}
 	if err := s.store.DisableCard(id, now); err != nil {
 		return err
 	}
-	return s.store.AddAudit("disable_card", "card", id, "", now)
+	detail := fmt.Sprintf("plan=%s days=%d disabledAt=%s", card.Plan, card.Days, now.Format(time.RFC3339))
+	return s.store.AddAudit("disable_card", "card", id, detail, now)
 }
 
 func (s *Service) DeleteCard(id int64) error {
 	now := s.currentTime()
+	card, err := s.store.GetCard(id)
+	if err != nil {
+		return err
+	}
 	if err := s.store.DeleteCard(id); err != nil {
 		if errors.Is(err, ErrInvalidCard) {
 			return err
 		}
 		return err
 	}
-	return s.store.AddAudit("delete_card", "card", id, "", now)
+	detail := fmt.Sprintf("plan=%s days=%d customer=%s remark=%s", card.Plan, card.Days, card.Customer, card.Remark)
+	return s.store.AddAudit("delete_card", "card", id, detail, now)
 }
 
 func (s *Service) DisableActivation(id int64) error {
 	now := s.currentTime()
+	activation, err := s.store.GetActivation(id)
+	if err != nil {
+		return err
+	}
 	if err := s.store.DisableActivation(id, now); err != nil {
 		return err
 	}
-	return s.store.AddAudit("disable_activation", "activation", id, "", now)
+	detail := fmt.Sprintf("device=%s oldExpiry=%s newExpiry=%s", activation.DeviceID, activation.ExpiresAt.Format(time.RFC3339), now.Format(time.RFC3339))
+	return s.store.AddAudit("disable_activation", "activation", id, detail, now)
+}
+
+func (s *Service) SetDeviceExpiry(deviceID string, expiresAt time.Time) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || expiresAt.IsZero() {
+		return fmt.Errorf("device id and expiry are required")
+	}
+	devices, err := s.ListDevices()
+	if err != nil {
+		return err
+	}
+	var current *DeviceRecord
+	for i := range devices {
+		if devices[i].DeviceID == deviceID {
+			current = &devices[i]
+			break
+		}
+	}
+	if current == nil {
+		return sql.ErrNoRows
+	}
+	now := s.currentTime()
+	expiresAt = expiresAt.UTC()
+	if err := s.store.SetDeviceExpiry(deviceID, expiresAt, now); err != nil {
+		return err
+	}
+	detail := fmt.Sprintf("device=%s oldExpiry=%s newExpiry=%s", deviceID, current.ExpiresAt.Format(time.RFC3339), expiresAt.Format(time.RFC3339))
+	return s.store.AddAudit("set_device_expiry", "activation", current.CurrentActivationID, detail, now)
 }
 
 func (s *Service) RecordAudit(action, targetType string, targetID int64, detail string) error {

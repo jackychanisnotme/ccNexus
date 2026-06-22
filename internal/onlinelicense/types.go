@@ -108,6 +108,9 @@ type ActivationResult struct {
 type ActivationRecord struct {
 	ID            int64     `json:"id"`
 	CardID        int64     `json:"cardId"`
+	CardStatus    string    `json:"cardStatus"`
+	Plan          Plan      `json:"plan"`
+	Days          int       `json:"days"`
 	DeviceID      string    `json:"deviceId"`
 	Status        string    `json:"status"`
 	ActivatedAt   time.Time `json:"activatedAt"`
@@ -119,6 +122,23 @@ type ActivationRecord struct {
 	IPAddress     string    `json:"ipAddress,omitempty"`
 	Customer      string    `json:"customer,omitempty"`
 	Remark        string    `json:"remark,omitempty"`
+}
+
+type DeviceRecord struct {
+	DeviceID            string             `json:"deviceId"`
+	Status              string             `json:"status"`
+	ExpiresAt           time.Time          `json:"expiresAt"`
+	LastCheckedAt       time.Time          `json:"lastCheckedAt"`
+	Platform            string             `json:"platform,omitempty"`
+	AppVersion          string             `json:"appVersion,omitempty"`
+	IPAddress           string             `json:"ipAddress,omitempty"`
+	CurrentActivationID int64              `json:"currentActivationId"`
+	Licenses            []ActivationRecord `json:"licenses"`
+}
+
+type SetDeviceExpiryRequest struct {
+	DeviceID  string    `json:"deviceId"`
+	ExpiresAt time.Time `json:"expiresAt"`
 }
 
 type AuditRecord struct {
