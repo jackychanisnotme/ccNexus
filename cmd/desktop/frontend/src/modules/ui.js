@@ -9,9 +9,12 @@ export function initUI() {
 
         <div class="header">
             <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                <div>
-                    <h1>🚀 ${t('app.title')}<span id="broadcast-banner" class="broadcast-banner hidden"></span></h1>
-                    <p>${t('header.title')}<span id="festivalToggle" class="festival-toggle hidden" onclick="window.toggleFestivalEffect(); event.stopPropagation();" title="${t('festival.toggle') || '切换氛围效果'}"><span class="festival-toggle-name" id="festivalToggleName"></span><span class="festival-toggle-switch" id="festivalToggleSwitch"></span></span></p>
+                <div class="app-brand">
+                    <img class="app-brand-icon" src="/ainexus-icon.png" alt="" aria-hidden="true">
+                    <div class="app-brand-copy">
+                        <h1>${t('app.title')}<span id="broadcast-banner" class="broadcast-banner hidden"></span></h1>
+                        <p>${t('header.title')}<span id="festivalToggle" class="festival-toggle hidden" onclick="window.toggleFestivalEffect(); event.stopPropagation();" title="${t('festival.toggle') || '切换氛围效果'}"><span class="festival-toggle-name" id="festivalToggleName"></span><span class="festival-toggle-switch" id="festivalToggleSwitch"></span></span></p>
+                    </div>
                 </div>
                 <div class="header-actions">
                     <div class="header-tool-buttons">

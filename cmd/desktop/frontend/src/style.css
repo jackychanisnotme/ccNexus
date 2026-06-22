@@ -59,6 +59,26 @@ body {
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
+.app-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.app-brand-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    object-fit: cover;
+    flex: 0 0 44px;
+}
+
+.app-brand-copy {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
 .header h1 {
     font-size: 22px;
     color: #667eea;
