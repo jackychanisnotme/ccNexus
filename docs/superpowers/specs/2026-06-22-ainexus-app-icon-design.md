@@ -56,15 +56,39 @@ Existing Wails embed paths and application metadata will remain unchanged.
 Replacing the current files at their existing paths allows desktop packaging
 and tray setup to continue using the same code.
 
+## macOS Menu Bar Icon
+
+The macOS menu bar must not reuse the full-color application icon. The
+application artwork has an opaque pearl-white tile, which appears as a white
+square when reduced to the 18-point status-item size.
+
+A dedicated macOS menu bar asset will be added with:
+
+- a transparent background;
+- a simplified monochrome routing-hub silhouette;
+- no rounded-square application tile;
+- broad shapes that remain legible at 18 points;
+- enough interior negative space to preserve the multi-input, multi-output
+  hub concept.
+
+The macOS tray implementation will load this dedicated asset and mark its
+`NSImage` as a template image. macOS will then render the symbol with the
+appropriate foreground color for light and dark menu bars.
+
+Windows will continue using the multi-resolution color ICO because Windows
+notification-area icons do not use the macOS template-image convention.
+
 ## Verification
 
 Implementation verification will include:
 
 - confirming PNG and ICO dimensions and formats;
+- confirming the macOS menu bar PNG has transparency and no opaque tile;
 - building the frontend;
 - running relevant frontend tests;
 - building or compiling the desktop Go package where supported;
 - visually checking the desktop header at the normal window size;
+- verifying that the macOS tray code marks the image as a template image;
 - checking a 32-pixel rendering of the final icon for recognizability.
 
 ## Scope
