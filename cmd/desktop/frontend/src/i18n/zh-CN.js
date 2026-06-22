@@ -453,6 +453,33 @@ export default {
 	            tokenUnavailable: 'Token 不可用（秒）',
 	            configError: '配置错误（秒）'
 	        },
+        license: {
+            title: '授权信息',
+            startupTitle: 'ccNexus Pro 授权',
+            startupDesc: '当前授权未激活或已过期，代理服务尚未启动。请输入在线卡密完成激活。',
+            status: '授权状态',
+            active: '已授权',
+            inactive: '未授权',
+            expired: '已过期',
+            expiresAt: '到期时间',
+            remainingDays: '剩余天数',
+            plan: '卡类型',
+            refresh: '刷新状态',
+            activate: '激活/续期',
+            cardPlaceholder: '请输入 ccNexus Pro 在线卡密',
+            help: '未授权或授权过期时，代理服务不会启动。最近一次在线校验成功后，可离线宽限 30 天。',
+            loadFailed: '加载授权状态失败',
+            activateSuccess: '授权激活成功',
+            activateFailed: '授权激活失败',
+            cardRequired: '请输入卡密',
+            plans: {
+                monthly: '月卡',
+                quarterly: '季卡',
+                half_year: '半年卡',
+                yearly: '年卡',
+                custom: '自定义'
+            }
+        },
 	        claudeNotification: '通知方式',
         notificationOptions: {
             disabled: '关闭通知',

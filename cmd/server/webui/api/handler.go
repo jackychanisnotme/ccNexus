@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/lich0821/ccNexus/internal/codexauth"
 	"github.com/lich0821/ccNexus/internal/config"
@@ -19,24 +20,56 @@ type codexCredentialAuthManager interface {
 	Cancel(loginID string) error
 }
 
+type LicenseService interface {
+	Status(time.Time) (interface{}, error)
+	Activate(string, time.Time) (interface{}, error)
+}
+
+type typedLicenseService[TStatus any, TResult any] interface {
+	Status(time.Time) (TStatus, error)
+	Activate(string, time.Time) (TResult, error)
+}
+
+type licenseAdapter[TStatus any, TResult any] struct {
+	service typedLicenseService[TStatus, TResult]
+}
+
+func NewLicenseAdapter[TStatus any, TResult any](service typedLicenseService[TStatus, TResult]) LicenseService {
+	return licenseAdapter[TStatus, TResult]{service: service}
+}
+
+func (a licenseAdapter[TStatus, TResult]) Status(now time.Time) (interface{}, error) {
+	return a.service.Status(now)
+}
+
+func (a licenseAdapter[TStatus, TResult]) Activate(cardKey string, now time.Time) (interface{}, error) {
+	return a.service.Activate(cardKey, now)
+}
+
 // Handler handles API requests
 type Handler struct {
 	config        *config.Config
 	proxy         *proxy.Proxy
 	storage       *storage.SQLiteStorage
 	auth          AuthConfig
+	license       LicenseService
 	codexAuth     codexCredentialAuthManager
 	agentProvider *service.AgentProviderService
 	agent         *service.AgentService
 }
 
 // NewHandler creates a new API handler
-func NewHandler(cfg *config.Config, p *proxy.Proxy, s *storage.SQLiteStorage) *Handler {
+func NewHandler(cfg *config.Config, p *proxy.Proxy, s *storage.SQLiteStorage, licenseServices ...LicenseService) *Handler {
+	var licenseService LicenseService
+	if len(licenseServices) > 0 {
+		licenseService = licenseServices[0]
+	}
 	agentProvider := newAgentProviderService(cfg, s)
 	h := &Handler{
 		config:  cfg,
 		proxy:   p,
 		storage: s,
+		license: licenseService,
 		auth: AuthConfig{
 			Enabled:  cfg.BasicAuthEnabled,
 			Username: cfg.BasicAuthUsername,
@@ -114,6 +147,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		authMiddleware(http.HandlerFunc(h.handleNetwork)).ServeHTTP(w, r)
 	case "/api/events":
 		authMiddleware(http.HandlerFunc(h.handleEvents)).ServeHTTP(w, r)
+	case "/api/license/status":
+		authMiddleware(http.HandlerFunc(h.handleLicenseStatus)).ServeHTTP(w, r)
+	case "/api/license/activate":
+		authMiddleware(http.HandlerFunc(h.handleLicenseActivate)).ServeHTTP(w, r)
 	case "/api/agent-providers/status":
 		authMiddleware(http.HandlerFunc(h.handleAgentProviderStatus)).ServeHTTP(w, r)
 	case "/api/agent-providers/apply":

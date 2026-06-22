@@ -159,6 +159,14 @@ class APIClient {
         return this.request('PUT', '/config/port', { port });
     }
 
+    async getLicenseStatus() {
+        return this.request('GET', '/license/status');
+    }
+
+    async activateLicense(cardKey) {
+        return this.request('POST', '/license/activate', { cardKey });
+    }
+
     async getLogLevel() {
         return this.request('GET', '/config/log-level');
     }

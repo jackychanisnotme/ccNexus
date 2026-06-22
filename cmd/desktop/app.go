@@ -19,6 +19,7 @@ import (
 	"github.com/lich0821/ccNexus/internal/codexauth"
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
+	"github.com/lich0821/ccNexus/internal/onlinelicense"
 	"github.com/lich0821/ccNexus/internal/proxy"
 	"github.com/lich0821/ccNexus/internal/service"
 	"github.com/lich0821/ccNexus/internal/storage"
@@ -62,12 +63,13 @@ type desktopImportCredentialsRequest struct {
 
 // App struct
 type App struct {
-	ctx      context.Context
-	config   *config.Config
-	proxy    *proxy.Proxy
-	storage  *storage.SQLiteStorage
-	ctxMutex sync.RWMutex
-	trayIcon []byte
+	ctx          context.Context
+	config       *config.Config
+	proxy        *proxy.Proxy
+	storage      *storage.SQLiteStorage
+	ctxMutex     sync.RWMutex
+	trayIcon     []byte
+	proxyStarted bool
 
 	// Services
 	stats         *service.StatsService
@@ -81,6 +83,7 @@ type App struct {
 	codexAuth     *codexauth.Manager
 	agentProvider *service.AgentProviderService
 	agent         *service.AgentService
+	license       *onlinelicense.ClientService
 }
 
 // NewApp creates a new App application struct
@@ -183,6 +186,10 @@ func (a *App) startup(ctx context.Context) {
 	a.terminal = service.NewTerminalService(a.config, a.storage)
 	a.agentProvider = service.NewAgentProviderService(a.config)
 	a.agent = service.NewAgentService(a.config, a.proxy, a.storage, a.endpoint, a.agentProvider)
+	a.license, err = onlinelicense.NewConfiguredClientService(sqliteStorage, deviceID, version)
+	if err != nil {
+		logger.Warn("Online license public key unavailable: %v", err)
+	}
 	a.codexAuth = codexauth.NewManager(codexauth.Options{
 		Storage:    a.storage,
 		HTTPClient: codexauth.HTTPClientForConfig(a.config),
@@ -193,16 +200,34 @@ func (a *App) startup(ctx context.Context) {
 
 	a.initTray()
 
-	go func() {
-		if err := a.proxy.Start(); err != nil {
-			logger.Error("Proxy server error: %v", err)
-		}
-	}()
-
+	if a.license != nil {
+		go a.license.MaybeRefresh(time.Now())
+	}
+	a.startProxyIfLicensed()
 	time.Sleep(300 * time.Millisecond)
 	runtime.WindowShow(ctx)
 
 	logger.Info("Application started successfully")
+}
+
+func (a *App) startProxyIfLicensed() {
+	if a.proxy == nil || a.license == nil {
+		return
+	}
+	if a.proxyStarted {
+		return
+	}
+	if !a.license.IsLicensed(time.Now()) {
+		logger.Warn("License is not active; proxy server will not start")
+		return
+	}
+	a.proxyStarted = true
+	go func() {
+		if err := a.proxy.Start(); err != nil {
+			logger.Error("Proxy server error: %v", err)
+			a.proxyStarted = false
+		}
+	}()
 }
 
 // shutdown is called when the app is closing
@@ -1103,6 +1128,29 @@ func (a *App) SaveSettings(settingsJSON string) error {
 	}
 	a.resetCodexAuthManager()
 	return nil
+}
+
+func (a *App) GetLicenseStatus() string {
+	if a.license == nil {
+		return desktopErrorJSON(fmt.Errorf("license service unavailable"))
+	}
+	status, err := a.license.Status(time.Now())
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	return desktopSuccessJSON(status)
+}
+
+func (a *App) ActivateLicense(cardKey string) string {
+	if a.license == nil {
+		return desktopErrorJSON(fmt.Errorf("license service unavailable"))
+	}
+	result, err := a.license.Activate(cardKey, time.Now())
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	a.startProxyIfLicensed()
+	return desktopSuccessJSON(result)
 }
 
 func (a *App) GetAgentProviderStatus() string {

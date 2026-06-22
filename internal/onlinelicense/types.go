@@ -1,0 +1,138 @@
+package onlinelicense
+
+import "time"
+
+const (
+	ProductCCNexusPro = "ccnexus-pro"
+
+	CardStatusActive   = "active"
+	CardStatusDisabled = "disabled"
+
+	ActivationStatusActive   = "active"
+	ActivationStatusDisabled = "disabled"
+
+	DefaultLicenseServerURL = "http://207.57.134.147:24220"
+)
+
+type Plan string
+
+const (
+	PlanMonthly   Plan = "monthly"
+	PlanQuarterly Plan = "quarterly"
+	PlanHalfYear  Plan = "half_year"
+	PlanYearly    Plan = "yearly"
+	PlanCustom    Plan = "custom"
+)
+
+type Options struct {
+	Now func() time.Time
+}
+
+type GenerateCardsRequest struct {
+	Plan       Plan   `json:"plan"`
+	Days       int    `json:"days"`
+	Count      int    `json:"count"`
+	MaxDevices int    `json:"maxDevices"`
+	Customer   string `json:"customer"`
+	Remark     string `json:"remark"`
+}
+
+type GenerateCardsResult struct {
+	Cards []GeneratedCard `json:"cards"`
+	CSV   string          `json:"csv"`
+}
+
+type GeneratedCard struct {
+	ID         int64     `json:"id"`
+	CardKey    string    `json:"cardKey,omitempty"`
+	CardHash   string    `json:"cardHash,omitempty"`
+	Plan       Plan      `json:"plan"`
+	Days       int       `json:"days"`
+	MaxDevices int       `json:"maxDevices"`
+	Customer   string    `json:"customer,omitempty"`
+	Remark     string    `json:"remark,omitempty"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+type CardRecord struct {
+	ID          int64     `json:"id"`
+	CardHash    string    `json:"cardHash"`
+	Plan        Plan      `json:"plan"`
+	Days        int       `json:"days"`
+	MaxDevices  int       `json:"maxDevices"`
+	Status      string    `json:"status"`
+	Customer    string    `json:"customer,omitempty"`
+	Remark      string    `json:"remark,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	DisabledAt  time.Time `json:"disabledAt,omitempty"`
+	Activations int       `json:"activations"`
+}
+
+type ActivationRequest struct {
+	CardKey    string `json:"cardKey"`
+	DeviceID   string `json:"deviceId"`
+	Platform   string `json:"platform"`
+	AppVersion string `json:"appVersion"`
+	IPAddress  string `json:"-"`
+}
+
+type RefreshRequest struct {
+	Ticket     string `json:"ticket"`
+	DeviceID   string `json:"deviceId"`
+	Platform   string `json:"platform"`
+	AppVersion string `json:"appVersion"`
+	IPAddress  string `json:"-"`
+}
+
+type ActivationResult struct {
+	Licensed     bool      `json:"licensed"`
+	LicenseID    int64     `json:"licenseId"`
+	ActivationID int64     `json:"activationId"`
+	DeviceID     string    `json:"deviceId"`
+	Status       string    `json:"status"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	NextCheckAt  time.Time `json:"nextCheckAt"`
+	GraceUntil   time.Time `json:"graceUntil"`
+	Ticket       string    `json:"ticket"`
+	Message      string    `json:"message"`
+}
+
+type ActivationRecord struct {
+	ID            int64     `json:"id"`
+	CardID        int64     `json:"cardId"`
+	DeviceID      string    `json:"deviceId"`
+	Status        string    `json:"status"`
+	ActivatedAt   time.Time `json:"activatedAt"`
+	ExpiresAt     time.Time `json:"expiresAt"`
+	LastCheckedAt time.Time `json:"lastCheckedAt"`
+	DisabledAt    time.Time `json:"disabledAt,omitempty"`
+	Platform      string    `json:"platform,omitempty"`
+	AppVersion    string    `json:"appVersion,omitempty"`
+	IPAddress     string    `json:"ipAddress,omitempty"`
+	Customer      string    `json:"customer,omitempty"`
+	Remark        string    `json:"remark,omitempty"`
+}
+
+type TicketStatus struct {
+	Licensed     bool      `json:"licensed"`
+	LicenseID    int64     `json:"licenseId"`
+	ActivationID int64     `json:"activationId"`
+	DeviceID     string    `json:"deviceId"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	NextCheckAt  time.Time `json:"nextCheckAt"`
+	GraceUntil   time.Time `json:"graceUntil"`
+	Message      string    `json:"message"`
+}
+
+type Status struct {
+	Product          string             `json:"product"`
+	Licensed         bool               `json:"licensed"`
+	Expired          bool               `json:"expired"`
+	ExpiresAt        time.Time          `json:"expiresAt,omitempty"`
+	RemainingDays    int                `json:"remainingDays"`
+	LastActivatedAt  time.Time          `json:"lastActivatedAt,omitempty"`
+	LastCardID       string             `json:"lastCardId,omitempty"`
+	ActivationLedger []ActivationRecord `json:"activationLedger,omitempty"`
+	Message          string             `json:"message,omitempty"`
+}

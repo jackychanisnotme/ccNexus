@@ -5,10 +5,10 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/lich0821/ccNexus/cmd/server/webui/api"
 	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/proxy"
 	"github.com/lich0821/ccNexus/internal/storage"
-	"github.com/lich0821/ccNexus/cmd/server/webui/api"
 )
 
 //go:embed ui
@@ -21,10 +21,10 @@ type WebUI struct {
 }
 
 // New creates a new WebUI instance
-func New(cfg *config.Config, p *proxy.Proxy, storage *storage.SQLiteStorage) *WebUI {
+func New(cfg *config.Config, p *proxy.Proxy, storage *storage.SQLiteStorage, licenseService api.LicenseService) *WebUI {
 	return &WebUI{
 		cfg:        cfg,
-		apiHandler: api.NewHandler(cfg, p, storage),
+		apiHandler: api.NewHandler(cfg, p, storage, licenseService),
 	}
 }
 

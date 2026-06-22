@@ -380,6 +380,42 @@ export function initUI() {
             </div>
         </div>
 
+        <!-- Startup License Modal -->
+        <div id="startupLicenseModal" class="modal license-gate-modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>${t('settings.license.startupTitle')}</h2>
+                </div>
+                <div class="modal-body">
+                    <p class="license-gate-copy">${t('settings.license.startupDesc')}</p>
+                    <div class="license-status-grid">
+                        <div>
+                            ${t('settings.license.status')}
+                            <div id="startupLicenseStatusText">-</div>
+                        </div>
+                        <div>
+                            ${t('settings.license.expiresAt')}
+                            <div id="startupLicenseExpiresAt">-</div>
+                        </div>
+                        <div>
+                            ${t('settings.license.remainingDays')}
+                            <div id="startupLicenseRemainingDays">-</div>
+                        </div>
+                        <div>
+                            ${t('settings.license.plan')}
+                            <div id="startupLicensePlan">-</div>
+                        </div>
+                    </div>
+                    <textarea id="startupLicenseCardKey" class="form-input license-card-input" rows="4" placeholder="${t('settings.license.cardPlaceholder')}"></textarea>
+                    <p id="startupLicenseMessage" class="license-message">${t('settings.license.help')}</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="window.showStartupLicenseGate()">${t('settings.license.refresh')}</button>
+                    <button type="button" class="btn btn-primary" onclick="window.activateStartupLicenseCard()">${t('settings.license.activate')}</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Add/Edit Endpoint Modal -->
         <div id="endpointModal" class="modal">
             <div class="modal-content">
@@ -816,6 +852,35 @@ export function initUI() {
                         <input type="text" id="settingsProxyUrl" placeholder="${t('settings.proxyUrlPlaceholder')}">
                         <p style="color: #666; font-size: 12px; margin-top: 5px;">
                             ${t('settings.proxyHelp')}
+                        </p>
+                    </div>
+                    <div class="form-group">
+                        <label>${t('settings.license.title')}</label>
+                        <div class="license-status-grid">
+                            <div>
+                                ${t('settings.license.status')}
+                                <div id="licenseStatusText">-</div>
+                            </div>
+                            <div>
+                                ${t('settings.license.expiresAt')}
+                                <div id="licenseExpiresAt">-</div>
+                            </div>
+                            <div>
+                                ${t('settings.license.remainingDays')}
+                                <div id="licenseRemainingDays">-</div>
+                            </div>
+                            <div>
+                                ${t('settings.license.plan')}
+                                <div id="licensePlan">-</div>
+                            </div>
+                        </div>
+                        <textarea id="licenseCardKey" class="form-input license-card-input" rows="3" placeholder="${t('settings.license.cardPlaceholder')}"></textarea>
+                        <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px;">
+                            <button type="button" class="btn btn-secondary" onclick="window.refreshLicenseStatus()">${t('settings.license.refresh')}</button>
+                            <button type="button" class="btn btn-primary" onclick="window.activateLicenseCard()">${t('settings.license.activate')}</button>
+                        </div>
+                        <p id="licenseMessage" class="license-message">
+                            ${t('settings.license.help')}
                         </p>
                     </div>
                     <div class="form-group">
