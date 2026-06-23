@@ -73,6 +73,7 @@ type Proxy struct {
 	endpointCircuitBreakers     map[string]*endpointCircuitBreakerState
 	streamHeaderTimeout         time.Duration // injectable response-header timeout for upstream streaming requests
 	streamHeartbeatInterval     time.Duration // injectable downstream SSE heartbeat interval
+	codexWebSocketDial          codexWebSocketDialFunc
 }
 
 // New creates a new Proxy instance
@@ -1612,30 +1613,30 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				p.recordEndpointErrorForClient(endpoint.Name, "route_gateway_denial", obs.ClientIP, resp.StatusCode)
 				p.markRequestInactive(endpoint.Name)
 			} else {
-					if selectedCredential != nil &&
-						isCodexProviderType(selectedCredential.ProviderType) &&
-						strings.TrimSpace(selectedCredential.RefreshToken) != "" &&
-						!refreshedCredentialAttempts[credentialID] {
-						refreshedCredentialAttempts[credentialID] = true
-						refreshed, refreshErr := p.refreshCredential(endpoint, selectedCredential)
-						if refreshErr == nil {
-							logger.Info("[%s] Credential refreshed after %d, retrying with updated token (id=%d) %s", endpoint.Name, resp.StatusCode, credentialID, requestLogFields(obs, endpoint.Name, attemptNumber, resp.StatusCode, "credential_refreshed"))
-							p.markRequestInactive(endpoint.Name)
-							endpointAttempts = 0
-							if refreshed != nil && refreshed.ID > 0 {
-								refreshedCredentialAttempts[refreshed.ID] = true
-							}
-							continue
+				if selectedCredential != nil &&
+					isCodexProviderType(selectedCredential.ProviderType) &&
+					strings.TrimSpace(selectedCredential.RefreshToken) != "" &&
+					!refreshedCredentialAttempts[credentialID] {
+					refreshedCredentialAttempts[credentialID] = true
+					refreshed, refreshErr := p.refreshCredential(endpoint, selectedCredential)
+					if refreshErr == nil {
+						logger.Info("[%s] Credential refreshed after %d, retrying with updated token (id=%d) %s", endpoint.Name, resp.StatusCode, credentialID, requestLogFields(obs, endpoint.Name, attemptNumber, resp.StatusCode, "credential_refreshed"))
+						p.markRequestInactive(endpoint.Name)
+						endpointAttempts = 0
+						if refreshed != nil && refreshed.ID > 0 {
+							refreshedCredentialAttempts[refreshed.ID] = true
 						}
-						if errors.Is(refreshErr, errCodexRefreshTokenReused) {
-							p.markCredentialFailure(credentialID, http.StatusUnauthorized, refreshErr.Error())
-							p.recordEndpointErrorForClient(endpoint.Name, "credential_auth_failed", obs.ClientIP, resp.StatusCode)
-							p.markRequestInactive(endpoint.Name)
-							endpointAttempts = 0
-							continue
-						}
-						logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "credential_refresh_failed", "Credential refresh failed after %d (id=%d): %v", resp.StatusCode, credentialID, refreshErr)
+						continue
 					}
+					if errors.Is(refreshErr, errCodexRefreshTokenReused) {
+						p.markCredentialFailure(credentialID, http.StatusUnauthorized, refreshErr.Error())
+						p.recordEndpointErrorForClient(endpoint.Name, "credential_auth_failed", obs.ClientIP, resp.StatusCode)
+						p.markRequestInactive(endpoint.Name)
+						endpointAttempts = 0
+						continue
+					}
+					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, "credential_refresh_failed", "Credential refresh failed after %d (id=%d): %v", resp.StatusCode, credentialID, refreshErr)
+				}
 				p.markCredentialFailure(credentialID, resp.StatusCode, respLogMsg)
 				p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
 				p.recordEndpointErrorForClient(endpoint.Name, "credential_auth_failed", obs.ClientIP, resp.StatusCode)

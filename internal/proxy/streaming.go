@@ -28,6 +28,7 @@ const (
 	streamFinishDownstreamWriteFailed = "downstream_write_failed"
 	streamFinishTransformFailed       = "transform_failed"
 	streamFinishMissingResponsesDone  = "missing_response_completed"
+	maxStreamEventBytes               = 128 * 1024 * 1024
 )
 
 const openAIResponsesWaitingID = "resp_ainexus_waiting"
@@ -788,7 +789,7 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 	scanner := bufio.NewScanner(reader)
 	// Increase buffer sizes to handle large SSE events (e.g., large file reads in tool calls)
 	buf := make([]byte, 0, 128*1024) // 128KB initial buffer (was 64KB)
-	scanner.Buffer(buf, 2*1024*1024) // 2MB max buffer (was 1MB)
+	scanner.Buffer(buf, maxStreamEventBytes)
 
 	var inputTokens, outputTokens int
 	var buffer bytes.Buffer
@@ -1159,7 +1160,7 @@ func (p *Proxy) handleStreamingAsNonStreaming(w http.ResponseWriter, resp *http.
 
 	scanner := bufio.NewScanner(reader)
 	buf := make([]byte, 0, 128*1024)
-	scanner.Buffer(buf, 2*1024*1024)
+	scanner.Buffer(buf, maxStreamEventBytes)
 
 	var completedPayload []byte
 	var lastJSONPayload []byte

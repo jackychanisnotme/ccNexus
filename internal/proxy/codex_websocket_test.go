@@ -1,8 +1,17 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/lich0821/ccNexus/internal/config"
 )
 
 func TestCodexWebSocketURL(t *testing.T) {
@@ -81,4 +90,142 @@ func TestBuildCodexWebSocketFrameRejectsInvalidPayload(t *testing.T) {
 	if _, err := buildCodexWebSocketFrame([]byte(`not-json`)); err == nil {
 		t.Fatal("expected invalid payload error")
 	}
+}
+
+func TestOpenCodexWebSocketStreamBridgesCompletedResponseToSSE(t *testing.T) {
+	requestErr := make(chan error, 1)
+	largeDelta := strings.Repeat("x", 3*1024*1024)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			requestErr <- &testUnexpectedValueError{field: "Authorization", got: got, want: "Bearer test-token"}
+			return
+		}
+		if got := r.Header.Get("Chatgpt-Account-Id"); got != "acct-1" {
+			requestErr <- &testUnexpectedValueError{field: "Chatgpt-Account-Id", got: got, want: "acct-1"}
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			requestErr <- err
+			return
+		}
+		defer conn.Close()
+
+		_, frame, err := conn.ReadMessage()
+		if err != nil {
+			requestErr <- err
+			return
+		}
+		var request map[string]interface{}
+		if err := json.Unmarshal(frame, &request); err != nil {
+			requestErr <- err
+			return
+		}
+		if request["type"] != "response.create" {
+			requestErr <- &testUnexpectedValueError{field: "type", got: request["type"], want: "response.create"}
+			return
+		}
+
+		for _, event := range []map[string]interface{}{
+			{"type": "response.created", "response": map[string]interface{}{"id": "resp-ws", "status": "in_progress"}},
+			{"type": "response.custom_tool_call_input.delta", "delta": largeDelta},
+			{"type": "response.completed", "response": map[string]interface{}{"id": "resp-ws", "status": "completed"}},
+		} {
+			if err := conn.WriteJSON(event); err != nil {
+				requestErr <- err
+				return
+			}
+		}
+		requestErr <- nil
+	}))
+	defer upstream.Close()
+
+	proxyReq, err := http.NewRequest(http.MethodPost, upstream.URL+"/backend-api/codex/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyReq.Header.Set("Authorization", "Bearer test-token")
+	proxyReq.Header.Set("Chatgpt-Account-Id", "acct-1")
+	payload := []byte(`{"model":"gpt-5.5","stream":true,"input":[]}`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := (&Proxy{}).openCodexWebSocketStream(ctx, proxyReq, config.Endpoint{Name: "Codex Pool"}, payload)
+	if err != nil {
+		t.Fatalf("openCodexWebSocketStream failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read bridged SSE failed: %v", err)
+	}
+	if err := <-requestErr; err != nil {
+		t.Fatalf("upstream validation failed: %v", err)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", got)
+	}
+	bodyText := string(body)
+	for _, want := range []string{"response.created", "response.custom_tool_call_input.delta", "response.completed", largeDelta} {
+		if !strings.Contains(bodyText, want) {
+			t.Fatalf("bridged SSE missing %q", want[:min(len(want), 80)])
+		}
+	}
+}
+
+func TestOpenCodexWebSocketStreamReturnsReadErrorWhenClosedBeforeCompleted(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(map[string]interface{}{
+			"type":         "response.custom_tool_call_input.delta",
+			"delta":        "partial",
+			"item_id":      "tool-1",
+			"call_id":      "call-1",
+			"output_index": 0,
+		})
+	}))
+	defer upstream.Close()
+
+	proxyReq, err := http.NewRequest(http.MethodPost, upstream.URL+"/backend-api/codex/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := (&Proxy{}).openCodexWebSocketStream(ctx, proxyReq, config.Endpoint{Name: "Codex Pool"}, []byte(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	if err != nil {
+		t.Fatalf("openCodexWebSocketStream failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr == nil {
+		t.Fatalf("expected premature close error, got body %q", string(body))
+	}
+	if !strings.Contains(readErr.Error(), "before response.completed") {
+		t.Fatalf("expected missing completion error, got %v", readErr)
+	}
+}
+
+type testUnexpectedValueError struct {
+	field string
+	got   interface{}
+	want  interface{}
+}
+
+func (e *testUnexpectedValueError) Error() string {
+	return e.field + " mismatch: got " + stringifyTestValue(e.got) + ", want " + stringifyTestValue(e.want)
+}
+
+func stringifyTestValue(value interface{}) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
 }
