@@ -360,6 +360,7 @@ func ensureCodexResponsesPayload(payload []byte) []byte {
 	if err := json.Unmarshal(payload, &body); err != nil {
 		return payload
 	}
+	delete(body, "max_output_tokens")
 	body["store"] = false
 	body["stream"] = true
 	if _, ok := body["instructions"]; !ok {

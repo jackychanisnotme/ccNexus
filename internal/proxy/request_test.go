@@ -38,6 +38,26 @@ func TestEnsureCodexResponsesPayload(t *testing.T) {
 	}
 }
 
+func TestEnsureCodexResponsesPayloadRemovesMaxOutputTokens(t *testing.T) {
+	raw := []byte(`{"model":"gpt-5.5","max_output_tokens":2048,"input":"hello","metadata":{"source":"agent"}}`)
+	out := ensureCodexResponsesPayload(raw)
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if _, ok := payload["max_output_tokens"]; ok {
+		t.Fatalf("expected max_output_tokens to be removed, got %#v", payload["max_output_tokens"])
+	}
+	if payload["input"] != "hello" {
+		t.Fatalf("expected input to be preserved, got %#v", payload["input"])
+	}
+	metadata, ok := payload["metadata"].(map[string]interface{})
+	if !ok || metadata["source"] != "agent" {
+		t.Fatalf("expected metadata to be preserved, got %#v", payload["metadata"])
+	}
+}
+
 func TestCodexProxyUsesStableClientIdentity(t *testing.T) {
 	endpoint := config.Endpoint{
 		Name:        "Codex Pool",
@@ -59,6 +79,35 @@ func TestCodexProxyUsesStableClientIdentity(t *testing.T) {
 	}
 	if got := proxyReq.Header.Get("User-Agent"); !strings.Contains(got, "codex_cli_rs/0.141.0") {
 		t.Fatalf("User-Agent = %q, want stable Codex identity", got)
+	}
+}
+
+func TestBuildProxyRequestPreservesMaxOutputTokensForNonCodexResponses(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:        "OpenAI Responses",
+		APIUrl:      "https://api.example.com",
+		AuthMode:    config.AuthModeAPIKey,
+		Transformer: "openai2",
+		Model:       "gpt-5.5",
+	}
+	body := []byte(`{"model":"gpt-5.5","max_output_tokens":2048,"input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
+
+	proxyReq, err := buildProxyRequest(req, endpoint, "test-key", body, "cx_resp_openai2", nil)
+	if err != nil {
+		t.Fatalf("buildProxyRequest failed: %v", err)
+	}
+	defer proxyReq.Body.Close()
+	upstreamBody, err := io.ReadAll(proxyReq.Body)
+	if err != nil {
+		t.Fatalf("read upstream body failed: %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(upstreamBody, &payload); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if payload["max_output_tokens"] != float64(2048) {
+		t.Fatalf("expected max_output_tokens to be preserved, got %#v", payload["max_output_tokens"])
 	}
 }
 
