@@ -4,7 +4,7 @@
   <img src="docs/images/AINexus.svg" alt="AINexus - API Provider, Token Pool and Agent hub for AI coding tools" width="720" />
 </p>
 
-[![Pre-release](https://img.shields.io/badge/pre--release-v6.3.6-blue)](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6)
+[![Pre-release](https://img.shields.io/badge/pre--release-v6.4.0-blue)](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.4.0)
 [![License](https://img.shields.io/badge/License-Commercial%20use%20requires%20authorization-red.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
 [![Wails](https://img.shields.io/badge/Wails-v2-blue)](https://wails.io/)
@@ -15,11 +15,11 @@
 
 AINexus 是面向 Claude Code、Codex CLI、OpenClaw、Hermes Agent 以及 OpenAI/Claude/Gemini 兼容客户端的本地 API Provider、Token Pool 和 Agent 管理中枢。它把端点、模型、API Key、订阅 Token、授权状态、统计、备份和智能体配置统一到一个桌面应用与服务器模式中。
 
-6.3.6 重点增强了在线卡密授权、Codex Token Pool 额度与凭证级用量统计、Claude OAuth Token Pool、AI Agent 工作台、Agent Provider 配置修复、多端点故障转移和跨平台客户包分发。
+6.4.0 重点增强了在线卡密授权、Codex Token Pool 额度与凭证级用量统计、Claude OAuth Token Pool、AI Agent 工作台、Agent Provider 配置修复、多端点故障转移和跨平台客户包分发。
 
 > [!IMPORTANT]
-> 当前发布为 **AINexus v6.3.6 pre-release**。下载地址：
-> [https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6)
+> 当前发布为 **AINexus v6.4.0 pre-release**。下载地址：
+> [https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.4.0](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.4.0)
 
 > [!NOTE]
 > AINexus Pro 使用在线卡密激活。授权服务签发 Ed25519 票据，客户端在最近一次在线校验成功后可离线宽限 30 天。购买或续期卡密请联系微信：`yo22bro`。
@@ -28,8 +28,8 @@ AINexus 是面向 Claude Code、Codex CLI、OpenClaw、Hermes Agent 以及 OpenA
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/CN-Light.png" alt="AINexus 6.3.6 明亮主题" width="400"></td>
-    <td align="center"><img src="docs/images/CN-Dark.png" alt="AINexus 6.3.6 暗黑主题" width="400"></td>
+    <td align="center"><img src="docs/images/CN-Light.png" alt="AINexus 6.4.0 明亮主题" width="400"></td>
+    <td align="center"><img src="docs/images/CN-Dark.png" alt="AINexus 6.4.0 暗黑主题" width="400"></td>
   </tr>
 </table>
 
@@ -37,10 +37,10 @@ AINexus 是面向 Claude Code、Codex CLI、OpenClaw、Hermes Agent 以及 OpenA
 
 ### 桌面应用
 
-从 [v6.3.6 pre-release](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6) 下载对应平台：
+从 [v6.4.0 pre-release](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.4.0) 下载对应平台：
 
-- **macOS**：下载 `AINexus-v6.3.6-darwin-universal.zip`，解压后将 `AINexus.app` 移入「应用程序」。首次打开如遇系统拦截，可右键选择「打开」。
-- **Windows**：下载 `AINexus-v6.3.6-windows-amd64.zip`，解压后运行 `AINexus.exe`。
+- **macOS**：下载 `AINexus-v6.4.0-darwin-universal.zip`，解压后将 `AINexus.app` 移入「应用程序」。首次打开如遇系统拦截，可右键选择「打开」。
+- **Windows**：下载 `AINexus-v6.4.0-windows-amd64.zip`，解压后运行 `AINexus.exe`。
 - **服务器/NAS/Docker**：使用服务器模式或 Docker Compose。
 
 首次启动后在授权窗口输入在线卡密。激活成功后，默认代理地址为：
@@ -123,7 +123,7 @@ experimental_bearer_token = "ainexus-local"
 
 真正的上游认证由 AINexus 端点或 Token Pool 管理。
 
-## 6.3.6 核心能力
+## 6.4.0 核心能力
 
 ### API Provider 与端点故障转移
 
