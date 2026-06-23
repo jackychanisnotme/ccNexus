@@ -1,66 +1,73 @@
 <div align="center">
 
 <p align="center">
-  <img src="images/AINexus.svg" alt="Claude Code, Codex CLI, Hermes Agent, and OpenClaw API Provider Switching Hub" width="720" />
+  <img src="images/AINexus.svg" alt="AINexus - API Provider, Token Pool and Agent hub for AI coding tools" width="720" />
 </p>
 
-[![Build Status](https://github.com/jackychanisnotme/AINexus/actions/workflows/build.yml/badge.svg)](https://github.com/jackychanisnotme/AINexus/actions)
-[![Latest Release](https://img.shields.io/github/v/release/jackychanisnotme/AINexus?label=release)](https://github.com/jackychanisnotme/AINexus/releases/latest)
-[![License: Commercial use requires authorization](https://img.shields.io/badge/License-Commercial%20use%20requires%20authorization-red.svg)](../LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
+[![Pre-release](https://img.shields.io/badge/pre--release-v6.3.6-blue)](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6)
+[![License](https://img.shields.io/badge/License-Commercial%20use%20requires%20authorization-red.svg)](../LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
 [![Wails](https://img.shields.io/badge/Wails-v2-blue)](https://wails.io/)
 
 [English](README_EN.md) | [简体中文](../README.md)
 
 </div>
 
-AINexus is a local API provider and resource management hub for Claude Code, Codex CLI, Hermes Agent, OpenClaw, and other AI development tools. It manages endpoints, models, API keys, token pools, quotas, statistics, and backups while providing hot switching and automatic failover across upstream providers, accounts, and models.
+AINexus is a local API Provider, Token Pool, and Agent management hub for Claude Code, Codex CLI, OpenClaw, Hermes Agent, and OpenAI/Claude/Gemini-compatible clients. It brings endpoints, models, API keys, subscription tokens, license state, usage statistics, backup, and agent configuration into one desktop app and server runtime.
+
+Version 6.3.6 focuses on online card-key activation, Codex Token Pool quota and per-credential usage visibility, Claude OAuth Token Pool, the AI Agent workspace, Agent Provider configuration repair, multi-endpoint failover, and cross-platform customer packages.
 
 > [!IMPORTANT]
-> This repository maintains **AINexus Optimized**, with a focus on Codex CLI, OpenAI Responses API, Claude Code, concurrent multi-endpoint workloads, and robust upstream error recovery.
->
-> [Download the latest release](https://github.com/jackychanisnotme/AINexus/releases/latest)
+> The current release is **AINexus v6.3.6 pre-release**. Download it here:
+> [https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6)
 
 > [!NOTE]
-> AINexus is now being distributed to real customers. Future releases will continue to add desktop and server-side capabilities, including client token-usage reporting, license-operation views, and remote endpoint policy management. The project prioritizes keeping existing customers' licenses, configuration, data directories, token pools, and proxy behavior working across upgrades.
+> AINexus Pro uses online card-key activation. The license server issues Ed25519 tickets, and the client keeps a 30-day offline grace period after the latest successful online validation. For purchase or renewal, contact WeChat: `yo22bro`.
+
+## Preview
+
+<table>
+  <tr>
+    <td align="center"><img src="images/EN-Light.png" alt="AINexus 6.3.6 light theme" width="400"></td>
+    <td align="center"><img src="images/EN-Dark.png" alt="AINexus 6.3.6 dark theme" width="400"></td>
+  </tr>
+</table>
 
 ## Quick Start
 
 ### Desktop App
 
-Download the package for your platform from [Releases](https://github.com/jackychanisnotme/AINexus/releases/latest):
+Download the matching package from the [v6.3.6 pre-release](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6):
 
-- **macOS**: Extract the `.zip`, move `AINexus.app` to Applications, and use right-click → Open on first launch if needed
-- **Windows**: Extract `windows-amd64.zip`, then run `AINexus.exe`
-- **Linux**: Build from source, or use server mode/Docker
+- **macOS**: download `AINexus-v6.3.6-darwin-universal.zip`, extract it, and move `AINexus.app` to Applications. If macOS blocks the first launch, use right-click -> Open.
+- **Windows**: download `AINexus-v6.3.6-windows-amd64.zip`, extract it, and run `AINexus.exe`.
+- **Server/NAS/Docker**: use server mode or Docker Compose.
 
-After launch, click "Add Endpoint" and enter the API URL, key, authentication mode, transformer, and model. The default proxy address is `http://127.0.0.1:3000`.
+Enter your online card key on first launch. After activation, the default local proxy address is:
+
+```text
+http://127.0.0.1:3000
+```
 
 ### Server Mode
-
-Go 1.24+ is required:
 
 ```bash
 go run ./cmd/server
 ```
 
-After startup:
+Available endpoints:
 
-- API provider: `http://127.0.0.1:3000`
+- API Provider: `http://127.0.0.1:3000`
 - Web management UI: `http://127.0.0.1:3000/ui/`
 - Health check: `http://127.0.0.1:3000/health`
 
-Server mode enables Basic Auth by default with username `admin`. If no password is configured on first launch, AINexus generates one and prints it to the log once.
+Server mode also requires online authorization. You can activate it from the command line:
 
-### Docker Compose
-
-Before first launch, make sure the `environment` section in `cmd/server/docker-compose.yml` contains:
-
-```yaml
-- AINEXUS_LISTEN_MODE=lan
+```bash
+CCNEXUS_LICENSE_PUBLIC_KEY=<public-key> go run ./cmd/server -activate <card-key>
 ```
 
-The container must listen on all interfaces for Docker's published host port to reach it. Then run:
+### Docker Compose
 
 ```bash
 cd cmd/server
@@ -68,12 +75,18 @@ docker compose up -d --build
 docker compose logs -f ainexus
 ```
 
+For LAN access in Docker, configure:
+
+```yaml
+- AINEXUS_LISTEN_MODE=lan
+```
+
 The default Compose file maps host port `3021` to container port `3000`:
 
 - Web management UI: `http://127.0.0.1:3021/ui/`
 - Health check: `http://127.0.0.1:3021/health`
 
-Data is stored in `cmd/server/ainexus/`. Read the generated first-launch password from the container logs. See the [Docker Deployment Guide](README_DOCKER.md) for details.
+Data is stored in `cmd/server/ainexus/`. Read the generated first-launch Basic Auth password from the container logs.
 
 ## Configure Clients
 
@@ -91,11 +104,11 @@ Edit `~/.claude/settings.json`:
 }
 ```
 
-Some models do not support 64k output. Adjust or remove `CLAUDE_CODE_MAX_OUTPUT_TOKENS` according to the upstream model.
+Some upstream models do not support 64k output. Adjust or remove `CLAUDE_CODE_MAX_OUTPUT_TOKENS` according to the selected model.
 
 ### Codex CLI
 
-Use the Responses API in the Codex configuration:
+Use the Responses API provider in Codex:
 
 ```toml
 model_provider = "AINexus"
@@ -109,127 +122,122 @@ wire_api = "responses"
 experimental_bearer_token = "ainexus-local"
 ```
 
-If your Codex CLI version still requires `~/.codex/auth.json`, add a placeholder API key:
+If your Codex CLI version still requires `~/.codex/auth.json`, add a placeholder key:
 
 ```json
 {"OPENAI_API_KEY":"ainexus-local"}
 ```
 
-The client-side API key only satisfies the client's configuration requirement. AINexus manages the actual upstream credentials through endpoints or token pools.
+The client-side key only satisfies the client configuration requirement. AINexus manages the actual upstream credentials through endpoints and token pools.
+
+## Core Capabilities
+
+| Area | What AINexus 6.3.6 provides |
+|------|------------------------------|
+| Local API Provider | One local endpoint for Claude Code, Codex CLI, OpenClaw, Hermes Agent, OpenAI-compatible clients, and Gemini-compatible workflows |
+| Endpoint failover | Rotation, cooldown, request-local fallback, error classification, and recovery for unstable upstreams |
+| Protocol conversion | Claude, OpenAI Chat Completions, OpenAI Responses, Gemini, DeepSeek, Kimi/Moonshot, and Codex-oriented flows |
+| Codex Token Pool | Import subscription token JSON, rotate credentials, refresh tokens, isolate invalid tokens, display quota snapshots, and track per-credential usage |
+| Claude OAuth Token Pool | Manage Claude OAuth credentials separately from API-key endpoints and route Claude-compatible requests through the pool |
+| AI Agent workspace | Central place for agent providers, model choices, provider repair, and AI coding tool configuration |
+| Monitoring | Live requests, endpoint state, request IDs, classified failures, token usage, and credential-level statistics |
+| Backup and sync | WebDAV, local backup, S3-compatible storage, and restore workflows |
+| Online licensing | Network card-key activation, Ed25519-signed license tickets, device authorization, disable/renew support, and 30-day offline grace |
 
 ## Add Endpoints
+
+Common authentication modes:
+
+| Mode | Use case |
+|------|----------|
+| `api_key` | Standard upstream API key |
+| `token_pool` | Generic token pool rotation |
+| `codex_token_pool` | Codex subscription token pool with refresh, quota, and isolation support |
 
 Common transformers:
 
 | Transformer | Upstream protocol | Typical use |
 |-------------|-------------------|-------------|
-| `claude` | Claude / Anthropic | Official or compatible Claude APIs |
-| `openai` | OpenAI Chat Completions | OpenAI Chat-compatible upstreams |
-| `openai2` | OpenAI Responses | Codex CLI and Responses-compatible upstreams |
+| `Codex` | Codex-oriented flow | Codex subscription and Codex-specific routing |
+| `openai` | OpenAI Chat Completions | Chat-compatible providers |
+| `openai2` | OpenAI Responses | Codex CLI and Responses-compatible providers |
 | `gemini` | Google Gemini | Native Gemini APIs |
-| `deepseek` | OpenAI Chat-compatible | DeepSeek |
-| `kimi` | OpenAI Chat-compatible | Kimi / Moonshot |
-
-Transformers other than `claude` normally require a target model.
+| `deepseek` | OpenAI Chat-compatible | DeepSeek-compatible providers |
+| `kimi` | OpenAI Chat-compatible | Kimi / Moonshot-compatible providers |
 
 To use a Codex Token Pool:
 
-1. Select `Codex Token Pool` as the authentication mode
-2. Import token JSON records containing `access_token` and `refresh_token`
-3. AINexus configures the Codex upstream and `openai2` transformer, then manages rotation, refresh, quota snapshots, and invalid-token isolation
-
-## Core Capabilities
-
-- **One local API provider** for multiple AI clients
-- **Endpoint rotation and failover** with request-local fallback that avoids cross-request state pollution
-- **Protocol conversion** across Claude, OpenAI Chat, OpenAI Responses, Gemini, DeepSeek, and Kimi/Moonshot
-- **Token pool management** with credential rotation, 401 refresh, invalid-token isolation, quotas, and usage statistics
-- **Reasoning and streaming controls** with endpoint-level effort, thinking disablement, forced upstream streaming, and SSE heartbeat
-- **Live monitoring** for requests, classified errors, endpoint runtime state, request IDs, and per-credential usage
-- **Model and compatibility APIs** at `/v1/models`, `/models`, `/api/tags`, `/version`, `/props`, `/health`, and `/stats`
-- **Backup and sync** through WebDAV, local backups, and S3-compatible storage
-- **Online licensing and operations foundation** with network card activation, offline grace, device authorization management, and extension points for future server-side usage statistics and remote policy management
-
-<table>
-  <tr>
-    <td align="center"><img src="images/EN-Light.png" alt="Light Theme" width="400"></td>
-    <td align="center"><img src="images/EN-Dark.png" alt="Dark Theme" width="400"></td>
-  </tr>
-</table>
+1. Select `Codex Token Pool` as the authentication mode.
+2. Import token JSON records containing `access_token` and `refresh_token`.
+3. AINexus configures the Codex upstream and the Responses-compatible transformer, then manages rotation, refresh, quota snapshots, and invalid-token isolation.
 
 ## Runtime Modes
 
 | Mode | Entry | Best for |
 |------|-------|----------|
-| Desktop | `cmd/desktop` | Local GUI, tray operation, visual management |
-| Server | `cmd/server` | Servers, NAS, Docker, and web management |
+| Desktop | `cmd/desktop` | Local GUI, tray operation, visual management, and customer desktop usage |
+| Server | `cmd/server` | Servers, NAS, Docker, and web-based management |
+| License Server | `cmd/license-server` | Online card-key generation, activation, device management, renewal, and disable operations |
 
 Server mode supports:
 
 | Environment variable | Description | Default |
 |----------------------|-------------|---------|
 | `AINEXUS_PORT` | HTTP listening port | `3000` |
-| `AINEXUS_LISTEN_MODE` | `local` for loopback only; `lan` for all interfaces | `local`; published Docker ports require `lan` |
+| `AINEXUS_LISTEN_MODE` | `local` for loopback only; `lan` for all interfaces | `local` |
 | `AINEXUS_LOG_LEVEL` | `0` debug, `1` info, `2` warning, `3` error | `1` |
-| `AINEXUS_DATA_DIR` | Data directory | User data directory; `/data` in the container |
+| `AINEXUS_DATA_DIR` | Data directory | User data directory; `/data` in Docker |
 | `AINEXUS_DB_PATH` | SQLite database path | `ainexus.db` under the data directory |
 | `AINEXUS_BASIC_AUTH_ENABLED` | Protect the Web UI and management API | `true` |
 | `AINEXUS_BASIC_AUTH_USERNAME` | Basic Auth username | `admin` |
 | `AINEXUS_BASIC_AUTH_PASSWORD` | Basic Auth password | Randomly generated on first launch |
 
-> [!WARNING]
-> When using `AINEXUS_LISTEN_MODE=lan` or exposing the service publicly, set a strong password and restrict access with a firewall or HTTPS reverse proxy. Basic Auth protects the Web UI and management API, but it is not a replacement for a proper network boundary.
+Online licensing supports:
 
-## Customer Distribution and Upgrade Compatibility
+| Environment variable | Description |
+|----------------------|-------------|
+| `CCNEXUS_LICENSE_SERVER_URL` | Client license server URL |
+| `CCNEXUS_LICENSE_PUBLIC_KEY` | Ed25519 public key embedded in client builds |
+| `CCNEXUS_LICENSE_PORT` | License server port |
+| `CCNEXUS_LICENSE_BIND` | License server bind address |
+| `CCNEXUS_LICENSE_DATA_DIR` | License server data directory |
+| `CCNEXUS_LICENSE_DB_PATH` | License server SQLite database path |
+| `CCNEXUS_LICENSE_KEY_PATH` | License private key path on the license server |
+| `CCNEXUS_LICENSE_ADMIN_USERNAME` | License admin username |
+| `CCNEXUS_LICENSE_ADMIN_PASSWORD` | License admin password |
 
-After customer distribution, upgrade stability takes priority over feature velocity:
+## Upgrade Compatibility
 
-- New versions should keep existing license tickets, card redemptions, offline grace, configuration files, and SQLite data usable.
-- Default proxy ports, license server URLs, endpoint authentication modes, and transformer semantics should not change without migration notes.
-- Database migrations should be idempotent and preserve the original data with a rollback path.
-- Future server-side statistics and remote management features should follow data minimization: report token usage, error classes, and device state, but never upload plaintext API keys, access tokens, refresh tokens, prompts, or responses.
-- Remote endpoint enablement/order policies should keep a local fallback; when the server is unavailable, the customer's existing local configuration continues to work.
+AINexus is already distributed to real customers, so upgrade safety has priority over feature velocity:
 
-## Differences from the Original Project
-
-AINexus Optimized keeps the unified proxy design of [lich0821/AINexus](https://github.com/lich0821/AINexus) and adds safeguards for long-running, concurrent client workloads:
-
-- Request-local fallback and endpoint cooldowns to reduce cross-request interference
-- More precise classification for quota, rate limit, 5xx, network, and authentication failures
-- SSE heartbeat, forced upstream streaming, and empty-output detection
-- Request IDs, retry reasons, endpoint runtime state, and per-credential statistics
-
-The original design remains a good reference for lightweight local rotation. Optimized is intended for shared providers, token pools, and more complex recovery requirements.
+- Existing license tickets, card redemptions, offline grace, configuration files, token pools, and SQLite data must remain readable.
+- Default ports, license server URLs, endpoint authentication modes, and transformer semantics should stay stable unless migration logic is provided.
+- Database migrations should be idempotent and preserve rollback options.
+- Future server-side statistics should only upload necessary aggregate data such as device ID, version, endpoint ID, model, request count, token usage, error class, and time window.
+- Remote endpoint policies should keep a local fallback; when the server is unavailable, the customer's existing local configuration continues to work.
+- API keys, access tokens, refresh tokens, prompts, and responses should not be uploaded in plaintext for operations features.
 
 ## Develop from Source
 
 ```bash
-# Desktop development with hot reload
+# Desktop frontend
 cd cmd/desktop/frontend
 npm install
+npm run build
+
+# Desktop app
 cd ..
 wails dev
 
-# Build the server
+# Server
 cd ../../cmd/server
 go build -ldflags="-s -w" -o ainexus-server .
 
-# Run all tests from the repository root
+# License server
+cd ../license-server
+go build -ldflags="-s -w" -o ccnexus-license .
+
+# Tests
 cd ../..
 go test ./... -count=1
 ```
-
-See the [Development Guide](development_en.md) for complete prerequisites and cross-platform build commands.
-
-## Documentation
-
-- [Configuration Guide](configuration_en.md)
-- [Docker Deployment Guide](README_DOCKER.md)
-- [Development Guide](development_en.md)
-- [FAQ](FAQ_en.md)
-- [Distribution Site Development](../site/README.md)
-- [Commercial Delivery Templates](distribution/README.md)
-
-## License
-
-This project is no longer licensed under the MIT License. The source code may be used for non-commercial personal, educational, research, and evaluation purposes; any commercial use requires prior written authorization from the copyright holder. See [LICENSE](../LICENSE).

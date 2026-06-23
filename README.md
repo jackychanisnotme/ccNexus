@@ -1,66 +1,73 @@
 <div align="center">
 
 <p align="center">
-  <img src="docs/images/AINexus.svg" alt="Claude Code、Codex CLI、Hermes Agent 与 OpenClaw API Provider 热切换中枢" width="720" />
+  <img src="docs/images/AINexus.svg" alt="AINexus - API Provider, Token Pool and Agent hub for AI coding tools" width="720" />
 </p>
 
-[![构建状态](https://github.com/jackychanisnotme/AINexus/actions/workflows/build.yml/badge.svg)](https://github.com/jackychanisnotme/AINexus/actions)
-[![最新版本](https://img.shields.io/github/v/release/jackychanisnotme/AINexus?label=release)](https://github.com/jackychanisnotme/AINexus/releases/latest)
-[![许可证: 商用需授权](https://img.shields.io/badge/License-Commercial%20use%20requires%20authorization-red.svg)](LICENSE)
-[![Go 版本](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
+[![Pre-release](https://img.shields.io/badge/pre--release-v6.3.6-blue)](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6)
+[![License](https://img.shields.io/badge/License-Commercial%20use%20requires%20authorization-red.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
 [![Wails](https://img.shields.io/badge/Wails-v2-blue)](https://wails.io/)
 
 [English](docs/README_EN.md) | [简体中文](README.md)
 
 </div>
 
-AINexus 是面向 Claude Code、Codex CLI、Hermes Agent、OpenClaw 等 AI 开发工具的本地 API Provider 与资源管理中枢。它统一管理端点、模型、API Key、Token Pool、额度、统计和备份，并在多个上游、账号和模型之间提供热切换与自动故障转移。
+AINexus 是面向 Claude Code、Codex CLI、OpenClaw、Hermes Agent 以及 OpenAI/Claude/Gemini 兼容客户端的本地 API Provider、Token Pool 和 Agent 管理中枢。它把端点、模型、API Key、订阅 Token、授权状态、统计、备份和智能体配置统一到一个桌面应用与服务器模式中。
+
+6.3.6 重点增强了在线卡密授权、Codex Token Pool 额度与凭证级用量统计、Claude OAuth Token Pool、AI Agent 工作台、Agent Provider 配置修复、多端点故障转移和跨平台客户包分发。
 
 > [!IMPORTANT]
-> 当前仓库维护 **AINexus Optimized**，重点增强 Codex CLI、OpenAI Responses API、Claude Code、多端点并发和复杂上游错误恢复。
->
-> [下载最新版本](https://github.com/jackychanisnotme/AINexus/releases/latest)
+> 当前发布为 **AINexus v6.3.6 pre-release**。下载地址：
+> [https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6)
 
 > [!NOTE]
-> AINexus 已进入正式客户分发阶段。后续版本会继续增加软件端和服务器端能力，包括客户端 Token 消耗统计、授权后台运营视图、远程端点策略管理等。项目会优先保证存量客户的授权、配置、数据目录、Token Pool 和代理行为在升级后继续可用。
+> AINexus Pro 使用在线卡密激活。授权服务签发 Ed25519 票据，客户端在最近一次在线校验成功后可离线宽限 30 天。购买或续期卡密请联系微信：`yo22bro`。
+
+## 界面预览
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/CN-Light.png" alt="AINexus 6.3.6 明亮主题" width="400"></td>
+    <td align="center"><img src="docs/images/CN-Dark.png" alt="AINexus 6.3.6 暗黑主题" width="400"></td>
+  </tr>
+</table>
 
 ## 快速开始
 
 ### 桌面应用
 
-从 [Releases](https://github.com/jackychanisnotme/AINexus/releases/latest) 下载对应平台的安装包：
+从 [v6.3.6 pre-release](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6) 下载对应平台：
 
-- **macOS**：解压 `.zip`，将 `AINexus.app` 移入「应用程序」；首次运行可右键选择「打开」
-- **Windows**：解压 `windows-amd64.zip`，运行 `AINexus.exe`
-- **Linux**：建议从源码构建，或使用服务器模式/Docker
+- **macOS**：下载 `AINexus-v6.3.6-darwin-universal.zip`，解压后将 `AINexus.app` 移入「应用程序」。首次打开如遇系统拦截，可右键选择「打开」。
+- **Windows**：下载 `AINexus-v6.3.6-windows-amd64.zip`，解压后运行 `AINexus.exe`。
+- **服务器/NAS/Docker**：使用服务器模式或 Docker Compose。
 
-启动后点击「添加端点」，填写 API 地址、密钥、认证方式、转换器和模型。默认代理地址为 `http://127.0.0.1:3000`。
+首次启动后在授权窗口输入在线卡密。激活成功后，默认代理地址为：
+
+```text
+http://127.0.0.1:3000
+```
 
 ### 服务器模式
-
-要求 Go 1.24+：
 
 ```bash
 go run ./cmd/server
 ```
 
-启动后访问：
+可用地址：
 
 - API Provider：`http://127.0.0.1:3000`
 - Web 管理界面：`http://127.0.0.1:3000/ui/`
 - 健康检查：`http://127.0.0.1:3000/health`
 
-服务器模式默认启用 Basic Auth，用户名为 `admin`。首次启动且未配置密码时，程序会生成随机密码并在日志中显示一次。
+服务器模式同样需要在线授权。可通过命令行激活：
 
-### Docker Compose
-
-首次启动前，确认 `cmd/server/docker-compose.yml` 的 `environment` 包含：
-
-```yaml
-- AINEXUS_LISTEN_MODE=lan
+```bash
+CCNEXUS_LICENSE_PUBLIC_KEY=<public-key> go run ./cmd/server -activate <card-key>
 ```
 
-容器需要监听所有网卡，Docker 的宿主机端口映射才能访问服务。然后执行：
+### Docker Compose
 
 ```bash
 cd cmd/server
@@ -68,14 +75,15 @@ docker compose up -d --build
 docker compose logs -f ainexus
 ```
 
-默认将宿主机 `3021` 端口映射到容器的 `3000` 端口：
+Docker 场景如需局域网访问，需要配置：
 
-- Web 管理界面：`http://127.0.0.1:3021/ui/`
-- 健康检查：`http://127.0.0.1:3021/health`
+```yaml
+- AINEXUS_LISTEN_MODE=lan
+```
 
-数据保存在 `cmd/server/ainexus/`。首次启动密码可从容器日志中查看。更多说明见 [Docker 部署指南](docs/README_DOCKER.md)。
+默认 Web UI：`http://127.0.0.1:3021/ui/`。更多见 [Docker 部署指南](docs/README_DOCKER.md)。
 
-## 配置客户端
+## 连接客户端
 
 ### Claude Code
 
@@ -90,8 +98,6 @@ docker compose logs -f ainexus
   }
 }
 ```
-
-部分模型不支持 64k 输出，可按上游能力调整或移除 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`。
 
 ### Codex CLI
 
@@ -109,127 +115,136 @@ wire_api = "responses"
 experimental_bearer_token = "ainexus-local"
 ```
 
-如果你的 Codex CLI 版本仍要求 `~/.codex/auth.json`，可写入占位 API Key：
+如果 Codex CLI 仍要求 `~/.codex/auth.json`，可写入占位 key：
 
 ```json
 {"OPENAI_API_KEY":"ainexus-local"}
 ```
 
-客户端侧 API Key 只用于满足客户端配置要求；真正的上游认证由 AINexus 端点或 Token Pool 管理。
+真正的上游认证由 AINexus 端点或 Token Pool 管理。
 
-## 添加端点
+## 6.3.6 核心能力
 
-常用转换器：
+### API Provider 与端点故障转移
 
-| 转换器 | 上游协议 | 典型场景 |
+- 多端点轮换、请求级 fallback、端点冷却和默认端点热切换。
+- 支持按端点类型、可用性、启用状态、客户端 IP 过滤统计和列表。
+- 支持强制上游流式，并为非流式客户端聚合 SSE 响应。
+- 对限流、额度耗尽、上游 5xx、网络错误、认证失败和空输出做独立分类与冷却。
+
+### 协议转换
+
+| 转换器 | 上游协议 | 典型用途 |
 |--------|----------|----------|
 | `claude` | Claude / Anthropic | Claude 官方或兼容接口 |
-| `openai` | OpenAI Chat Completions | OpenAI Chat 兼容上游 |
-| `openai2` | OpenAI Responses | Codex CLI、Responses 兼容上游 |
+| `openai` | OpenAI Chat Completions | Chat Completions 兼容上游 |
+| `openai2` | OpenAI Responses | Codex CLI / Responses API |
 | `gemini` | Google Gemini | Gemini 原生接口 |
 | `deepseek` | OpenAI Chat 兼容 | DeepSeek |
 | `kimi` | OpenAI Chat 兼容 | Kimi / Moonshot |
+| `poe` | OpenAI Chat 兼容 | Poe bot |
 
-除 `claude` 外的转换器通常需要填写目标模型。
+### Token Pool
 
-使用 Codex Token Pool 时：
+- **API Token Pool**：普通 API Token 轮换、启用/禁用、失败隔离和凭证级请求统计。
+- **Codex Token Pool**：固定 ChatGPT Codex 上游与 Responses 转换器，支持 Codex 登录凭据、token 刷新、额度刷新、额度快照和凭证级 token 用量统计。
+- **Claude OAuth Token Pool（实验）**：支持 Claude Code 订阅 OAuth，允许导入 setup-token 或发现本机 Claude 凭据。
+- Token Pool 可以按账号/邮箱覆盖导入、多文件批量导入、查看最后错误、刷新单条凭证、查看单条凭证用量。
 
-1. 认证方式选择 `Codex Token Pool`
-2. 在 Token Pool 页面导入包含 `access_token` 和 `refresh_token` 的 token JSON
-3. AINexus 自动设置 Codex 上游地址与 `openai2` 转换器，并处理轮换、刷新、额度快照和失效隔离
+### 在线授权
 
-## 核心能力
+- 客户端输入卡密联网激活，服务器仅保存卡密哈希。
+- 服务器用 Ed25519 签发授权票据；客户端嵌入服务器公钥校验票据。
+- 最近一次在线校验成功后可离线宽限 30 天。
+- 授权后台支持生成卡密、限制设备数、禁用卡密、禁用设备授权、修改设备到期时间、设备备注和审计记录。
 
-- **统一 API Provider**：多个 AI 客户端接入同一个本地地址
-- **多端点轮换与故障转移**：单次请求内 fallback，避免并发请求污染全局默认端点
-- **协议转换**：支持 Claude、OpenAI Chat、OpenAI Responses、Gemini、DeepSeek、Kimi/Moonshot
-- **Token Pool 管理**：凭证轮换、401 刷新、失效隔离、额度与用量统计
-- **推理与流式控制**：端点级 reasoning 强度、关闭 thinking、上游强制流式和 SSE heartbeat
-- **实时监控**：请求统计、错误分类、端点运行态、Request ID 和凭证级用量
-- **模型与兼容接口**：提供 `/v1/models`、`/models`、`/api/tags`、`/version`、`/props`、`/health`、`/stats`
-- **备份同步**：支持 WebDAV、本地备份和 S3 兼容存储
-- **在线授权与运营基础**：支持联网卡密激活、离线宽限、设备授权管理，并为后续服务器端用量统计和远程策略管理保留扩展空间
+### AI Agent 与 Provider 管理
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/images/CN-Light.png" alt="明亮主题" width="400"></td>
-    <td align="center"><img src="docs/images/CN-Dark.png" alt="暗黑主题" width="400"></td>
-  </tr>
-</table>
+- 桌面端内置 AI Agent 工作台，可保存本地会话和任务上下文。
+- Agent Provider 面板可检查 Codex CLI、Claude Code、OpenClaw 等本地配置健康状态。
+- 支持生成备份、修复 provider 地址、恢复配置备份和查看修复结果。
+
+### 统计、会话与运维
+
+- 今日、昨日、周、月、历史统计，按端点和客户端 IP 过滤。
+- 端点级和凭证级请求数、错误数、输入/输出 token 统计。
+- Codex 额度从响应头、SSE 事件和手动刷新中捕获并持久化。
+- 内置启动器、终端配置、Codex 会话历史查看、日志面板和更新检查。
+- 支持 WebDAV、本地目录和 S3 兼容存储备份配置与统计。
 
 ## 运行模式
 
 | 模式 | 入口 | 适合场景 |
 |------|------|----------|
-| 桌面模式 | `cmd/desktop` | 本机 GUI、托盘运行、可视化管理 |
-| 服务器模式 | `cmd/server` | 服务器、NAS、Docker、Web 管理 |
+| 桌面模式 | `cmd/desktop` | 本机 GUI、托盘、授权激活、端点与 Token Pool 管理 |
+| 服务器模式 | `cmd/server` | 服务器、NAS、Docker、团队内共享 API Provider |
+| 授权服务 | `cmd/license-server` | 卡密生成、设备激活、续期、禁用与后台运营 |
 
-服务器模式支持：
+## 环境变量
 
-| 环境变量 | 说明 | 默认值 |
-|----------|------|--------|
+### 服务器模式
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
 | `AINEXUS_PORT` | HTTP 监听端口 | `3000` |
-| `AINEXUS_LISTEN_MODE` | `local` 仅本机；`lan` 监听所有网卡 | `local`；Docker 端口映射需设为 `lan` |
+| `AINEXUS_LISTEN_MODE` | `local` 仅本机；`lan` 监听所有网卡 | `local` |
 | `AINEXUS_LOG_LEVEL` | `0` 调试、`1` 信息、`2` 警告、`3` 错误 | `1` |
 | `AINEXUS_DATA_DIR` | 数据目录 | 用户数据目录；容器内为 `/data` |
-| `AINEXUS_DB_PATH` | SQLite 数据库路径 | 数据目录下的 `ainexus.db` |
+| `AINEXUS_DB_PATH` | SQLite 数据库路径 | 数据目录下 `ainexus.db` |
 | `AINEXUS_BASIC_AUTH_ENABLED` | 是否保护 Web UI 和管理 API | `true` |
 | `AINEXUS_BASIC_AUTH_USERNAME` | Basic Auth 用户名 | `admin` |
 | `AINEXUS_BASIC_AUTH_PASSWORD` | Basic Auth 密码 | 首次启动随机生成 |
 
+### 在线授权
+
+| 变量 | 说明 |
+|------|------|
+| `CCNEXUS_LICENSE_SERVER_URL` | 客户端授权服务器地址 |
+| `CCNEXUS_LICENSE_PUBLIC_KEY` | 客户端嵌入的授权公钥 |
+| `CCNEXUS_LICENSE_PORT` | 授权服务端口 |
+| `CCNEXUS_LICENSE_BIND` | 授权服务监听地址 |
+| `CCNEXUS_LICENSE_DATA_DIR` | 授权服务数据目录 |
+| `CCNEXUS_LICENSE_DB_PATH` | 授权 SQLite 数据库 |
+| `CCNEXUS_LICENSE_KEY_PATH` | 授权私钥路径 |
+| `CCNEXUS_LICENSE_ADMIN_USERNAME` | 授权后台用户名 |
+| `CCNEXUS_LICENSE_ADMIN_PASSWORD` | 授权后台密码 |
+
 > [!WARNING]
-> 使用 `AINEXUS_LISTEN_MODE=lan` 或对公网暴露服务时，请设置强密码，并通过防火墙或 HTTPS 反向代理限制访问。Basic Auth 保护 Web UI 和管理 API，不应替代完整的网络边界保护。
-
-## 客户分发与升级兼容性
-
-AINexus 面向客户分发后，升级稳定性优先于功能速度：
-
-- 新版本应保持已有授权票据、卡密兑换记录、离线宽限、配置文件和 SQLite 数据可继续使用。
-- 默认代理端口、授权服务器地址、端点认证模式和转换器语义不会在无迁移说明的情况下改变。
-- 数据库迁移按幂等方式设计，升级失败时应保留原始数据和可回滚路径。
-- 未来服务器端统计和远程管理功能默认遵循最小数据原则：统计 Token 用量、错误分类和设备状态，不上传 API Key、access token、refresh token、prompt 或 response 明文。
-- 远程端点开关/顺序等策略应保留本地兜底；服务器不可用时，客户现有本地配置继续生效。
-
-## 与初代版本的差异
-
-AINexus Optimized 延续了 [lich0821/AINexus](https://github.com/lich0821/AINexus) 的统一代理入口设计，并面向长期运行和多客户端并发加强：
-
-- 请求级 fallback 与端点冷却，减少不同请求之间的状态干扰
-- 更细的额度耗尽、限流、5xx、网络和认证错误分类
-- SSE heartbeat、强制上游流式和空输出检测
-- Request ID、重试原因、端点运行态及凭证级统计
-
-轻量、本地、简单轮换场景可以参考初代设计；需要共享 Provider、Token Pool 和复杂错误恢复时，Optimized 版本提供更完整的运行保障。
+> 开启 `AINEXUS_LISTEN_MODE=lan` 或对公网暴露服务时，请设置强密码，并通过防火墙、VPN 或 HTTPS 反向代理限制访问。
 
 ## 从源码开发
 
 ```bash
-# 桌面开发（热重载）
+# 桌面端
 cd cmd/desktop/frontend
 npm install
+npm run build
 cd ..
 wails dev
 
-# 构建服务器
+# 服务器
 cd ../../cmd/server
 go build -ldflags="-s -w" -o ainexus-server .
 
-# 运行全部测试（仓库根目录）
+# 授权服务
+cd ../license-server
+go build -ldflags="-s -w" -o ccnexus-license .
+
+# 仓库根目录验证
 cd ../..
 go test ./... -count=1
+go vet ./...
 ```
-
-完整依赖和跨平台构建命令见 [开发指南](docs/development.md)。
 
 ## 文档
 
 - [详细配置](docs/configuration.md)
 - [Docker 部署指南](docs/README_DOCKER.md)
+- [在线授权说明](docs/ccnexus-online-license.md)
 - [开发指南](docs/development.md)
 - [常见问题](docs/FAQ.md)
-- [独立站开发说明](site/README.md)
 - [商业交付模板](docs/distribution/README.md)
 
 ## 许可证
 
-本项目不再采用 MIT 许可证。源码可用于非商业个人、学习、研究与评估用途；任何商业使用都必须先获得版权所有者的书面授权。详见 [LICENSE](LICENSE)。
+本项目源码可用于非商业个人、学习、研究与评估用途；任何商业使用都必须先获得版权所有者的书面授权。详见 [LICENSE](LICENSE)。
