@@ -991,7 +991,25 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if upstreamStreaming {
 			responseHeaderTimeout = p.streamHeaderTimeoutOrDefault()
 		}
-		resp, err := sendRequestWithResponseHeaderTimeout(ctx, proxyReq, endpoint, p.httpClient, p.config, responseHeaderTimeout, !upstreamStreaming)
+		var resp *http.Response
+		useHTTPUpstream := true
+		if shouldUseCodexWebSocket(endpoint, streamReq.Stream, clientFormat, transformerName) {
+			webSocketPayload, bodyErr := proxyRequestBodyCopy(proxyReq)
+			if bodyErr != nil {
+				err = bodyErr
+			} else {
+				resp, err = p.openCodexWebSocketStream(ctx, proxyReq, endpoint, webSocketPayload)
+				if err == nil {
+					useHTTPUpstream = false
+				} else if isCodexWebSocketUnsupported(err) {
+					logger.Debug("[%s] Codex WebSocket unsupported, falling back to HTTP streaming: %v", endpoint.Name, err)
+					err = nil
+				}
+			}
+		}
+		if useHTTPUpstream && err == nil {
+			resp, err = sendRequestWithResponseHeaderTimeout(ctx, proxyReq, endpoint, p.httpClient, p.config, responseHeaderTimeout, !upstreamStreaming)
+		}
 		if err != nil {
 			if isClientCanceled(ctx, err) {
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, 0, "client_canceled", "Client canceled request: %v", err)
@@ -1124,7 +1142,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				if retryReason == streamFinishMissingResponsesDone {
 					responsesTextLen, responsesUnsafe, responsesUnsafeReason, lastTransformedEventType, lastOutputItemType, responsesToolRecoverable, responsesToolPending, responsesOutputItems := missingOpenAIResponsesCompletedDiagnostics(streamResult)
 					if streamResult.WroteSemanticData || streamResult.WroteData {
-						if shouldTolerateMissingOpenAIResponsesCompleted(r, clientFormat) {
+						if shouldTolerateMissingOpenAIResponsesCompleted(r, clientFormat) && !streamResult.ResponsesCompletionSafe.ToolPending {
 							logRequestAttemptWarn(
 								obs,
 								endpoint.Name,

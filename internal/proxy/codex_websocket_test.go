@@ -3,15 +3,18 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/lich0821/ccNexus/internal/config"
+	"github.com/lich0821/ccNexus/internal/storage"
 )
 
 func TestCodexWebSocketURL(t *testing.T) {
@@ -228,4 +231,205 @@ func (e *testUnexpectedValueError) Error() string {
 func stringifyTestValue(value interface{}) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
+}
+
+func TestCodexTokenPoolStreamingResponsesPreferWebSocket(t *testing.T) {
+	var httpHits int
+	p := newCodexWebSocketRoutingTestProxy(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		httpHits++
+		return nil, errors.New("HTTP upstream should not be called")
+	}))
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		for _, event := range []map[string]interface{}{
+			{"type": "response.created", "response": map[string]interface{}{"id": "resp-ws-route", "status": "in_progress"}},
+			{"type": "response.output_text.delta", "delta": "ok", "item_id": "msg-1", "output_index": 0, "content_index": 0},
+			{"type": "response.completed", "response": map[string]interface{}{
+				"id": "resp-ws-route", "status": "completed",
+				"usage": map[string]interface{}{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+				"output": []interface{}{map[string]interface{}{
+					"type": "message", "id": "msg-1", "role": "assistant", "status": "completed",
+					"content": []interface{}{map[string]interface{}{"type": "output_text", "text": "ok"}},
+				}},
+			}},
+		} {
+			if err := conn.WriteJSON(event); err != nil {
+				return
+			}
+		}
+	}))
+	defer upstream.Close()
+	localWSURL, err := codexWebSocketURL(upstream.URL + "/backend-api/codex/responses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dialHits int
+	p.codexWebSocketDial = func(ctx context.Context, target string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+		dialHits++
+		if target != "wss://chatgpt.com/backend-api/codex/responses" {
+			t.Fatalf("unexpected official websocket target %q", target)
+		}
+		return websocket.DefaultDialer.DialContext(ctx, localWSURL, headers)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Codex_Desktop/0.142.0-alpha.1")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if dialHits != 1 {
+		t.Fatalf("expected one websocket dial, got %d", dialHits)
+	}
+	if httpHits != 0 {
+		t.Fatalf("expected no HTTP upstream calls, got %d", httpHits)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "response.completed") || !strings.Contains(body, `"delta":"ok"`) {
+		t.Fatalf("expected completed websocket-backed SSE, got %q", body)
+	}
+}
+
+func TestCodexWebSocketUnsupportedHandshakeFallsBackToHTTP(t *testing.T) {
+	var httpHits int
+	p := newCodexWebSocketRoutingTestProxy(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		httpHits++
+		return completedCodexHTTPTestResponse(req), nil
+	}))
+	var dialHits int
+	p.codexWebSocketDial = func(context.Context, string, http.Header) (*websocket.Conn, *http.Response, error) {
+		dialHits++
+		return nil, &http.Response{
+			StatusCode: http.StatusUpgradeRequired,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("upgrade required")),
+		}, websocket.ErrBadHandshake
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Codex_Desktop/0.142.0-alpha.1")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if dialHits != 1 || httpHits != 1 {
+		t.Fatalf("expected one websocket dial and one HTTP fallback, got dial=%d http=%d", dialHits, httpHits)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "response.completed") {
+		t.Fatalf("expected completed HTTP fallback stream, got %q", body)
+	}
+}
+
+func TestNonCodexResponsesDoNotUseCodexWebSocket(t *testing.T) {
+	var httpHits int
+	endpoint := failoverPolicyTestEndpoint("OpenAI", "https://api.example.com")
+	p := newFailoverPolicyTestProxy([]config.Endpoint{endpoint}, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		httpHits++
+		return completedCodexHTTPTestResponse(req), nil
+	})})
+	var dialHits int
+	p.codexWebSocketDial = func(context.Context, string, http.Header) (*websocket.Conn, *http.Response, error) {
+		dialHits++
+		return nil, nil, errors.New("unexpected websocket dial")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if dialHits != 0 {
+		t.Fatalf("expected no websocket dial, got %d", dialHits)
+	}
+	if httpHits != 1 {
+		t.Fatalf("expected one HTTP request, got %d", httpHits)
+	}
+}
+
+func TestCodexPendingCustomToolMissingCompletionIsNeverTolerated(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.created","response":{"id":"resp-tool","status":"in_progress","output":[]}}`,
+			"",
+			`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"tool-1","call_id":"call-1","name":"exec","status":"in_progress","input":""}}`,
+			"",
+			`data: {"type":"response.custom_tool_call_input.delta","output_index":0,"item_id":"tool-1","delta":"partial"}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{failoverPolicyTestEndpoint("Primary", upstream.URL)}, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Codex_Desktop/0.142.0-alpha.1")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: error") || !strings.Contains(body, streamFinishMissingResponsesDone) {
+		t.Fatalf("expected typed missing-completion error for pending tool, got %q", body)
+	}
+}
+
+func newCodexWebSocketRoutingTestProxy(t *testing.T, transport http.RoundTripper) *Proxy {
+	t.Helper()
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	credential := storage.EndpointCredential{
+		EndpointName: "Codex Pool",
+		ProviderType: storage.ProviderTypeCodex,
+		AccessToken:  "test-token",
+		AccountID:    "acct-1",
+		Status:       "active",
+		Enabled:      true,
+	}
+	if err := store.SaveEndpointCredential(&credential); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "Codex Pool",
+		APIUrl:      config.CodexTokenPoolAPIURL,
+		AuthMode:    config.AuthModeCodexTokenPool,
+		Enabled:     true,
+		Transformer: config.CodexTokenPoolTransformer,
+		Model:       "gpt-5.5",
+	}})
+	p := New(cfg, &noopStatsStorage{}, store, "test-device")
+	p.httpClient = &http.Client{Transport: transport}
+	p.retrySleep = func(time.Duration) {}
+	return p
+}
+
+func completedCodexHTTPTestResponse(req *http.Request) *http.Response {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp-http","status":"in_progress","output":[]}}`,
+		"",
+		`data: {"type":"response.output_text.delta","delta":"ok","item_id":"msg-1","output_index":0,"content_index":0}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp-http","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[{"type":"message","id":"msg-1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}]}}`,
+		"",
+		"",
+	}, "\n")
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    req,
+	}
 }

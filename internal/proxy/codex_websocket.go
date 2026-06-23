@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,6 +34,39 @@ func (e *codexWebSocketHandshakeError) Error() string {
 
 func (e *codexWebSocketHandshakeError) Unwrap() error {
 	return e.Err
+}
+
+func isCodexWebSocketUnsupported(err error) bool {
+	var handshakeErr *codexWebSocketHandshakeError
+	if !errors.As(err, &handshakeErr) {
+		return false
+	}
+
+	switch handshakeErr.StatusCode {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusUpgradeRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldUseCodexWebSocket(endpoint config.Endpoint, stream bool, clientFormat ClientFormat, transformerName string) bool {
+	return config.NormalizeAuthMode(endpoint.AuthMode) == config.AuthModeCodexTokenPool &&
+		stream &&
+		clientFormat == ClientFormatOpenAIResponses &&
+		transformerName == "cx_resp_openai2"
+}
+
+func proxyRequestBodyCopy(req *http.Request) ([]byte, error) {
+	if req == nil || req.GetBody == nil {
+		return nil, fmt.Errorf("proxy request body cannot be replayed")
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	return io.ReadAll(body)
 }
 
 func codexWebSocketURL(rawURL string) (string, error) {
