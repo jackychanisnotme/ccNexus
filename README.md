@@ -1,153 +1,250 @@
 <div align="center">
 
 <p align="center">
-  <img src="docs/images/ccNexus.svg" alt="Claude Code、Codex CLI、Hermes Agent 与 OpenClaw API Provider 热切换中枢" width="720" />
+  <img src="docs/images/AINexus.svg" alt="AINexus - API Provider, Token Pool and Agent hub for AI coding tools" width="720" />
 </p>
 
-[![构建状态](https://github.com/jackychanisnotme/ccNexus/actions/workflows/build.yml/badge.svg)](https://github.com/jackychanisnotme/ccNexus/actions)
-[![最新版本](https://img.shields.io/github/v/release/jackychanisnotme/ccNexus?label=release)](https://github.com/jackychanisnotme/ccNexus/releases/latest)
-[![许可证: 商用需授权](https://img.shields.io/badge/License-Commercial%20use%20requires%20authorization-red.svg)](LICENSE)
-[![Go 版本](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
+[![Pre-release](https://img.shields.io/badge/pre--release-v6.3.6-blue)](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6)
+[![License](https://img.shields.io/badge/License-Commercial%20use%20requires%20authorization-red.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
 [![Wails](https://img.shields.io/badge/Wails-v2-blue)](https://wails.io/)
 
 [English](docs/README_EN.md) | [简体中文](README.md)
 
 </div>
 
-ccNexus 不只是 Claude Code、Codex CLI、Hermes Agent 与 OpenClaw 的智能端点轮换代理，也是一套面向 AI 开发工作流的 API 资源管理系统。它把端点、模型、密钥、Codex Token Pool、额度、统计和备份统一管理起来，并对外提供一个稳定的本地 API Provider：Hermes、OpenClaw、Codex、Claude Code 等客户端只需指向 ccNexus，就可以在不同上游、账号、模型之间热切换，无需反复修改每个工具的配置。
+AINexus 是面向 Claude Code、Codex CLI、OpenClaw、Hermes Agent 以及 OpenAI/Claude/Gemini 兼容客户端的本地 API Provider、Token Pool 和 Agent 管理中枢。它把端点、模型、API Key、订阅 Token、授权状态、统计、备份和智能体配置统一到一个桌面应用与服务器模式中。
+
+6.3.6 重点增强了在线卡密授权、Codex Token Pool 额度与凭证级用量统计、Claude OAuth Token Pool、AI Agent 工作台、Agent Provider 配置修复、多端点故障转移和跨平台客户包分发。
 
 > [!IMPORTANT]
-> 当前仓库维护 Optimized 版本，重点增强 Codex CLI、Claude Code、Hermes Agent、OpenClaw、OpenAI Responses API、DeepSeek、Kimi 等兼容场景。
->
-> 最新发布：[`ccNexus Optimized`](https://github.com/jackychanisnotme/ccNexus/releases/latest)
+> 当前发布为 **AINexus v6.3.6 pre-release**。下载地址：
+> [https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6)
 
-## 功能特性
+> [!NOTE]
+> AINexus Pro 使用在线卡密激活。授权服务签发 Ed25519 票据，客户端在最近一次在线校验成功后可离线宽限 30 天。购买或续期卡密请联系微信：`yo22bro`。
 
-- **统一 API Provider**：Claude Code、Codex CLI、Hermes Agent、OpenClaw、OpenAI Chat/Responses 兼容客户端都可以接入同一个本地地址
-- **多客户端热切换**：把 Hermes、OpenClaw、Codex、Claude Code 的 provider/base URL 都指向 ccNexus 后，在 ccNexus 中切换当前端点、启停端点或调整优先级，客户端即可无感切到新的上游、账号或模型
-- **API 资源管理**：集中管理端点、模型、API Key、Token Pool、额度快照、用量统计和备份数据
-- **多端点轮换与故障转移**：按顺序轮换可用端点，失败自动跳过并切换，降低单个上游异常对工作流的影响
-- **多协议格式转换**：支持 Claude、OpenAI Chat、OpenAI Responses、Gemini、DeepSeek、Kimi/Moonshot 等格式互转
-- **Codex Token Pool**：批量导入 `access_token/refresh_token`，自动轮换、401 后刷新、失效隔离，并固定适配 ChatGPT Codex 后端
-- **Token Pool 额度与用量统计**：捕获 Codex 额度快照，按单条凭证展示请求数、错误数、Token 用量和最近使用状态
-- **端点级推理控制**：为支持的端点配置 `low` / `medium` / `high` / `xhigh` 推理强度，也可显式关闭上游 thinking
-- **上游强制流式兼容**：当上游拒绝非流式请求时，可强制使用流式上游并为非流式客户端聚合结果
-- **模型聚合与兼容接口**：提供 `/v1/models`、`/models`、`/api/tags`、`/version`、`/props`、`/health`、`/stats` 等接口，便于客户端探测和监控
-- **实时统计与可视化**：事件驱动更新，支持今日/昨日/本周/本月快速切换，并可按端点、凭证维度查看
-- **桌面端 + 服务器端**：Wails 桌面应用适合本机使用，`cmd/server` 无头模式适合服务器、NAS 或 Docker 部署
-- **备份同步**：支持 WebDAV、本地备份和 S3 兼容存储，便于多设备迁移配置与统计数据
-
-## 与初代版本的设计取舍
-
-Optimized 版本延续了 [lich0821/ccNexus](https://github.com/lich0821/ccNexus) 初代项目“本地统一代理入口”的核心思路，但把重点从简单轮换扩展到长期运行、多端点并发和复杂上游错误恢复。初代逻辑更直接，适合轻量场景；Optimized 版本更强调韧性、可观测性和 Codex/Responses 兼容。
-
-| 维度 | 初代版本优势 | Optimized 版本增强 |
-|------|--------------|--------------------|
-| 故障切换模型 | 失败后全局轮换端点，行为直观，排查简单 | 单次请求内 fallback，不轻易改变全局默认端点，并发请求互不污染 |
-| 错误识别 | 策略简单，维护成本低 | 区分额度耗尽、限流、上游 5xx、网络异常、API Key 失效、客户端 invalid request 等场景 |
-| 端点恢复 | 没有额外状态，结果容易预测 | 失败端点进入可配置冷却，恢复后可自动返回或降优先级，减少反复打坏端点 |
-| 流式稳定性 | 实现简洁，接近传统 HTTP 代理行为 | 支持 SSE heartbeat、上游强制流式、流式错误分类和 200 但空输出的语义检测 |
-| 运维可见性 | 基础日志和统计 | Request ID、重试次数、失败原因、端点运行态与凭证级用量/额度快照 |
-
-如果只需要一个简单的本地轮换代理，初代设计非常清爽；如果要把 Claude Code、Codex CLI、Hermes Agent、OpenClaw、Token Pool 和多个第三方上游长期放在一起跑，并在这些客户端之间共享同一个可热切换的 API Provider，Optimized 版本提供了更细的隔离、恢复和观测能力。
-
-## 客户端兼容状态
-
-| 客户端 | 推荐接入方式 | 当前状态 |
-|--------|--------------|----------|
-| Claude Code | Claude / Anthropic 兼容入口 | 稳定支持 |
-| Codex CLI | OpenAI Responses API，推荐 `openai2` 转换器 | 稳定支持 |
-| Hermes Agent | 按其客户端协议选择 Claude 或 OpenAI 兼容入口 | 稳定支持 |
-| OpenClaw | Claude 或 OpenAI 兼容入口 | 稳定支持 |
+## 界面预览
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/CN-Light.png" alt="明亮主题" width="400"></td>
-    <td align="center"><img src="docs/images/CN-Dark.png" alt="暗黑主题" width="400"></td>
+    <td align="center"><img src="docs/images/CN-Light.png" alt="AINexus 6.3.6 明亮主题" width="400"></td>
+    <td align="center"><img src="docs/images/CN-Dark.png" alt="AINexus 6.3.6 暗黑主题" width="400"></td>
   </tr>
 </table>
 
 ## 快速开始
 
-### 1. 下载安装
+### 桌面应用
 
-[下载当前 fork 最新版本](https://github.com/jackychanisnotme/ccNexus/releases/latest)
+从 [v6.3.6 pre-release](https://github.com/jackychanisnotme/ccNexus/releases/tag/v6.3.6) 下载对应平台：
 
-- **macOS**：下载 `.zip` 后解压，将 `ccNexus.app` 移动到「应用程序」，首次运行右键点击 → 打开
-- **Windows**：下载 `windows-amd64.zip` 后解压，运行 `ccNexus.exe`
-- **Linux**：可从源码构建，或使用服务器模式/Docker 部署
-- **服务器模式**：`cd cmd/server && go run main.go`
+- **macOS**：下载 `AINexus-v6.3.6-darwin-universal.zip`，解压后将 `AINexus.app` 移入「应用程序」。首次打开如遇系统拦截，可右键选择「打开」。
+- **Windows**：下载 `AINexus-v6.3.6-windows-amd64.zip`，解压后运行 `AINexus.exe`。
+- **服务器/NAS/Docker**：使用服务器模式或 Docker Compose。
 
-### 2. 添加端点
+首次启动后在授权窗口输入在线卡密。激活成功后，默认代理地址为：
 
-点击「添加端点」，填写 API 地址、密钥、认证方式、转换器和目标模型。
+```text
+http://127.0.0.1:3000
+```
 
-常用转换器：
-- `claude`：Claude / Anthropic 兼容接口
-- `openai`：OpenAI Chat Completions 兼容接口
-- `openai2`：OpenAI Responses API，推荐给 Codex CLI
-- `gemini`：Google Gemini
-- `deepseek`：DeepSeek Chat 兼容接口
-- `kimi`：Kimi / Moonshot 兼容接口
+### 服务器模式
 
-如需使用 Codex Token Pool：
-- 认证方式选择 `Codex Token Pool`
-- 在 Token Pool 页面导入一批 token JSON（支持 `access_token` + `refresh_token`）
-- 系统会自动设置上游地址与 `openai2` 转换器，并处理 token 轮换、401 后刷新、额度快照和状态管理
+```bash
+go run ./cmd/server
+```
 
-可选增强：
-- 对支持 reasoning 的端点启用「推理」，选择推理强度
-- 上游只接受流式时，启用「上游强制流式」
-- 点击模型选择旁的拉取按钮，快速获取上游模型列表
+可用地址：
 
-### 3. 配置客户端
+- API Provider：`http://127.0.0.1:3000`
+- Web 管理界面：`http://127.0.0.1:3000/ui/`
+- 健康检查：`http://127.0.0.1:3000/health`
 
-#### Claude Code
-`~/.claude/settings.json`
+服务器模式同样需要在线授权。可通过命令行激活：
+
+```bash
+CCNEXUS_LICENSE_PUBLIC_KEY=<public-key> go run ./cmd/server -activate <card-key>
+```
+
+### Docker Compose
+
+```bash
+cd cmd/server
+docker compose up -d --build
+docker compose logs -f ainexus
+```
+
+Docker 场景如需局域网访问，需要配置：
+
+```yaml
+- AINEXUS_LISTEN_MODE=lan
+```
+
+默认 Web UI：`http://127.0.0.1:3021/ui/`。更多见 [Docker 部署指南](docs/README_DOCKER.md)。
+
+## 连接客户端
+
+### Claude Code
+
+编辑 `~/.claude/settings.json`：
+
 ```json
 {
   "env": {
-    "ANTHROPIC_AUTH_TOKEN": "随便写，不重要",
+    "ANTHROPIC_AUTH_TOKEN": "ainexus",
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:3000",
-    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000", // 有些模型可能不支持 64k
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"
   }
-  // 其他配置
 }
-
 ```
 
-#### Codex CLI
-推荐使用 Responses API：
+### Codex CLI
+
+在 Codex 配置中使用 Responses API：
+
 ```toml
-model_provider = "ccNexus"
+model_provider = "AINexus"
 model = "gpt-5-codex"
 preferred_auth_method = "apikey"
 
-[model_providers.ccNexus]
-name = "ccNexus"
-base_url = "http://localhost:3000/v1"
-wire_api = "responses"  # 或 "chat"
-
-# 其他配置
+[model_providers.AINexus]
+name = "AINexus"
+base_url = "http://127.0.0.1:3000/v1"
+wire_api = "responses"
+experimental_bearer_token = "ainexus-local"
 ```
 
-`~/.codex/auth.json` 可以忽略，认证由 ccNexus 端点或 Token Pool 负责。
+如果 Codex CLI 仍要求 `~/.codex/auth.json`，可写入占位 key：
+
+```json
+{"OPENAI_API_KEY":"ainexus-local"}
+```
+
+真正的上游认证由 AINexus 端点或 Token Pool 管理。
+
+## 6.3.6 核心能力
+
+### API Provider 与端点故障转移
+
+- 多端点轮换、请求级 fallback、端点冷却和默认端点热切换。
+- 支持按端点类型、可用性、启用状态、客户端 IP 过滤统计和列表。
+- 支持强制上游流式，并为非流式客户端聚合 SSE 响应。
+- 对限流、额度耗尽、上游 5xx、网络错误、认证失败和空输出做独立分类与冷却。
+
+### 协议转换
+
+| 转换器 | 上游协议 | 典型用途 |
+|--------|----------|----------|
+| `claude` | Claude / Anthropic | Claude 官方或兼容接口 |
+| `openai` | OpenAI Chat Completions | Chat Completions 兼容上游 |
+| `openai2` | OpenAI Responses | Codex CLI / Responses API |
+| `gemini` | Google Gemini | Gemini 原生接口 |
+| `deepseek` | OpenAI Chat 兼容 | DeepSeek |
+| `kimi` | OpenAI Chat 兼容 | Kimi / Moonshot |
+| `poe` | OpenAI Chat 兼容 | Poe bot |
+
+### Token Pool
+
+- **API Token Pool**：普通 API Token 轮换、启用/禁用、失败隔离和凭证级请求统计。
+- **Codex Token Pool**：固定 ChatGPT Codex 上游与 Responses 转换器，支持 Codex 登录凭据、token 刷新、额度刷新、额度快照和凭证级 token 用量统计。
+- **Claude OAuth Token Pool（实验）**：支持 Claude Code 订阅 OAuth，允许导入 setup-token 或发现本机 Claude 凭据。
+- Token Pool 可以按账号/邮箱覆盖导入、多文件批量导入、查看最后错误、刷新单条凭证、查看单条凭证用量。
+
+### 在线授权
+
+- 客户端输入卡密联网激活，服务器仅保存卡密哈希。
+- 服务器用 Ed25519 签发授权票据；客户端嵌入服务器公钥校验票据。
+- 最近一次在线校验成功后可离线宽限 30 天。
+- 授权后台支持生成卡密、限制设备数、禁用卡密、禁用设备授权、修改设备到期时间、设备备注和审计记录。
+
+### AI Agent 与 Provider 管理
+
+- 桌面端内置 AI Agent 工作台，可保存本地会话和任务上下文。
+- Agent Provider 面板可检查 Codex CLI、Claude Code、OpenClaw 等本地配置健康状态。
+- 支持生成备份、修复 provider 地址、恢复配置备份和查看修复结果。
+
+### 统计、会话与运维
+
+- 今日、昨日、周、月、历史统计，按端点和客户端 IP 过滤。
+- 端点级和凭证级请求数、错误数、输入/输出 token 统计。
+- Codex 额度从响应头、SSE 事件和手动刷新中捕获并持久化。
+- 内置启动器、终端配置、Codex 会话历史查看、日志面板和更新检查。
+- 支持 WebDAV、本地目录和 S3 兼容存储备份配置与统计。
 
 ## 运行模式
 
 | 模式 | 入口 | 适合场景 |
 |------|------|----------|
-| 桌面模式 | `cmd/desktop` | 本机 GUI、托盘运行、可视化端点和 Token Pool 管理 |
-| 服务器模式 | `cmd/server` | 远程服务器、NAS、Docker、无头 API 代理 |
+| 桌面模式 | `cmd/desktop` | 本机 GUI、托盘、授权激活、端点与 Token Pool 管理 |
+| 服务器模式 | `cmd/server` | 服务器、NAS、Docker、团队内共享 API Provider |
+| 授权服务 | `cmd/license-server` | 卡密生成、设备激活、续期、禁用与后台运营 |
 
-服务器模式支持 `CCNEXUS_PORT`、`CCNEXUS_LOG_LEVEL`、`CCNEXUS_DB_PATH`、`CCNEXUS_DATA_DIR`、`CCNEXUS_BASIC_AUTH_USERNAME`、`CCNEXUS_BASIC_AUTH_PASSWORD` 等环境变量。
+## 环境变量
+
+### 服务器模式
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `AINEXUS_PORT` | HTTP 监听端口 | `3000` |
+| `AINEXUS_LISTEN_MODE` | `local` 仅本机；`lan` 监听所有网卡 | `local` |
+| `AINEXUS_LOG_LEVEL` | `0` 调试、`1` 信息、`2` 警告、`3` 错误 | `1` |
+| `AINEXUS_DATA_DIR` | 数据目录 | 用户数据目录；容器内为 `/data` |
+| `AINEXUS_DB_PATH` | SQLite 数据库路径 | 数据目录下 `ainexus.db` |
+| `AINEXUS_BASIC_AUTH_ENABLED` | 是否保护 Web UI 和管理 API | `true` |
+| `AINEXUS_BASIC_AUTH_USERNAME` | Basic Auth 用户名 | `admin` |
+| `AINEXUS_BASIC_AUTH_PASSWORD` | Basic Auth 密码 | 首次启动随机生成 |
+
+### 在线授权
+
+| 变量 | 说明 |
+|------|------|
+| `CCNEXUS_LICENSE_SERVER_URL` | 客户端授权服务器地址 |
+| `CCNEXUS_LICENSE_PUBLIC_KEY` | 客户端嵌入的授权公钥 |
+| `CCNEXUS_LICENSE_PORT` | 授权服务端口 |
+| `CCNEXUS_LICENSE_BIND` | 授权服务监听地址 |
+| `CCNEXUS_LICENSE_DATA_DIR` | 授权服务数据目录 |
+| `CCNEXUS_LICENSE_DB_PATH` | 授权 SQLite 数据库 |
+| `CCNEXUS_LICENSE_KEY_PATH` | 授权私钥路径 |
+| `CCNEXUS_LICENSE_ADMIN_USERNAME` | 授权后台用户名 |
+| `CCNEXUS_LICENSE_ADMIN_PASSWORD` | 授权后台密码 |
+
+> [!WARNING]
+> 开启 `AINEXUS_LISTEN_MODE=lan` 或对公网暴露服务时，请设置强密码，并通过防火墙、VPN 或 HTTPS 反向代理限制访问。
+
+## 从源码开发
+
+```bash
+# 桌面端
+cd cmd/desktop/frontend
+npm install
+npm run build
+cd ..
+wails dev
+
+# 服务器
+cd ../../cmd/server
+go build -ldflags="-s -w" -o ainexus-server .
+
+# 授权服务
+cd ../license-server
+go build -ldflags="-s -w" -o ccnexus-license .
+
+# 仓库根目录验证
+cd ../..
+go test ./... -count=1
+go vet ./...
+```
 
 ## 文档
 
 - [详细配置](docs/configuration.md)
+- [Docker 部署指南](docs/README_DOCKER.md)
+- [在线授权说明](docs/ccnexus-online-license.md)
 - [开发指南](docs/development.md)
 - [常见问题](docs/FAQ.md)
+- [商业交付模板](docs/distribution/README.md)
 
 ## 许可证
 
-本项目不再采用 MIT 许可证。源码可用于非商业个人、学习、研究与评估用途；任何商业使用都必须先获得版权所有者的书面授权。详见 [LICENSE](LICENSE)。
+本项目源码可用于非商业个人、学习、研究与评估用途；任何商业使用都必须先获得版权所有者的书面授权。详见 [LICENSE](LICENSE)。
