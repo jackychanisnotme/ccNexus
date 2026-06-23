@@ -7,6 +7,31 @@ import (
 	"time"
 )
 
+func CodexRateLimitRetryAt(data *CodexRateLimitsData, now time.Time) (time.Time, bool) {
+	if data == nil || data.Snapshot == nil {
+		return time.Time{}, false
+	}
+	snapshot := data.Snapshot
+	if snapshot.Credits != nil && (snapshot.Credits.HasCredits || snapshot.Credits.Unlimited) {
+		return time.Time{}, false
+	}
+
+	var retryAt time.Time
+	for _, window := range []*CodexRateLimitWindow{snapshot.Primary, snapshot.Secondary} {
+		if window == nil || window.UsedPercent < 100 || window.ResetsAt == nil {
+			continue
+		}
+		resetAt := time.Unix(*window.ResetsAt, 0).UTC()
+		if !resetAt.After(now) {
+			continue
+		}
+		if retryAt.IsZero() || resetAt.After(retryAt) {
+			retryAt = resetAt
+		}
+	}
+	return retryAt, !retryAt.IsZero()
+}
+
 func (s *SQLiteStorage) UpsertCredentialRateLimits(credentialID int64, data *CodexRateLimitsData, status, errMsg string, updatedAt time.Time) error {
 	if credentialID <= 0 {
 		return fmt.Errorf("credential id is required")

@@ -24,6 +24,18 @@ const (
 	maxConsecutiveFailures = 5
 )
 
+type CredentialRateLimitedError struct {
+	EndpointName string
+	RetryAt      time.Time
+}
+
+func (e *CredentialRateLimitedError) Error() string {
+	if e == nil || e.RetryAt.IsZero() {
+		return "all credentials are rate limited"
+	}
+	return fmt.Sprintf("all credentials are rate limited until %s", e.RetryAt.UTC().Format(time.RFC3339))
+}
+
 func toNullString(s string) sql.NullString {
 	if strings.TrimSpace(s) == "" {
 		return sql.NullString{}
@@ -421,19 +433,65 @@ func (s *SQLiteStorage) GetUsableEndpointCredentialByProvider(endpointName strin
 	if err != nil {
 		return nil, err
 	}
+	var rateLimits map[int64]*CredentialRateLimits
+	if providerType == ProviderTypeCodex {
+		rateLimits, err = s.GetCredentialRateLimitsByEndpoint(endpointName)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var earliestRetryAt time.Time
 
 	for i := range credentials {
 		if !credentialProviderMatches(credentials[i].ProviderType, providerType) {
 			continue
 		}
 		status := deriveCredentialStatus(&credentials[i], now)
+		if status == credentialStatusDisabled || status == credentialStatusExpired || status == credentialStatusInvalid {
+			continue
+		}
+		if retryAt, limited := codexCredentialRateLimitRetryAt(rateLimits[credentials[i].ID], now); limited {
+			if earliestRetryAt.IsZero() || retryAt.Before(earliestRetryAt) {
+				earliestRetryAt = retryAt
+			}
+			continue
+		}
+		if retryAt, limited := codexCredentialCooldownRetryAt(&credentials[i], now); limited {
+			if earliestRetryAt.IsZero() || retryAt.Before(earliestRetryAt) {
+				earliestRetryAt = retryAt
+			}
+			continue
+		}
 		if status == credentialStatusActive || status == credentialStatusExpiring || status == credentialStatusNeedRefresh {
 			credentials[i].Status = status
 			return &credentials[i], nil
 		}
 	}
+	if !earliestRetryAt.IsZero() {
+		return nil, &CredentialRateLimitedError{EndpointName: endpointName, RetryAt: earliestRetryAt}
+	}
 
 	return nil, nil
+}
+
+func codexCredentialRateLimitRetryAt(rateLimits *CredentialRateLimits, now time.Time) (time.Time, bool) {
+	if rateLimits == nil {
+		return time.Time{}, false
+	}
+	return CodexRateLimitRetryAt(rateLimits.Data, now)
+}
+
+func codexCredentialCooldownRetryAt(credential *EndpointCredential, now time.Time) (time.Time, bool) {
+	if credential == nil || credential.CooldownUntil == nil || !credential.CooldownUntil.After(now) {
+		return time.Time{}, false
+	}
+	message := strings.ToLower(strings.TrimSpace(credential.LastError))
+	for _, marker := range []string{"status=429", "usage_limit_reached", "rate_limit", "rate limit", "too many requests"} {
+		if strings.Contains(message, marker) {
+			return credential.CooldownUntil.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 func credentialProviderMatches(actual, expected string) bool {

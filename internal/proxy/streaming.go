@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1066,7 +1067,11 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 	if err := scanner.Err(); err != nil {
 		errMsg := err.Error()
 		result.Err = err
-		if isClientCanceled(ctx, err) {
+		var webSocketUpstreamErr *codexWebSocketUpstreamError
+		if errors.As(err, &webSocketUpstreamErr) {
+			result.Reason = retryReasonForCodexWebSocketUpstreamError(webSocketUpstreamErr)
+			logger.Error("[%s] Codex WebSocket upstream error: %v", endpoint.Name, webSocketUpstreamErr)
+		} else if isClientCanceled(ctx, err) {
 			result.Reason = streamFinishClientCanceled
 			logger.Debug("[%s] Streaming canceled by client: %v", endpoint.Name, err)
 		} else if strings.Contains(errMsg, "stream error") || strings.Contains(errMsg, "INTERNAL_ERROR") {

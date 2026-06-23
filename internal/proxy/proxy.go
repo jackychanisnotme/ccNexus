@@ -841,6 +841,20 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if config.IsTokenPoolAuthMode(authMode) {
 			credential, err := p.selectCredential(endpoint.Name, credentialProviderTypeForAuthMode(authMode))
 			if err != nil {
+				var rateLimitErr *storage.CredentialRateLimitedError
+				if errors.As(err, &rateLimitErr) {
+					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusTooManyRequests, "rate_limited", "All Codex credentials are rate limited: %v", rateLimitErr)
+					p.markRequestInactive(endpoint.Name)
+					if useSpecificEndpoint || requestPlan.Len() <= 1 {
+						if streamSession != nil && streamSession.Started() {
+							_ = streamSession.WriteTypedError("rate_limited", rateLimitErr.Error())
+						}
+						return
+					}
+					p.advanceRequestEndpoint(requestPlan, endpoint, obs, attemptNumber, "rate_limited")
+					endpointAttempts = 0
+					continue
+				}
 				logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, 0, "credential_select_failed", "Failed to select token pool credential: %v", err)
 				p.recordEndpointErrorForClient(endpoint.Name, "credential_select_failed", obs.ClientIP)
 				p.markRequestInactive(endpoint.Name)
@@ -1138,6 +1152,58 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				retryReason := streamResult.Reason
 				if retryReason == "" {
 					retryReason = "streaming_failed"
+				}
+				var webSocketUpstreamErr *codexWebSocketUpstreamError
+				if errors.As(streamResult.Err, &webSocketUpstreamErr) {
+					if webSocketUpstreamErr.StatusCode == http.StatusTooManyRequests {
+						data := parseCodexRateLimitsFromHeaders(webSocketUpstreamErr.Headers)
+						if data != nil {
+							if storeErr := p.storeCredentialRateLimits(credentialID, data, "ok", nil); storeErr != nil {
+								logger.Debug("[%s] Failed to persist WebSocket rate limits: %v", endpoint.Name, storeErr)
+							}
+						}
+						now := time.Now().UTC()
+						if retryAt, limited := storage.CodexRateLimitRetryAt(data, now); limited {
+							p.markCredentialCooldown(credentialID, retryAt.Sub(now), webSocketUpstreamErr.Error())
+						} else {
+							p.markCredentialFailure(credentialID, webSocketUpstreamErr.StatusCode, webSocketUpstreamErr.Error())
+						}
+						p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
+						p.markRequestInactive(endpoint.Name)
+						logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, webSocketUpstreamErr.StatusCode, retryReason, "Codex credential rate limited: %v", webSocketUpstreamErr)
+						if streamResult.WroteSemanticData {
+							if streamSession != nil && streamSession.Started() {
+								_ = streamSession.WriteTypedError(retryReason, webSocketUpstreamErr.Error())
+							}
+							return
+						}
+						continue
+					}
+					if webSocketUpstreamErr.StatusCode == http.StatusUnauthorized || webSocketUpstreamErr.StatusCode == http.StatusForbidden {
+						p.markCredentialFailure(credentialID, webSocketUpstreamErr.StatusCode, webSocketUpstreamErr.Error())
+						p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
+						p.markRequestInactive(endpoint.Name)
+						logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, webSocketUpstreamErr.StatusCode, retryReason, "Codex credential rejected: %v", webSocketUpstreamErr)
+						if streamResult.WroteSemanticData {
+							if streamSession != nil && streamSession.Started() {
+								_ = streamSession.WriteTypedError(retryReason, webSocketUpstreamErr.Error())
+							}
+							return
+						}
+						continue
+					}
+					if webSocketUpstreamErr.StatusCode == http.StatusBadRequest {
+						p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
+						p.markRequestInactive(endpoint.Name)
+						logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, webSocketUpstreamErr.StatusCode, retryReason, "Codex request rejected: %v", webSocketUpstreamErr)
+						if streamSession != nil && streamSession.Started() {
+							_ = streamSession.WriteTypedError(retryReason, webSocketUpstreamErr.Error())
+						}
+						return
+					}
+					if webSocketUpstreamErr.StatusCode >= http.StatusInternalServerError {
+						retryReason = streamFinishUpstreamStreamError
+					}
 				}
 				if retryReason == streamFinishMissingResponsesDone {
 					responsesTextLen, responsesUnsafe, responsesUnsafeReason, lastTransformedEventType, lastOutputItemType, responsesToolRecoverable, responsesToolPending, responsesOutputItems := missingOpenAIResponsesCompletedDiagnostics(streamResult)

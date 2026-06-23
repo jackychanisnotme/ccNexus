@@ -9,11 +9,13 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/lich0821/ccNexus/internal/config"
+	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
@@ -215,6 +217,517 @@ func TestOpenCodexWebSocketStreamReturnsReadErrorWhenClosedBeforeCompleted(t *te
 	}
 	if !strings.Contains(readErr.Error(), "before response.completed") {
 		t.Fatalf("expected missing completion error, got %v", readErr)
+	}
+}
+
+func TestOpenCodexWebSocketStreamPreservesSafeUpstreamErrorDetails(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(map[string]interface{}{
+			"type":   "error",
+			"status": http.StatusTooManyRequests,
+			"error": map[string]interface{}{
+				"type":    "usage_limit_reached",
+				"code":    "usage_limit_reached",
+				"message": "The usage limit has been reached",
+			},
+			"headers": map[string]interface{}{
+				"x-codex-primary-used-percent": 100,
+				"x-codex-primary-reset-at":     1782217538,
+				"authorization":                "Bearer must-not-leak",
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	proxyReq, err := http.NewRequest(http.MethodPost, upstream.URL+"/backend-api/codex/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := (&Proxy{}).openCodexWebSocketStream(ctx, proxyReq, config.Endpoint{Name: "Codex Pool"}, []byte(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	if err != nil {
+		t.Fatalf("openCodexWebSocketStream failed: %v", err)
+	}
+	defer resp.Body.Close()
+	_, readErr := io.ReadAll(resp.Body)
+	if readErr == nil {
+		t.Fatal("expected websocket upstream error")
+	}
+
+	var upstreamErr *codexWebSocketUpstreamError
+	if !errors.As(readErr, &upstreamErr) {
+		t.Fatalf("expected codexWebSocketUpstreamError, got %T: %v", readErr, readErr)
+	}
+	if upstreamErr.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", upstreamErr.StatusCode)
+	}
+	if upstreamErr.Type != "usage_limit_reached" || upstreamErr.Code != "usage_limit_reached" {
+		t.Fatalf("unexpected upstream error identity: type=%q code=%q", upstreamErr.Type, upstreamErr.Code)
+	}
+	if upstreamErr.Message != "The usage limit has been reached" {
+		t.Fatalf("message = %q", upstreamErr.Message)
+	}
+	if got := upstreamErr.Headers.Get("X-Codex-Primary-Used-Percent"); got != "100" {
+		t.Fatalf("used percent header = %q, want 100", got)
+	}
+	if got := upstreamErr.Headers.Get("X-Codex-Primary-Reset-At"); got != "1782217538" {
+		t.Fatalf("reset header = %q, want 1782217538", got)
+	}
+	if got := upstreamErr.Headers.Get("Authorization"); got != "" {
+		t.Fatalf("unsafe header was preserved: %q", got)
+	}
+	if strings.Contains(readErr.Error(), "must-not-leak") {
+		t.Fatalf("error string leaked unsafe header: %v", readErr)
+	}
+}
+
+func TestRetryReasonForCodexWebSocketUpstreamError(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		want   string
+	}{
+		{name: "invalid request", status: http.StatusBadRequest, want: "invalid_request"},
+		{name: "unauthorized", status: http.StatusUnauthorized, want: retryReasonEndpointAuthFailed},
+		{name: "forbidden", status: http.StatusForbidden, want: retryReasonEndpointAuthFailed},
+		{name: "rate limited", status: http.StatusTooManyRequests, want: "rate_limited"},
+		{name: "upstream failure", status: http.StatusServiceUnavailable, want: "upstream_5xx"},
+		{name: "missing status", status: 0, want: streamFinishUpstreamStreamError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := &codexWebSocketUpstreamError{StatusCode: tt.status}
+			if got := retryReasonForCodexWebSocketUpstreamError(err); got != tt.want {
+				t.Fatalf("reason = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCodexWebSocketRateLimitRotatesCredentialWithoutCoolingEndpoint(t *testing.T) {
+	logger.GetLogger().Clear()
+	t.Cleanup(func() { logger.GetLogger().Clear() })
+	store, firstCredential, secondCredential := newCodexWebSocketCredentialPool(t)
+	p := newCodexWebSocketProxyWithStore(t, store, []config.Endpoint{{
+		Name:        "Codex Pool",
+		APIUrl:      config.CodexTokenPoolAPIURL,
+		AuthMode:    config.AuthModeCodexTokenPool,
+		Enabled:     true,
+		Transformer: config.CodexTokenPoolTransformer,
+		Model:       "gpt-5.5",
+	}})
+
+	resetAt := time.Now().UTC().Add(4 * time.Hour).Truncate(time.Second)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		switch r.Header.Get("Authorization") {
+		case "Bearer first-token":
+			_ = conn.WriteJSON(map[string]interface{}{
+				"type":   "error",
+				"status": http.StatusTooManyRequests,
+				"error": map[string]interface{}{
+					"type":    "usage_limit_reached",
+					"code":    "usage_limit_reached",
+					"message": "The usage limit has been reached",
+				},
+				"headers": map[string]interface{}{
+					"x-codex-primary-used-percent": 100,
+					"x-codex-primary-reset-at":     resetAt.Unix(),
+				},
+			})
+		case "Bearer second-token":
+			writeCompletedCodexWebSocketResponse(conn, "rotated")
+		}
+	}))
+	defer upstream.Close()
+	localWSURL, err := codexWebSocketURL(upstream.URL + "/backend-api/codex/responses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usedAuthorizations []string
+	p.codexWebSocketDial = func(ctx context.Context, _ string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+		usedAuthorizations = append(usedAuthorizations, headers.Get("Authorization"))
+		return websocket.DefaultDialer.DialContext(ctx, localWSURL, headers)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "OpenAI/Python_2.31.0")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if got := strings.Join(usedAuthorizations, ","); got != "Bearer first-token,Bearer second-token" {
+		t.Fatalf("credential sequence = %q", got)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "response.completed") || !strings.Contains(body, "rotated") {
+		t.Fatalf("expected successful rotated response, got %q", body)
+	}
+	limits, err := store.GetCredentialRateLimits(firstCredential.ID)
+	if err != nil {
+		t.Fatalf("get rate limits: %v", err)
+	}
+	if limits == nil || limits.Data == nil || limits.Data.Snapshot == nil || limits.Data.Snapshot.Primary == nil {
+		t.Fatalf("missing persisted rate limits: %#v", limits)
+	}
+	if limits.Data.Snapshot.Primary.UsedPercent != 100 {
+		t.Fatalf("used percent = %v, want 100", limits.Data.Snapshot.Primary.UsedPercent)
+	}
+	firstAfter, err := store.GetCredentialByID(firstCredential.ID)
+	if err != nil {
+		t.Fatalf("get first credential: %v", err)
+	}
+	if firstAfter == nil || firstAfter.Status != "cooldown" || firstAfter.CooldownUntil == nil {
+		t.Fatalf("expected first credential cooldown, got %#v", firstAfter)
+	}
+	if firstAfter.CooldownUntil.Before(resetAt.Add(-time.Second)) {
+		t.Fatalf("cooldown until = %s, want at least %s", firstAfter.CooldownUntil, resetAt)
+	}
+	secondAfter, err := store.GetCredentialByID(secondCredential.ID)
+	if err != nil {
+		t.Fatalf("get second credential: %v", err)
+	}
+	if secondAfter == nil || secondAfter.Status != "active" {
+		t.Fatalf("expected second credential active, got %#v", secondAfter)
+	}
+	if p.isEndpointInActiveCooldown("Codex Pool") {
+		t.Fatal("credential-scoped rate limit must not cool the endpoint")
+	}
+	for _, entry := range logger.GetLogger().GetLogs() {
+		for _, secret := range []string{"first-token", "second-token", "acct-1", "acct-2"} {
+			if strings.Contains(entry.Message, secret) {
+				t.Fatalf("log entry leaked credential data %q: %s", secret, entry.Message)
+			}
+		}
+	}
+}
+
+func TestCodexTokenPoolKnownExhaustionFailsOverWithoutDialOrEndpointCooldown(t *testing.T) {
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	credential := &storage.EndpointCredential{
+		EndpointName: "Codex Pool",
+		ProviderType: storage.ProviderTypeCodex,
+		AccessToken:  "exhausted-token",
+		Status:       "active",
+		Enabled:      true,
+	}
+	if err := store.SaveEndpointCredential(credential); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+	resetAt := time.Now().UTC().Add(4 * time.Hour).Truncate(time.Second)
+	resetUnix := resetAt.Unix()
+	snapshot := storage.CodexRateLimitSnapshot{
+		LimitID: "codex",
+		Primary: &storage.CodexRateLimitWindow{UsedPercent: 100, ResetsAt: &resetUnix},
+	}
+	if err := store.UpsertCredentialRateLimits(credential.ID, &storage.CodexRateLimitsData{
+		Snapshot:  &snapshot,
+		ByLimitID: map[string]storage.CodexRateLimitSnapshot{"codex": snapshot},
+		Source:    "test",
+	}, "ok", "", time.Now().UTC()); err != nil {
+		t.Fatalf("save rate limits: %v", err)
+	}
+
+	var backupHits int
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backupHits++
+		response := completedCodexHTTPTestResponse(r)
+		for key, values := range response.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(response.StatusCode)
+		_, _ = io.Copy(w, response.Body)
+	}))
+	defer backup.Close()
+
+	p := newCodexWebSocketProxyWithStore(t, store, []config.Endpoint{
+		{
+			Name: "Codex Pool", APIUrl: config.CodexTokenPoolAPIURL,
+			AuthMode: config.AuthModeCodexTokenPool, Enabled: true,
+			Transformer: config.CodexTokenPoolTransformer, Model: "gpt-5.5",
+		},
+		{
+			Name: "Backup", APIUrl: backup.URL,
+			AuthMode: config.AuthModeAPIKey, APIKey: "backup-key", Enabled: true,
+			Transformer: "openai2", Model: "gpt-5.5",
+		},
+	})
+	p.httpClient = backup.Client()
+	var dialHits int
+	p.codexWebSocketDial = func(context.Context, string, http.Header) (*websocket.Conn, *http.Response, error) {
+		dialHits++
+		return nil, nil, errors.New("exhausted credential must not be dialed")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "OpenAI/Python_2.31.0")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if dialHits != 0 {
+		t.Fatalf("expected no websocket dial, got %d", dialHits)
+	}
+	if backupHits != 1 {
+		t.Fatalf("expected one backup request, got %d", backupHits)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "response.completed") {
+		t.Fatalf("expected backup completion, got %q", body)
+	}
+	if p.isEndpointInActiveCooldown("Codex Pool") {
+		t.Fatal("known credential exhaustion must not cool the endpoint")
+	}
+}
+
+func TestCodexWebSocketBadRequestReturnsTypedErrorWithoutRetry(t *testing.T) {
+	store, firstCredential, secondCredential := newCodexWebSocketCredentialPool(t)
+	p := newCodexWebSocketProxyWithStore(t, store, []config.Endpoint{{
+		Name: "Codex Pool", APIUrl: config.CodexTokenPoolAPIURL,
+		AuthMode: config.AuthModeCodexTokenPool, Enabled: true,
+		Transformer: config.CodexTokenPoolTransformer, Model: "gpt-5.5",
+	}})
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(map[string]interface{}{
+			"type":   "error",
+			"status": http.StatusBadRequest,
+			"error": map[string]interface{}{
+				"type": "invalid_request_error", "code": "unsupported_parameter", "message": "temperature is not supported",
+			},
+		})
+	}))
+	defer upstream.Close()
+	localWSURL, err := codexWebSocketURL(upstream.URL + "/backend-api/codex/responses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dialHits int
+	p.codexWebSocketDial = func(ctx context.Context, _ string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+		dialHits++
+		return websocket.DefaultDialer.DialContext(ctx, localWSURL, headers)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if dialHits != 1 {
+		t.Fatalf("expected one websocket request, got %d", dialHits)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: error") || !strings.Contains(body, "invalid_request") || !strings.Contains(body, "temperature is not supported") {
+		t.Fatalf("expected typed invalid request error, got %q", body)
+	}
+	for _, credentialID := range []int64{firstCredential.ID, secondCredential.ID} {
+		credential, err := store.GetCredentialByID(credentialID)
+		if err != nil {
+			t.Fatalf("get credential: %v", err)
+		}
+		if credential == nil || credential.Status != "active" || credential.FailureCount != 0 {
+			t.Fatalf("bad request must not penalize credential: %#v", credential)
+		}
+	}
+	if p.isEndpointInActiveCooldown("Codex Pool") {
+		t.Fatal("bad request must not cool endpoint")
+	}
+}
+
+func TestCodexWebSocketUnauthorizedRotatesCredential(t *testing.T) {
+	store, firstCredential, secondCredential := newCodexWebSocketCredentialPool(t)
+	p := newCodexWebSocketProxyWithStore(t, store, []config.Endpoint{{
+		Name: "Codex Pool", APIUrl: config.CodexTokenPoolAPIURL,
+		AuthMode: config.AuthModeCodexTokenPool, Enabled: true,
+		Transformer: config.CodexTokenPoolTransformer, Model: "gpt-5.5",
+	}})
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer first-token" {
+			_ = conn.WriteJSON(map[string]interface{}{
+				"type": "error", "status": http.StatusUnauthorized,
+				"error": map[string]interface{}{"type": "authentication_error", "code": "invalid_token", "message": "token expired"},
+			})
+			return
+		}
+		writeCompletedCodexWebSocketResponse(conn, "authorized")
+	}))
+	defer upstream.Close()
+	localWSURL, err := codexWebSocketURL(upstream.URL + "/backend-api/codex/responses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usedAuthorizations []string
+	p.codexWebSocketDial = func(ctx context.Context, _ string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+		usedAuthorizations = append(usedAuthorizations, headers.Get("Authorization"))
+		return websocket.DefaultDialer.DialContext(ctx, localWSURL, headers)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if got := strings.Join(usedAuthorizations, ","); got != "Bearer first-token,Bearer second-token" {
+		t.Fatalf("credential sequence = %q", got)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "response.completed") || !strings.Contains(body, "authorized") {
+		t.Fatalf("expected successful rotated response, got %q", body)
+	}
+	firstAfter, err := store.GetCredentialByID(firstCredential.ID)
+	if err != nil {
+		t.Fatalf("get first credential: %v", err)
+	}
+	if firstAfter == nil || firstAfter.Status != "invalid" {
+		t.Fatalf("expected unauthorized credential invalid, got %#v", firstAfter)
+	}
+	secondAfter, err := store.GetCredentialByID(secondCredential.ID)
+	if err != nil {
+		t.Fatalf("get second credential: %v", err)
+	}
+	if secondAfter == nil || secondAfter.Status != "active" {
+		t.Fatalf("expected second credential active, got %#v", secondAfter)
+	}
+	if p.isEndpointInActiveCooldown("Codex Pool") {
+		t.Fatal("credential auth failure must not cool endpoint")
+	}
+}
+
+func TestCodexWebSocketServerErrorRetainsStreamRetryBehavior(t *testing.T) {
+	p := newCodexWebSocketRoutingTestProxy(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("unexpected HTTP upstream request")
+	}))
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	var requestCount atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		if requestCount.Add(1) == 1 {
+			_ = conn.WriteJSON(map[string]interface{}{
+				"type": "error", "status": http.StatusServiceUnavailable,
+				"error": map[string]interface{}{"type": "server_error", "code": "overloaded", "message": "temporarily overloaded"},
+			})
+			return
+		}
+		writeCompletedCodexWebSocketResponse(conn, "recovered")
+	}))
+	defer upstream.Close()
+	localWSURL, err := codexWebSocketURL(upstream.URL + "/backend-api/codex/responses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.codexWebSocketDial = func(ctx context.Context, _ string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+		return websocket.DefaultDialer.DialContext(ctx, localWSURL, headers)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("expected one retry after 503, got %d requests", got)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "response.completed") || !strings.Contains(body, "recovered") {
+		t.Fatalf("expected successful retry response, got %q", body)
+	}
+	if p.isEndpointInActiveCooldown("Codex Pool") {
+		t.Fatal("successful retry must clear endpoint cooldown")
+	}
+}
+
+func newCodexWebSocketCredentialPool(t *testing.T) (*storage.SQLiteStorage, *storage.EndpointCredential, *storage.EndpointCredential) {
+	t.Helper()
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	firstUsed := time.Now().UTC().Add(-2 * time.Hour)
+	secondUsed := time.Now().UTC().Add(-time.Hour)
+	first := &storage.EndpointCredential{EndpointName: "Codex Pool", ProviderType: storage.ProviderTypeCodex, AccessToken: "first-token", AccountID: "acct-1", Status: "active", Enabled: true, LastUsedAt: &firstUsed}
+	second := &storage.EndpointCredential{EndpointName: "Codex Pool", ProviderType: storage.ProviderTypeCodex, AccessToken: "second-token", AccountID: "acct-2", Status: "active", Enabled: true, LastUsedAt: &secondUsed}
+	for _, credential := range []*storage.EndpointCredential{first, second} {
+		if err := store.SaveEndpointCredential(credential); err != nil {
+			t.Fatalf("save credential: %v", err)
+		}
+	}
+	return store, first, second
+}
+
+func newCodexWebSocketProxyWithStore(t *testing.T, store *storage.SQLiteStorage, endpoints []config.Endpoint) *Proxy {
+	t.Helper()
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints(endpoints)
+	p := New(cfg, &noopStatsStorage{}, store, "test-device")
+	p.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("unexpected HTTP upstream request")
+	})}
+	p.retrySleep = func(time.Duration) {}
+	return p
+}
+
+func writeCompletedCodexWebSocketResponse(conn *websocket.Conn, text string) {
+	events := []map[string]interface{}{
+		{"type": "response.created", "response": map[string]interface{}{"id": "resp-ws-rotated", "status": "in_progress", "output": []interface{}{}}},
+		{"type": "response.output_text.delta", "delta": text, "item_id": "msg-1", "output_index": 0, "content_index": 0},
+		{"type": "response.completed", "response": map[string]interface{}{
+			"id": "resp-ws-rotated", "status": "completed",
+			"usage": map[string]interface{}{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+			"output": []interface{}{map[string]interface{}{
+				"type": "message", "id": "msg-1", "role": "assistant", "status": "completed",
+				"content": []interface{}{map[string]interface{}{"type": "output_text", "text": text}},
+			}},
+		}},
+	}
+	for _, event := range events {
+		if err := conn.WriteJSON(event); err != nil {
+			return
+		}
 	}
 }
 

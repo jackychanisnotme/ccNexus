@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,14 @@ type codexWebSocketHandshakeError struct {
 	Err        error
 }
 
+type codexWebSocketUpstreamError struct {
+	StatusCode int
+	Type       string
+	Code       string
+	Message    string
+	Headers    http.Header
+}
+
 func (e *codexWebSocketHandshakeError) Error() string {
 	if e.StatusCode == 0 {
 		return fmt.Sprintf("codex websocket handshake failed: %v", e.Err)
@@ -34,6 +43,103 @@ func (e *codexWebSocketHandshakeError) Error() string {
 
 func (e *codexWebSocketHandshakeError) Unwrap() error {
 	return e.Err
+}
+
+func (e *codexWebSocketUpstreamError) Error() string {
+	parts := []string{"codex websocket upstream error"}
+	if e.StatusCode > 0 {
+		parts = append(parts, fmt.Sprintf("status=%d", e.StatusCode))
+	}
+	if value := safeCodexWebSocketErrorField(e.Type); value != "" {
+		parts = append(parts, "type="+value)
+	}
+	if value := safeCodexWebSocketErrorField(e.Code); value != "" {
+		parts = append(parts, "code="+value)
+	}
+	if value := safeCodexWebSocketErrorField(e.Message); value != "" {
+		parts = append(parts, "message="+value)
+	}
+	return strings.Join(parts, " ")
+}
+
+func safeCodexWebSocketErrorField(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if len(value) > 500 {
+		value = value[:500]
+	}
+	return value
+}
+
+func parseCodexWebSocketUpstreamError(payload []byte) *codexWebSocketUpstreamError {
+	var event struct {
+		Status int `json:"status"`
+		Error  struct {
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Headers map[string]interface{} `json:"headers"`
+	}
+	if err := json.Unmarshal(payload, &event); err != nil {
+		return &codexWebSocketUpstreamError{Message: "malformed upstream error event"}
+	}
+
+	headers := make(http.Header)
+	for name, rawValue := range event.Headers {
+		if !isSafeCodexWebSocketErrorHeader(name) {
+			continue
+		}
+		value := codexWebSocketHeaderValue(rawValue)
+		if value != "" {
+			headers.Set(name, value)
+		}
+	}
+	return &codexWebSocketUpstreamError{
+		StatusCode: event.Status,
+		Type:       event.Error.Type,
+		Code:       event.Error.Code,
+		Message:    event.Error.Message,
+		Headers:    headers,
+	}
+}
+
+func retryReasonForCodexWebSocketUpstreamError(err *codexWebSocketUpstreamError) string {
+	if err == nil || err.StatusCode == 0 {
+		return streamFinishUpstreamStreamError
+	}
+	switch err.StatusCode {
+	case http.StatusBadRequest:
+		return "invalid_request"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return retryReasonEndpointAuthFailed
+	default:
+		return retryReasonForHTTPStatus(err.StatusCode, err.Error())
+	}
+}
+
+func codexWebSocketHeaderValue(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(typed)
+	default:
+		return ""
+	}
+}
+
+func isSafeCodexWebSocketErrorHeader(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "retry-after" ||
+		lower == "x-codex-credits-has-credits" ||
+		lower == "x-codex-credits-unlimited" ||
+		lower == "x-codex-credits-balance" {
+		return true
+	}
+	_, _, _, ok := parseRateLimitHeaderKey(lower)
+	return ok
 }
 
 func isCodexWebSocketUnsupported(err error) bool {
@@ -229,7 +335,7 @@ func bridgeCodexWebSocketToSSE(ctx context.Context, conn *websocket.Conn, writer
 			return
 		}
 		if event.Type == "error" {
-			_ = writer.CloseWithError(fmt.Errorf("codex websocket upstream error"))
+			_ = writer.CloseWithError(parseCodexWebSocketUpstreamError(payload))
 			return
 		}
 		if _, err := writer.Write(append(append([]byte("data: "), payload...), []byte("\n\n")...)); err != nil {
