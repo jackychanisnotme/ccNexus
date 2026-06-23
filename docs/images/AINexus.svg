@@ -1,28 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="140" viewBox="0 0 1200 140">
-  <rect width="100%" height="100%" fill="transparent"/>
-
-  <style>
-    .title{
-      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans","Helvetica",Arial,sans-serif;
-      font-size:56px;
-      font-weight:700;
-    }
-    /* 单方案兼容深浅背景 */
-    .base{
-      fill:#0b0f19;
-      stroke:#ffffff;
-      stroke-width:2.2;
-      stroke-opacity:0.9;
-      paint-order:stroke fill;
-      stroke-linejoin:round;
-    }
-  </style>
-
-  <text x="20" y="90" class="title">
-    <tspan fill="#e53935">C</tspan><tspan class="base">laude </tspan>
-    <tspan fill="#e53935">C</tspan><tspan class="base">ode &amp; </tspan>
-    <tspan fill="#1e88e5">C</tspan><tspan class="base">odex </tspan>
-    <tspan fill="#1e88e5">C</tspan><tspan class="base">LI API 资源管理中枢</tspan>
-  </text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="180" viewBox="0 0 1200 180" role="img" aria-label="AINexus">
+  <defs>
+    <linearGradient id="blue" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#6bbcff"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="coral" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#ffb4a8"/>
+      <stop offset="1" stop-color="#ef4444"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0f172a" flood-opacity=".18"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="180" fill="transparent"/>
+  <g transform="translate(34 28)" filter="url(#softShadow)">
+    <rect x="0" y="0" width="124" height="124" rx="28" fill="#ffffff" stroke="#d6e1ef" stroke-width="2"/>
+    <path d="M12 62H48C56 62 58 48 67 48H112" fill="none" stroke="url(#blue)" stroke-width="9" stroke-linecap="round"/>
+    <path d="M12 82H49C58 82 58 69 68 69H112" fill="none" stroke="#93c5fd" stroke-width="7" stroke-linecap="round" opacity=".78"/>
+    <path d="M112 62H76C68 62 66 48 57 48H12" fill="none" stroke="url(#coral)" stroke-width="9" stroke-linecap="round" opacity=".86"/>
+    <path d="M62 12V48" fill="none" stroke="url(#blue)" stroke-width="9" stroke-linecap="round"/>
+    <path d="M62 112V76" fill="none" stroke="#38bdf8" stroke-width="9" stroke-linecap="round" opacity=".88"/>
+    <path d="M62 40L84 62L62 84L40 62Z" fill="#eff6ff" stroke="#60a5fa" stroke-width="4"/>
+    <circle cx="62" cy="62" r="14" fill="#ffffff" stroke="#93c5fd" stroke-width="4"/>
+  </g>
+  <g transform="translate(190 42)">
+    <text x="0" y="52" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Arial,sans-serif" font-size="64" font-weight="760" fill="#0f172a">AINexus</text>
+    <text x="2" y="100" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Arial,sans-serif" font-size="26" font-weight="520" fill="#475569">API Provider · Token Pool · Agent Hub for AI Coding Tools</text>
+  </g>
 </svg>
