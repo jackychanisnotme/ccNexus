@@ -79,6 +79,112 @@ func TestRouteUnavailableUsesFastFailoverWhileGeneric503StaysSlow(t *testing.T) 
 	}
 }
 
+func TestInvalidRequestUsesRequestLocalFailoverWithoutCircuitPenalty(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"Invalid Value: 'tools'. Function 'functions.send_message' is reserved for encrypted tool use by this model and must match the configured declaration.","type":"invalid_request_error","param":"tools"}}`))
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(validResponsesBody("resp-fallback", "ok")))
+	}))
+	defer fallback.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", primary.URL),
+		failoverPolicyTestEndpoint("Fallback", fallback.URL),
+	}, primary.Client())
+	p.config.UpdateFailover(&config.FailoverConfig{
+		RecoveredEndpointPolicy: config.RecoveredEndpointPolicyAutoReturn,
+		Cooldowns:               config.DefaultFailoverConfig().Cooldowns,
+		CircuitBreaker: &config.FailoverCircuitBreakerConfig{
+			ConsecutiveFailures:  1,
+			WindowSec:            60,
+			FailureRateThreshold: 0.50,
+			MinRequests:          1,
+			CooldownSec:          600,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCCNexusRequestID, "req-invalid-tools")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "resp-fallback") {
+		t.Fatalf("expected request-local fallback success, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != 1 || fallbackHits != 1 {
+		t.Fatalf("expected each endpoint once, got primary=%d fallback=%d", primaryHits, fallbackHits)
+	}
+	if p.isEndpointInActiveCooldown("Primary") {
+		t.Fatal("request-scoped invalid request must not cool the primary endpoint")
+	}
+	p.circuitBreakerMu.Lock()
+	state := p.endpointCircuitBreakers["Primary"]
+	p.circuitBreakerMu.Unlock()
+	if state != nil && (state.ConsecutiveFailures != 0 || len(state.Events) != 0) {
+		t.Fatalf("request-scoped invalid request must not affect circuit state: %#v", state)
+	}
+	logs := joinedProxyLogs()
+	if strings.Contains(logs, "[CIRCUIT_BREAKER]") {
+		t.Fatalf("request-scoped invalid request must not trip circuit breaker, logs:\n%s", logs)
+	}
+}
+
+func TestInvalidRequestAllEndpointsReturnFirstRejectionOnce(t *testing.T) {
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"first rejection","type":"invalid_request_error"}}`))
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"second rejection","type":"invalid_request_error"}}`))
+	}))
+	defer fallback.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", primary.URL),
+		failoverPolicyTestEndpoint("Fallback", fallback.URL),
+	}, primary.Client())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected final 400, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != 1 || fallbackHits != 1 {
+		t.Fatalf("expected each rejected endpoint once, got primary=%d fallback=%d", primaryHits, fallbackHits)
+	}
+	if !strings.Contains(rec.Body.String(), "first rejection") || strings.Contains(rec.Body.String(), "second rejection") {
+		t.Fatalf("expected first complete rejection to be returned, got %q", rec.Body.String())
+	}
+}
+
 func TestHTTPRetryableStatusUsesSlowEndpointFailover(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)

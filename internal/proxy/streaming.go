@@ -270,9 +270,14 @@ func (s *downstreamStreamSession) filterDuplicateOpenAIResponsesCreatedLocked(da
 }
 
 func sseBlockEventType(block string) string {
+	eventName := ""
 	scanner := bufio.NewScanner(strings.NewReader(block))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "event:") {
+			eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
+		}
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
@@ -285,9 +290,93 @@ func sseBlockEventType(block string) string {
 			continue
 		}
 		eventType, _ := payload["type"].(string)
-		return eventType
+		if strings.TrimSpace(eventType) != "" {
+			return eventType
+		}
 	}
-	return ""
+	return eventName
+}
+
+type upstreamSSEError struct {
+	Type     string
+	Message  string
+	RawEvent []byte
+}
+
+func (e *upstreamSSEError) Error() string {
+	if e == nil {
+		return "upstream SSE error"
+	}
+	if strings.TrimSpace(e.Message) != "" {
+		return e.Message
+	}
+	if strings.TrimSpace(e.Type) != "" {
+		return "upstream SSE error: " + e.Type
+	}
+	return "upstream SSE error"
+}
+
+func (e *upstreamSSEError) IsRequestScoped() bool {
+	if e == nil {
+		return false
+	}
+	errorType := strings.ToLower(strings.TrimSpace(e.Type))
+	return errorType == "invalid_request_error" ||
+		errorType == "invalid_request" ||
+		isRequestScopedInvalidRequest(http.StatusBadRequest, string(e.RawEvent))
+}
+
+func parseUpstreamSSEError(eventData []byte) *upstreamSSEError {
+	eventName := ""
+	var payload map[string]interface{}
+	scanner := bufio.NewScanner(bytes.NewReader(eventData))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "event:") {
+			eventName = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "event:")))
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		jsonData := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if jsonData == "" || jsonData == "[DONE]" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(jsonData), &payload); err == nil {
+			break
+		}
+	}
+	if payload == nil {
+		return nil
+	}
+
+	payloadType, _ := payload["type"].(string)
+	rawError, hasError := payload["error"]
+	if eventName != "error" && !hasError && !strings.EqualFold(strings.TrimSpace(payloadType), "error") {
+		return nil
+	}
+
+	result := &upstreamSSEError{RawEvent: append([]byte(nil), eventData...)}
+	if errorMap, ok := rawError.(map[string]interface{}); ok {
+		result.Type, _ = errorMap["type"].(string)
+		if strings.TrimSpace(result.Type) == "" {
+			result.Type, _ = errorMap["code"].(string)
+		}
+		result.Message, _ = errorMap["message"].(string)
+	} else if message, ok := rawError.(string); ok {
+		result.Message = message
+	}
+	if strings.TrimSpace(result.Type) == "" && !strings.EqualFold(strings.TrimSpace(payloadType), "error") {
+		result.Type = payloadType
+	}
+	if strings.TrimSpace(result.Type) == "" {
+		result.Type = eventName
+	}
+	if strings.TrimSpace(result.Message) == "" {
+		result.Message, _ = payload["message"].(string)
+	}
+	return result
 }
 
 func responseRequestPath(resp *http.Response) string {
@@ -990,6 +1079,16 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 			eventCount++
 			eventData := buffer.Bytes()
 			logger.DebugLog("[%s] SSE Event #%d (Original): %s", endpoint.Name, eventCount, string(eventData))
+			if upstreamErr := parseUpstreamSSEError(eventData); upstreamErr != nil {
+				result.Err = upstreamErr
+				result.Reason = streamFinishUpstreamStreamError
+				if upstreamErr.IsRequestScoped() {
+					result.Reason = retryReasonRequestInvalid
+				}
+				streamDone = true
+				buffer.Reset()
+				break
+			}
 
 			p.captureCodexRateLimitsFromEvent(endpoint, credentialID, eventData)
 

@@ -40,6 +40,7 @@ const (
 	defaultStreamHeaderTimeout     = 0 * time.Second
 	defaultStreamHeartbeatInterval = 10 * time.Second
 	retryReasonEndpointAuthFailed  = "endpoint_auth_failed"
+	retryReasonRequestInvalid      = "request_invalid"
 	retryReasonRouteUnavailable    = "route_unavailable"
 	retryReasonTransportProtocol   = "transport_protocol_error"
 )
@@ -157,6 +158,17 @@ func isUpstreamInvalidRequestHTTPFailure(statusCode int, body string) bool {
 	return strings.Contains(lower, `"code":"invalid_request"`) ||
 		strings.Contains(lower, `"type":"invalid_request_error"`) ||
 		strings.Contains(lower, "invalid_request")
+}
+
+func isRequestScopedInvalidRequest(statusCode int, body string) bool {
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(body))
+	return strings.Contains(lower, `"type":"invalid_request_error"`) ||
+		strings.Contains(lower, `"type": "invalid_request_error"`) ||
+		strings.Contains(lower, `"code":"invalid_request"`) ||
+		strings.Contains(lower, `"code": "invalid_request"`)
 }
 
 func shouldRotateEndpointAfterHTTPFailure(endpointAttempts int, statusCode int, body string) bool {

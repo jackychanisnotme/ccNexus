@@ -35,6 +35,14 @@ type APIResponse struct {
 	Usage Usage `json:"usage"`
 }
 
+type requestScopedRejection struct {
+	StatusCode int
+	Header     http.Header
+	Body       []byte
+	ErrorType  string
+	Message    string
+}
+
 // Proxy represents the proxy server
 type Proxy struct {
 	config                      *config.Config
@@ -802,6 +810,8 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	forceStreamRetryEndpoints := make(map[string]bool)
 	endpointAttempts := 0
 	compatRetryArgumentIndices := make(map[string]map[int]bool)
+	requestScopedRejectedEndpoints := make(map[string]bool)
+	var firstRequestScopedRejection *requestScopedRejection
 	advanceForFailure := func(current config.Endpoint, reason string, attemptNumber int, headers http.Header) {
 		p.markEndpointCooldownForReason(current.Name, reason, headers, obs, attemptNumber)
 		if !useSpecificEndpoint {
@@ -1204,6 +1214,40 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 					if webSocketUpstreamErr.StatusCode >= http.StatusInternalServerError {
 						retryReason = streamFinishUpstreamStreamError
 					}
+				}
+				var upstreamEventErr *upstreamSSEError
+				if errors.As(streamResult.Err, &upstreamEventErr) && upstreamEventErr.IsRequestScoped() {
+					if firstRequestScopedRejection == nil {
+						firstRequestScopedRejection = &requestScopedRejection{
+							StatusCode: http.StatusBadRequest,
+							Header:     resp.Header.Clone(),
+							Body:       append([]byte(nil), upstreamEventErr.RawEvent...),
+							ErrorType:  upstreamEventErr.Type,
+							Message:    upstreamEventErr.Message,
+						}
+					}
+					requestScopedRejectedEndpoints[endpoint.Name] = true
+					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusBadRequest, retryReasonRequestInvalid, "Upstream stream rejected request without endpoint penalty: %v", upstreamEventErr)
+					p.stats.RecordErrorForClient(endpoint.Name, obs.ClientIP)
+					p.markRequestInactive(endpoint.Name)
+					if !useSpecificEndpoint && requestPlan.Len() > len(requestScopedRejectedEndpoints) {
+						p.advanceRequestEndpoint(requestPlan, endpoint, obs, attemptNumber, retryReasonRequestInvalid)
+						endpointAttempts = 0
+						continue
+					}
+					rejection := firstRequestScopedRejection
+					errorType := strings.TrimSpace(rejection.ErrorType)
+					if errorType == "" {
+						errorType = "invalid_request_error"
+					}
+					message := rejection.Message
+					if strings.TrimSpace(message) == "" {
+						message = string(rejection.Body)
+					}
+					if streamSession != nil && streamSession.Started() {
+						_ = streamSession.WriteTypedError(errorType, message)
+					}
+					return
 				}
 				if retryReason == streamFinishMissingResponsesDone {
 					responsesTextLen, responsesUnsafe, responsesUnsafeReason, lastTransformedEventType, lastOutputItemType, responsesToolRecoverable, responsesToolPending, responsesOutputItems := missingOpenAIResponsesCompletedDiagnostics(streamResult)
@@ -1685,6 +1729,42 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			compatRetryArgumentIndices[endpoint.Name][compatIndex] = true
 			endpointAttempts = 0
 			continue
+		}
+		if isRequestScopedInvalidRequest(resp.StatusCode, respMsg) {
+			if firstRequestScopedRejection == nil {
+				firstRequestScopedRejection = &requestScopedRejection{
+					StatusCode: resp.StatusCode,
+					Header:     resp.Header.Clone(),
+					Body:       append([]byte(nil), respBody...),
+					ErrorType:  "invalid_request_error",
+					Message:    string(respBody),
+				}
+			}
+			requestScopedRejectedEndpoints[endpoint.Name] = true
+			logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, resp.StatusCode, retryReasonRequestInvalid, "Upstream rejected request without endpoint penalty: %s", respLogMsg)
+			p.stats.RecordErrorForClient(endpoint.Name, obs.ClientIP)
+			p.markRequestInactive(endpoint.Name)
+			if !useSpecificEndpoint && requestPlan.Len() > len(requestScopedRejectedEndpoints) {
+				p.advanceRequestEndpoint(requestPlan, endpoint, obs, attemptNumber, retryReasonRequestInvalid)
+				endpointAttempts = 0
+				continue
+			}
+			rejection := firstRequestScopedRejection
+			if streamSession != nil && streamSession.Started() {
+				_ = streamSession.WriteTypedError(rejection.ErrorType, rejection.Message)
+				return
+			}
+			for key, values := range rejection.Header {
+				if key == "Content-Encoding" || key == "Content-Length" {
+					continue
+				}
+				for _, value := range values {
+					w.Header().Add(key, value)
+				}
+			}
+			w.WriteHeader(rejection.StatusCode)
+			_, _ = w.Write(rejection.Body)
+			return
 		}
 
 		// Token pool mode: on 401/403, invalidate current credential and retry within the same endpoint.

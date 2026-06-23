@@ -745,3 +745,41 @@ func TestStreamingClaudeReasoningOnlyEmptyClosesWithoutRetry(t *testing.T) {
 		t.Fatalf("expected stream to close with an error event, got %q", body)
 	}
 }
+
+func TestStreamingSemanticErrorEventDoesNotBecomeSemanticEmpty(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var hits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`event: error`,
+			`data: {"error":{"type":"invalid_request_error","message":"functions.send_message is reserved"}}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if hits != 1 {
+		t.Fatalf("expected a single upstream attempt for semantic error event, got %d", hits)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: error") || !strings.Contains(body, "invalid_request_error") {
+		t.Fatalf("expected downstream error event to be preserved, got %q", body)
+	}
+	if strings.Contains(body, retryReasonSemanticEmptyResponse) || strings.Contains(joinedProxyLogs(), retryReasonSemanticEmptyResponse) {
+		t.Fatalf("did not expect semantic-empty retry for explicit error event, body=%q logs:\n%s", body, joinedProxyLogs())
+	}
+}
