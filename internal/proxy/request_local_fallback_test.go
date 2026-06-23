@@ -17,6 +17,8 @@ import (
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
+const hermesRouteUnavailableBody = `{"error":{"message":"No available channel for model gpt-5.5 under group plus (distributor)"}}`
+
 func TestHTTPFailureFallbackIsRequestLocalAndDoesNotSwitchGlobalEndpoint(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
@@ -82,6 +84,165 @@ func TestHTTPFailureFallbackIsRequestLocalAndDoesNotSwitchGlobalEndpoint(t *test
 	}
 	if strings.Contains(logs, "[SWITCH]") {
 		t.Fatalf("expected no global switch log during request-local fallback, got logs:\n%s", logs)
+	}
+}
+
+func TestHermesRouteUnavailableUsesImmediateRequestLocalFallback(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(hermesRouteUnavailableBody))
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(validResponsesBody("resp-hermes-fallback", "ok")))
+	}))
+	defer fallback.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", primary.URL),
+		failoverPolicyTestEndpoint("Fallback", fallback.URL),
+	}, primary.Client())
+
+	rec := issueFailoverPolicyTestRequest(p, "req-hermes-route-unavailable")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected immediate fallback success, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("expected route-unavailable Primary to be tried once, got %d", primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Fatalf("expected Fallback to be tried once, got %d", fallbackHits)
+	}
+	if got := rec.Header().Get(headerCCNexusEndpoint); got != "Fallback" {
+		t.Fatalf("expected final endpoint Fallback, got %q", got)
+	}
+	if got := p.GetCurrentEndpointName(); got != "Primary" {
+		t.Fatalf("expected request-local fallback to preserve global current endpoint, got %q", got)
+	}
+
+	logs := joinedProxyLogs()
+	for _, want := range []string{
+		"retry_reason=route_unavailable",
+		"failover_scope=request_local",
+		"failover_reason=route_unavailable",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected logs to contain %q, got logs:\n%s", want, logs)
+		}
+	}
+}
+
+func TestHermesStreamingRouteUnavailableUsesImmediateRequestLocalFallback(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(hermesRouteUnavailableBody))
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.completed","response":{"id":"resp-hermes-stream-fallback","object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}}`,
+			"",
+			"data: [DONE]",
+			"",
+		}, "\n")))
+	}))
+	defer fallback.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", primary.URL),
+		failoverPolicyTestEndpoint("Fallback", fallback.URL),
+	}, primary.Client())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCCNexusRequestID, "req-hermes-stream-route-unavailable")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected streaming fallback success, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("expected route-unavailable streaming Primary to be tried once, got %d", primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Fatalf("expected streaming Fallback to be tried once, got %d", fallbackHits)
+	}
+	if got := rec.Header().Get(headerCCNexusEndpoint); got != "Fallback" {
+		t.Fatalf("expected final streaming endpoint Fallback, got %q", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "response.completed") {
+		t.Fatalf("expected completed fallback stream, got %q", body)
+	}
+	if strings.Contains(body, "No available channel") {
+		t.Fatalf("did not expect route-unavailable error to reach Hermes, got %q", body)
+	}
+}
+
+func TestHermesAuxiliaryRequestSkipsRouteUnavailableEndpointDuringCooldown(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(hermesRouteUnavailableBody))
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(validResponsesBody("resp-hermes-cooldown-fallback", "ok")))
+	}))
+	defer fallback.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", primary.URL),
+		failoverPolicyTestEndpoint("Fallback", fallback.URL),
+	}, primary.Client())
+
+	mainRec := issueFailoverPolicyTestRequest(p, "req-hermes-main")
+	if mainRec.Code != http.StatusOK {
+		t.Fatalf("expected main request fallback success, got status=%d body=%q", mainRec.Code, mainRec.Body.String())
+	}
+	titleRec := issueFailoverPolicyTestRequest(p, "req-hermes-title")
+	if titleRec.Code != http.StatusOK {
+		t.Fatalf("expected auxiliary request success during cooldown, got status=%d body=%q", titleRec.Code, titleRec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("expected cooled route-unavailable Primary to receive only the first request, got %d hits", primaryHits)
+	}
+	if fallbackHits != 2 {
+		t.Fatalf("expected Fallback to serve main and auxiliary requests, got %d hits", fallbackHits)
+	}
+	if got := titleRec.Header().Get(headerCCNexusEndpoint); got != "Fallback" {
+		t.Fatalf("expected auxiliary request to use Fallback, got %q", got)
 	}
 }
 

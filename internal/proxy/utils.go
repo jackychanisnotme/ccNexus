@@ -40,6 +40,7 @@ const (
 	defaultStreamHeaderTimeout     = 0 * time.Second
 	defaultStreamHeartbeatInterval = 10 * time.Second
 	retryReasonEndpointAuthFailed  = "endpoint_auth_failed"
+	retryReasonRouteUnavailable    = "route_unavailable"
 	retryReasonTransportProtocol   = "transport_protocol_error"
 )
 
@@ -122,6 +123,9 @@ func isTransportProtocolError(err error) bool {
 // endpoint rotation policy. Upstream gateways sometimes wrap rate limits inside
 // HTTP 500 bodies, so inspect the body in addition to the status code.
 func retryReasonForHTTPStatus(statusCode int, body string) string {
+	if isRouteUnavailableHTTPFailure(statusCode, body) {
+		return retryReasonRouteUnavailable
+	}
 	if isQuotaExhaustedHTTPFailure(statusCode, body) {
 		return "quota_exhausted"
 	}
@@ -160,6 +164,9 @@ func shouldRotateEndpointAfterHTTPFailure(endpointAttempts int, statusCode int, 
 }
 
 func failoverAttemptsForHTTPFailure(statusCode int, body string) int {
+	if isRouteUnavailableHTTPFailure(statusCode, body) {
+		return 1
+	}
 	if isQuotaExhaustedHTTPFailure(statusCode, body) {
 		return 1
 	}
@@ -169,6 +176,35 @@ func failoverAttemptsForHTTPFailure(statusCode int, body string) int {
 		return endpointSlowFailoverAttempts
 	}
 	return endpointFastFailoverAttempts
+}
+
+func isRouteUnavailableHTTPFailure(statusCode int, body string) bool {
+	if statusCode != http.StatusTooManyRequests &&
+		statusCode != http.StatusForbidden &&
+		statusCode != http.StatusNotFound &&
+		statusCode < http.StatusInternalServerError {
+		return false
+	}
+
+	lower := strings.ToLower(strings.TrimSpace(body))
+	for _, marker := range []string{
+		"no available channel",
+		"no channel available",
+		"no available route",
+		"no route available",
+		"model unavailable",
+		"model is unavailable",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	return strings.Contains(lower, "under group") &&
+		strings.Contains(lower, "distributor") &&
+		(strings.Contains(lower, "unavailable") ||
+			strings.Contains(lower, "no route") ||
+			strings.Contains(lower, "no channel"))
 }
 
 func isQuotaExhaustedHTTPFailure(statusCode int, body string) bool {

@@ -16,6 +16,69 @@ import (
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
+func TestRetryReasonForHTTPStatusClassifiesRouteUnavailable(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		want       string
+	}{
+		{
+			name:       "503 no available channel",
+			statusCode: http.StatusServiceUnavailable,
+			body:       hermesRouteUnavailableBody,
+			want:       "route_unavailable",
+		},
+		{
+			name:       "429 no available route",
+			statusCode: http.StatusTooManyRequests,
+			body:       `{"error":{"message":"No available route for requested model"}}`,
+			want:       "route_unavailable",
+		},
+		{
+			name:       "403 model unavailable",
+			statusCode: http.StatusForbidden,
+			body:       `{"error":{"message":"Model unavailable for this distributor"}}`,
+			want:       "route_unavailable",
+		},
+		{
+			name:       "404 distributor group unavailable",
+			statusCode: http.StatusNotFound,
+			body:       `{"error":{"message":"No route under group plus (distributor)"}}`,
+			want:       "route_unavailable",
+		},
+		{
+			name:       "generic 503 stays upstream 5xx",
+			statusCode: http.StatusServiceUnavailable,
+			body:       `{"error":{"message":"Service temporarily unavailable"}}`,
+			want:       "upstream_5xx",
+		},
+		{
+			name:       "generic 429 stays rate limited",
+			statusCode: http.StatusTooManyRequests,
+			body:       `{"error":{"message":"Rate limit exceeded"}}`,
+			want:       "rate_limited",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := retryReasonForHTTPStatus(tt.statusCode, tt.body); got != tt.want {
+				t.Fatalf("expected retry reason %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestRouteUnavailableUsesFastFailoverWhileGeneric503StaysSlow(t *testing.T) {
+	if got := failoverAttemptsForHTTPFailure(http.StatusServiceUnavailable, hermesRouteUnavailableBody); got != 1 {
+		t.Fatalf("expected route-unavailable failure to fail over after one attempt, got %d", got)
+	}
+	if got := failoverAttemptsForHTTPFailure(http.StatusServiceUnavailable, `{"error":{"message":"Service temporarily unavailable"}}`); got != endpointSlowFailoverAttempts {
+		t.Fatalf("expected generic 503 to keep slow failover, got %d attempts", got)
+	}
+}
+
 func TestHTTPRetryableStatusUsesSlowEndpointFailover(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
