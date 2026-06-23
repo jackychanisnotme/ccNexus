@@ -811,6 +811,87 @@ func TestCodexTokenPoolStreamingResponsesPreferWebSocket(t *testing.T) {
 	}
 }
 
+func TestCodexWebSocketRateLimitsAreCapturedButNotForwarded(t *testing.T) {
+	logger.GetLogger().Clear()
+	t.Cleanup(func() { logger.GetLogger().Clear() })
+	p := newCodexWebSocketRoutingTestProxy(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("unexpected HTTP upstream request")
+	}))
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	resetAt := time.Now().UTC().Add(5 * time.Hour).Unix()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(map[string]interface{}{
+			"type":      "codex.rate_limits",
+			"plan_type": "plus",
+			"rate_limits": map[string]interface{}{
+				"primary": map[string]interface{}{
+					"used_percent": 5, "window_minutes": 300, "reset_at": resetAt,
+				},
+				"secondary": map[string]interface{}{
+					"used_percent": 29, "window_minutes": 10080,
+				},
+			},
+			"credits": map[string]interface{}{"has_credits": false, "unlimited": false},
+		})
+		writeCompletedCodexWebSocketResponse(conn, "healthy")
+	}))
+	defer upstream.Close()
+	localWSURL, err := codexWebSocketURL(upstream.URL + "/backend-api/codex/responses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.codexWebSocketDial = func(ctx context.Context, _ string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+		return websocket.DefaultDialer.DialContext(ctx, localWSURL, headers)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "OpenAI/Python_2.31.0")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if strings.Contains(body, "codex.rate_limits") {
+		t.Fatalf("internal rate limit event leaked downstream: %q", body)
+	}
+	if got := sseBlockEventType(body); got != "response.created" {
+		t.Fatalf("first downstream event type = %q, want response.created; body=%q", got, body)
+	}
+	if !strings.Contains(body, "response.completed") || !strings.Contains(body, "healthy") {
+		t.Fatalf("expected completed response, got %q", body)
+	}
+	credentials, err := p.storage.GetEndpointCredentials("Codex Pool")
+	if err != nil || len(credentials) != 1 {
+		t.Fatalf("get credential: count=%d err=%v", len(credentials), err)
+	}
+	rateLimits, err := p.storage.GetCredentialRateLimits(credentials[0].ID)
+	if err != nil {
+		t.Fatalf("get captured rate limits: %v", err)
+	}
+	if rateLimits == nil || rateLimits.Data == nil || rateLimits.Data.Snapshot == nil || rateLimits.Data.Snapshot.Primary == nil {
+		t.Fatalf("missing captured rate limits: %#v", rateLimits)
+	}
+	if got := rateLimits.Data.Snapshot.Primary.UsedPercent; got != 5 {
+		t.Fatalf("captured primary used percent = %v, want 5", got)
+	}
+	if rateLimits.Data.Source != "sse" {
+		t.Fatalf("rate limit source = %q, want sse", rateLimits.Data.Source)
+	}
+	for _, entry := range logger.GetLogger().GetLogs() {
+		if strings.Contains(entry.Message, "retry_reason=client_canceled") {
+			t.Fatalf("unexpected client cancellation log: %s", entry.Message)
+		}
+	}
+}
+
 func TestCodexWebSocketUnsupportedHandshakeFallsBackToHTTP(t *testing.T) {
 	var httpHits int
 	p := newCodexWebSocketRoutingTestProxy(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {

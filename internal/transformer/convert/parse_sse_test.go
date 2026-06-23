@@ -39,6 +39,24 @@ func TestFilterNonResponsesStreamEventKeepsResponsesEvent(t *testing.T) {
 	}
 }
 
+func TestFilterNonResponsesStreamEventKeepsCompletedAndErrorEvents(t *testing.T) {
+	for _, event := range [][]byte{
+		[]byte("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"),
+		[]byte("data: {\"type\":\"error\",\"error\":{\"message\":\"bad request\"}}\n\n"),
+	} {
+		if got := FilterNonResponsesStreamEvent(event); string(got) != string(event) {
+			t.Fatalf("expected typed event to pass through unchanged, got %q", got)
+		}
+	}
+}
+
+func TestFilterNonResponsesStreamEventDropsCodexRateLimits(t *testing.T) {
+	rateLimits := []byte("data: {\"type\":\"codex.rate_limits\",\"plan_type\":\"plus\",\"rate_limits\":{\"primary\":{\"used_percent\":5}}}\n\n")
+	if got := FilterNonResponsesStreamEvent(rateLimits); got != nil {
+		t.Fatalf("expected codex.rate_limits to be filtered, got %q", got)
+	}
+}
+
 func TestFilterNonResponsesStreamEventKeepsDone(t *testing.T) {
 	done := []byte("data: [DONE]\n\n")
 	if got := FilterNonResponsesStreamEvent(done); string(got) != string(done) {

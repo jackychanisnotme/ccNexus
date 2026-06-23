@@ -470,8 +470,9 @@ func extractSystemText(system interface{}) string {
 	return ""
 }
 
-// FilterNonResponsesStreamEvent strips SSE events that lack a Responses API
-// "type" field from a raw event buffer. Some upstream Responses API endpoints
+// FilterNonResponsesStreamEvent strips internal control events and SSE events
+// that lack a Responses API "type" field from a raw event buffer. Some upstream
+// Responses API endpoints
 // (e.g. opencodex.uk) prepend a spurious chat.completion.chunk before the
 // first response.created event. The Python openai SDK's ResponseStreamState
 // raises RuntimeError("Expected to have received `response.created` before
@@ -484,6 +485,9 @@ func FilterNonResponsesStreamEvent(event []byte) []byte {
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonData), &payload); err != nil {
 		return event
+	}
+	if eventType, _ := payload["type"].(string); eventType == "codex.rate_limits" {
+		return nil
 	}
 	if _, hasType := payload["type"]; hasType {
 		return event
