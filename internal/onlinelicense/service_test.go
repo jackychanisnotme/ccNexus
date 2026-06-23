@@ -323,6 +323,39 @@ func TestSetDeviceExpiryChangesEffectiveExpiryAndWritesAudit(t *testing.T) {
 	}
 }
 
+func TestSetDeviceRemarkShowsOnDeviceAndWritesAudit(t *testing.T) {
+	now := time.Date(2026, 6, 19, 8, 0, 0, 0, time.UTC)
+	service := newTestService(t, now)
+	card := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanMonthly, Count: 1})
+	if _, err := service.Activate(ActivationRequest{CardKey: card.CardKey, DeviceID: "device-a"}); err != nil {
+		t.Fatalf("activate card: %v", err)
+	}
+
+	if err := service.SetDeviceRemark("device-a", "VIP customer"); err != nil {
+		t.Fatalf("set device remark: %v", err)
+	}
+	devices, err := service.ListDevices()
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+	if len(devices) != 1 || devices[0].Remark != "VIP customer" {
+		t.Fatalf("device remark = %#v, want VIP customer", devices)
+	}
+	history, err := service.ListAudit()
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	found := false
+	for _, item := range history {
+		if item.Action == "set_device_remark" && strings.Contains(item.Detail, "device-a") && strings.Contains(item.Detail, "VIP customer") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("set_device_remark audit missing: %#v", history)
+	}
+}
+
 func TestStoreInitClampsLegacyDisabledActivationExpiry(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "license.db")
 	store, err := NewSQLiteStore(path)

@@ -78,6 +78,12 @@ func (s *SQLiteStore) init() error {
 		created_at DATETIME NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS license_device_notes (
+		device_id TEXT PRIMARY KEY,
+		remark TEXT NOT NULL DEFAULT '',
+		updated_at DATETIME NOT NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_license_cards_status ON license_cards(status);
 	CREATE INDEX IF NOT EXISTS idx_license_cards_created_at ON license_cards(created_at);
 	CREATE INDEX IF NOT EXISTS idx_license_activations_device ON license_activations(device_id);
@@ -593,6 +599,43 @@ func (s *SQLiteStore) SetDeviceExpiry(deviceID string, expiresAt, now time.Time)
 	}
 	committed = true
 	return nil
+}
+
+func (s *SQLiteStore) ListDeviceRemarks() (map[string]string, error) {
+	rows, err := s.db.Query(`
+		SELECT device_id, COALESCE(remark, '')
+		FROM license_device_notes
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	remarks := make(map[string]string)
+	for rows.Next() {
+		var deviceID string
+		var remark string
+		if err := rows.Scan(&deviceID, &remark); err != nil {
+			return nil, err
+		}
+		remarks[deviceID] = remark
+	}
+	return remarks, rows.Err()
+}
+
+func (s *SQLiteStore) SetDeviceRemark(deviceID, remark string, now time.Time) error {
+	if remark == "" {
+		_, err := s.db.Exec(`DELETE FROM license_device_notes WHERE device_id = ?`, deviceID)
+		return err
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO license_device_notes (device_id, remark, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(device_id) DO UPDATE SET
+			remark=excluded.remark,
+			updated_at=excluded.updated_at
+	`, deviceID, remark, formatTime(now))
+	return err
 }
 
 func (s *SQLiteStore) AddAudit(action, targetType string, targetID int64, detail string, now time.Time) error {

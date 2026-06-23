@@ -492,35 +492,6 @@ func applyClaudeDesktop(s *AgentProviderService, targetURL string, createMissing
 	return path, "success", "updated"
 }
 
-func applyCodex(s *AgentProviderService, targetURL string, createMissing bool) (string, string, string) {
-	configPath := filepath.Join(s.homeDir, ".codex", "config.toml")
-	authPath := filepath.Join(s.homeDir, ".codex", "auth.json")
-	if !fileExists(configPath) && !fileExists(authPath) && !createMissing {
-		return configPath, "skipped", "configuration file not found"
-	}
-	configText := fmt.Sprintf(`model_provider = "AINexus"
-model = "gpt-5"
-
-[model_providers.AINexus]
-name = "AINexus"
-base_url = "%s/v1"
-wire_api = "responses"
-experimental_bearer_token = "%s"
-`, targetURL, agentProviderPlaceholderKey)
-	if err := atomicWriteFile(configPath, []byte(configText), 0644); err != nil {
-		return configPath, "failed", err.Error()
-	}
-	auth := map[string]any{"OPENAI_API_KEY": agentProviderPlaceholderKey}
-	if fileExists(authPath) {
-		_ = readJSONFile(authPath, &auth, auth)
-		auth["OPENAI_API_KEY"] = agentProviderPlaceholderKey
-	}
-	if err := writeJSONFile(authPath, auth); err != nil {
-		return configPath, "failed", err.Error()
-	}
-	return configPath, "success", "updated"
-}
-
 func applyGemini(s *AgentProviderService, targetURL string, createMissing bool) (string, string, string) {
 	path := filepath.Join(s.homeDir, ".gemini", ".env")
 	if !fileExists(path) && !createMissing {

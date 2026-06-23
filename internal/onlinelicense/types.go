@@ -126,6 +126,7 @@ type ActivationRecord struct {
 
 type DeviceRecord struct {
 	DeviceID            string             `json:"deviceId"`
+	Remark              string             `json:"remark,omitempty"`
 	Status              string             `json:"status"`
 	ExpiresAt           time.Time          `json:"expiresAt"`
 	LastCheckedAt       time.Time          `json:"lastCheckedAt"`
@@ -139,6 +140,11 @@ type DeviceRecord struct {
 type SetDeviceExpiryRequest struct {
 	DeviceID  string    `json:"deviceId"`
 	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+type SetDeviceRemarkRequest struct {
+	DeviceID string `json:"deviceId"`
+	Remark   string `json:"remark"`
 }
 
 type AuditRecord struct {

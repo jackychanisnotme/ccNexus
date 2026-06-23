@@ -21,6 +21,9 @@ AINexus is a local API provider and resource management hub for Claude Code, Cod
 >
 > [Download the latest release](https://github.com/jackychanisnotme/AINexus/releases/latest)
 
+> [!NOTE]
+> AINexus is now being distributed to real customers. Future releases will continue to add desktop and server-side capabilities, including client token-usage reporting, license-operation views, and remote endpoint policy management. The project prioritizes keeping existing customers' licenses, configuration, data directories, token pools, and proxy behavior working across upgrades.
+
 ## Quick Start
 
 ### Desktop App
@@ -145,6 +148,7 @@ To use a Codex Token Pool:
 - **Live monitoring** for requests, classified errors, endpoint runtime state, request IDs, and per-credential usage
 - **Model and compatibility APIs** at `/v1/models`, `/models`, `/api/tags`, `/version`, `/props`, `/health`, and `/stats`
 - **Backup and sync** through WebDAV, local backups, and S3-compatible storage
+- **Online licensing and operations foundation** with network card activation, offline grace, device authorization management, and extension points for future server-side usage statistics and remote policy management
 
 <table>
   <tr>
@@ -175,6 +179,16 @@ Server mode supports:
 
 > [!WARNING]
 > When using `AINEXUS_LISTEN_MODE=lan` or exposing the service publicly, set a strong password and restrict access with a firewall or HTTPS reverse proxy. Basic Auth protects the Web UI and management API, but it is not a replacement for a proper network boundary.
+
+## Customer Distribution and Upgrade Compatibility
+
+After customer distribution, upgrade stability takes priority over feature velocity:
+
+- New versions should keep existing license tickets, card redemptions, offline grace, configuration files, and SQLite data usable.
+- Default proxy ports, license server URLs, endpoint authentication modes, and transformer semantics should not change without migration notes.
+- Database migrations should be idempotent and preserve the original data with a rollback path.
+- Future server-side statistics and remote management features should follow data minimization: report token usage, error classes, and device state, but never upload plaintext API keys, access tokens, refresh tokens, prompts, or responses.
+- Remote endpoint enablement/order policies should keep a local fallback; when the server is unavailable, the customer's existing local configuration continues to work.
 
 ## Differences from the Original Project
 

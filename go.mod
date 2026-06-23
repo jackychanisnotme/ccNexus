@@ -9,6 +9,7 @@ require (
 	github.com/gen2brain/beeep v0.11.1
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.0.0
+	github.com/pelletier/go-toml/v2 v2.4.0
 	github.com/studio-b12/gowebdav v0.11.0
 	github.com/wailsapp/wails/v2 v2.11.0
 	golang.org/x/net v0.44.0

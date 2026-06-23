@@ -92,6 +92,61 @@ func TestAgentProviderApplyBacksUpAndRestoresDetectedConfigs(t *testing.T) {
 	}
 }
 
+func TestAgentProviderCodexApplyPreservesExistingConfig(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.UpdatePort(3456)
+	svc := NewAgentProviderServiceWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	writeFile(t, filepath.Join(home, ".codex", "config.toml"), `# keep codex comment
+model = "gpt-4.1"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[profiles.work]
+model = "gpt-4.1"
+
+[mcp_servers.fetch]
+command = "uvx"
+args = ["mcp-server-fetch"]
+`)
+	writeFile(t, filepath.Join(home, ".codex", "auth.json"), `{
+  "OPENAI_API_KEY": "old-key",
+  "tokens": {"access_token": "oauth-token"},
+  "last_refresh": "2026-01-01T00:00:00Z"
+}`)
+
+	result := svc.Apply(AgentProviderRequest{Targets: []string{"codex"}})
+	assertTargetStatus(t, result.Results, "codex", "success")
+
+	codex := readFile(t, filepath.Join(home, ".codex", "config.toml"))
+	for _, want := range []string{
+		"# keep codex comment",
+		`model = "gpt-4.1"`,
+		`approval_policy = "on-request"`,
+		`sandbox_mode = "workspace-write"`,
+		"[profiles.work]",
+		"[mcp_servers.fetch]",
+		`model_provider = "AINexus"`,
+		`[model_providers.AINexus]`,
+		`base_url = "http://127.0.0.1:3456/v1"`,
+	} {
+		if !strings.Contains(codex, want) {
+			t.Fatalf("codex config lost %q:\n%s", want, codex)
+		}
+	}
+
+	auth := readFile(t, filepath.Join(home, ".codex", "auth.json"))
+	for _, want := range []string{`"OPENAI_API_KEY": "ainexus-local"`, `"access_token": "oauth-token"`, `"last_refresh": "2026-01-01T00:00:00Z"`} {
+		if !strings.Contains(auth, want) {
+			t.Fatalf("codex auth lost %q:\n%s", want, auth)
+		}
+	}
+}
+
 func TestAgentProviderSkipsMissingConfigsByDefault(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.DefaultConfig()

@@ -108,6 +108,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveAdminMutation(w, r, h.handleDisableActivation)
 	case path == "/api/admin/devices/expiry":
 		h.serveAdminMutation(w, r, h.handleSetDeviceExpiry)
+	case path == "/api/admin/devices/remark":
+		h.serveAdminMutation(w, r, h.handleSetDeviceRemark)
 	case path == "/api/admin/devices":
 		h.serveAdmin(w, r, h.handleDevices)
 	case path == "/api/admin/history":
@@ -332,6 +334,31 @@ func (h *HTTPHandler) handleSetDeviceExpiry(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSONSuccess(w, map[string]bool{"updated": true})
+}
+
+func (h *HTTPHandler) handleSetDeviceRemark(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req SetDeviceRemarkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.DeviceID) == "" {
+		writeJSONError(w, http.StatusBadRequest, "device id is required")
+		return
+	}
+	if err := h.service.SetDeviceRemark(req.DeviceID, req.Remark); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "device not found")
+			return
+		}
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSONSuccess(w, map[string]bool{"updated": true})

@@ -275,6 +275,26 @@ func TestAdminDevicesEndpointGroupsRowsAndAllowsExpiryUpdate(t *testing.T) {
 	if !devices.Data[0].ExpiresAt.Equal(wantExpiry) {
 		t.Fatalf("updated expiry = %s, want %s", devices.Data[0].ExpiresAt, wantExpiry)
 	}
+
+	remarkBody := `{"deviceId":"device-a","remark":"办公室 Mac"}`
+	req = httptest.NewRequest(http.MethodPatch, "/api/admin/devices/remark", strings.NewReader(remarkBody))
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set remark status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/devices", nil)
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if err := json.Unmarshal(rec.Body.Bytes(), &devices); err != nil {
+		t.Fatalf("decode remark devices: %v", err)
+	}
+	if devices.Data[0].Remark != "办公室 Mac" {
+		t.Fatalf("updated remark = %q, want 办公室 Mac", devices.Data[0].Remark)
+	}
 }
 
 func TestAdminEmptyListEndpointsReturnArrays(t *testing.T) {

@@ -49,6 +49,8 @@ type Store interface {
 	TouchActivation(id int64, now time.Time, platform, appVersion, ipAddress string) error
 	DisableActivation(id int64, now time.Time) error
 	SetDeviceExpiry(deviceID string, expiresAt, now time.Time) error
+	ListDeviceRemarks() (map[string]string, error)
+	SetDeviceRemark(deviceID, remark string, now time.Time) error
 	AddAudit(action, targetType string, targetID int64, detail string, now time.Time) error
 	ListAudit(limit int) ([]AuditRecord, error)
 }
@@ -258,6 +260,10 @@ func (s *Service) ListDevices() ([]DeviceRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	remarks, err := s.store.ListDeviceRemarks()
+	if err != nil {
+		return nil, err
+	}
 	now := s.currentTime()
 	devices := make([]DeviceRecord, 0)
 	index := make(map[string]int)
@@ -287,6 +293,7 @@ func (s *Service) ListDevices() ([]DeviceRecord, error) {
 	}
 	for i := range devices {
 		device := &devices[i]
+		device.Remark = remarks[device.DeviceID]
 		if device.CurrentActivationID == 0 {
 			if len(device.Licenses) > 0 {
 				device.CurrentActivationID = device.Licenses[0].ID
@@ -375,6 +382,37 @@ func (s *Service) SetDeviceExpiry(deviceID string, expiresAt time.Time) error {
 	}
 	detail := fmt.Sprintf("device=%s oldExpiry=%s newExpiry=%s", deviceID, current.ExpiresAt.Format(time.RFC3339), expiresAt.Format(time.RFC3339))
 	return s.store.AddAudit("set_device_expiry", "activation", current.CurrentActivationID, detail, now)
+}
+
+func (s *Service) SetDeviceRemark(deviceID, remark string) error {
+	deviceID = strings.TrimSpace(deviceID)
+	remark = strings.TrimSpace(remark)
+	if deviceID == "" {
+		return fmt.Errorf("device id is required")
+	}
+	if len([]rune(remark)) > 500 {
+		return fmt.Errorf("device remark is too long")
+	}
+	devices, err := s.ListDevices()
+	if err != nil {
+		return err
+	}
+	var current *DeviceRecord
+	for i := range devices {
+		if devices[i].DeviceID == deviceID {
+			current = &devices[i]
+			break
+		}
+	}
+	if current == nil {
+		return sql.ErrNoRows
+	}
+	now := s.currentTime()
+	if err := s.store.SetDeviceRemark(deviceID, remark, now); err != nil {
+		return err
+	}
+	detail := fmt.Sprintf("device=%s oldRemark=%s newRemark=%s", deviceID, current.Remark, remark)
+	return s.store.AddAudit("set_device_remark", "device", 0, detail, now)
 }
 
 func (s *Service) RecordAudit(action, targetType string, targetID int64, detail string) error {
