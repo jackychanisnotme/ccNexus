@@ -330,10 +330,19 @@ func (s *SQLiteStorage) DeleteEndpointCredential(endpointName string, id int64) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, err := s.db.Exec(`DELETE FROM credential_rate_limits WHERE credential_id=?`, id); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
 		return err
 	}
-	result, err := s.db.Exec(`DELETE FROM endpoint_credentials WHERE endpoint_name=? AND id=?`, endpointName, id)
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM credential_usage WHERE credential_id=? OR endpoint_name=?`, id, endpointName); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM credential_rate_limits WHERE credential_id=?`, id); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM endpoint_credentials WHERE endpoint_name=? AND id=?`, endpointName, id)
 	if err != nil {
 		return err
 	}
@@ -346,7 +355,7 @@ func (s *SQLiteStorage) DeleteEndpointCredential(endpointName string, id int64) 
 		return fmt.Errorf("credential not found")
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (s *SQLiteStorage) SetEndpointCredentialEnabled(endpointName string, id int64, enabled bool) error {
@@ -441,13 +450,23 @@ func (s *SQLiteStorage) GetUsableEndpointCredentialByProvider(endpointName strin
 		}
 	}
 	var earliestRetryAt time.Time
+	var refreshableExpired *EndpointCredential
 
 	for i := range credentials {
 		if !credentialProviderMatches(credentials[i].ProviderType, providerType) {
 			continue
 		}
 		status := deriveCredentialStatus(&credentials[i], now)
-		if status == credentialStatusDisabled || status == credentialStatusExpired || status == credentialStatusInvalid {
+		if status == credentialStatusDisabled || status == credentialStatusInvalid {
+			continue
+		}
+		if status == credentialStatusExpired {
+			if providerType == ProviderTypeCodex &&
+				strings.TrimSpace(credentials[i].RefreshToken) != "" &&
+				refreshableExpired == nil {
+				credentials[i].Status = status
+				refreshableExpired = &credentials[i]
+			}
 			continue
 		}
 		if retryAt, limited := codexCredentialRateLimitRetryAt(rateLimits[credentials[i].ID], now); limited {
@@ -466,6 +485,9 @@ func (s *SQLiteStorage) GetUsableEndpointCredentialByProvider(endpointName strin
 			credentials[i].Status = status
 			return &credentials[i], nil
 		}
+	}
+	if refreshableExpired != nil {
+		return refreshableExpired, nil
 	}
 	if !earliestRetryAt.IsZero() {
 		return nil, &CredentialRateLimitedError{EndpointName: endpointName, RetryAt: earliestRetryAt}
@@ -541,6 +563,29 @@ func (s *SQLiteStorage) MarkCredentialSuccess(id int64, now time.Time) error {
 	return err
 }
 
+func (s *SQLiteStorage) MarkCredentialSuccessIfCurrent(id int64, expectedAccessToken string, now time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(`
+		UPDATE endpoint_credentials
+		SET
+			status=?,
+			failure_count=0,
+			cooldown_until=NULL,
+			last_error='',
+			last_checked_at=?,
+			last_used_at=?,
+			updated_at=CURRENT_TIMESTAMP
+		WHERE id=? AND access_token=? AND status<>?
+	`, credentialStatusActive, now.UTC(), now.UTC(), id, expectedAccessToken, credentialStatusInvalid)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
 func (s *SQLiteStorage) MarkCredentialFailure(id int64, statusCode int, errMsg string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -593,6 +638,51 @@ func (s *SQLiteStorage) MarkCredentialFailure(id int64, statusCode int, errMsg s
 		`, maxConsecutiveFailures, credentialStatusCooldown, credentialStatusActive, maxConsecutiveFailures, cooldownUntil, errMsg, now.UTC(), id)
 		return err
 	}
+}
+
+func (s *SQLiteStorage) MarkCredentialFailureIfCurrent(id int64, expectedAccessToken string, statusCode int, errMsg string, now time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(errMsg) > 500 {
+		errMsg = errMsg[:500]
+	}
+
+	var result sql.Result
+	var err error
+	switch statusCode {
+	case 401, 403:
+		result, err = s.db.Exec(`
+			UPDATE endpoint_credentials
+			SET status=?, failure_count=failure_count+1, last_error=?, last_checked_at=?, updated_at=CURRENT_TIMESTAMP
+			WHERE id=? AND access_token=?
+		`, credentialStatusInvalid, errMsg, now.UTC(), id, expectedAccessToken)
+	case 429:
+		cooldownUntil := now.UTC().Add(defaultCooldown)
+		result, err = s.db.Exec(`
+			UPDATE endpoint_credentials
+			SET status=?, failure_count=failure_count+1, cooldown_until=?, last_error=?, last_checked_at=?, updated_at=CURRENT_TIMESTAMP
+			WHERE id=? AND access_token=?
+		`, credentialStatusCooldown, cooldownUntil, errMsg, now.UTC(), id, expectedAccessToken)
+	default:
+		cooldownUntil := now.UTC().Add(defaultCooldown)
+		result, err = s.db.Exec(`
+			UPDATE endpoint_credentials
+			SET
+				failure_count=failure_count+1,
+				status=CASE WHEN failure_count+1 >= ? THEN ? ELSE ? END,
+				cooldown_until=CASE WHEN failure_count+1 >= ? THEN ? ELSE cooldown_until END,
+				last_error=?,
+				last_checked_at=?,
+				updated_at=CURRENT_TIMESTAMP
+			WHERE id=? AND access_token=?
+		`, maxConsecutiveFailures, credentialStatusCooldown, credentialStatusActive, maxConsecutiveFailures, cooldownUntil, errMsg, now.UTC(), id, expectedAccessToken)
+	}
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
 }
 
 func (s *SQLiteStorage) MarkCredentialCooldown(id int64, cooldown time.Duration, errMsg string, now time.Time) error {

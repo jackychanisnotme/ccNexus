@@ -702,7 +702,24 @@ func (s *SQLiteStorage) DeleteEndpoint(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		DELETE FROM credential_usage
+		WHERE credential_id IN (
+			SELECT id FROM endpoint_credentials WHERE endpoint_name=?
+		)
+	`, name); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM credential_usage WHERE endpoint_name=?`, name); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
 		DELETE FROM credential_rate_limits
 		WHERE credential_id IN (
 			SELECT id FROM endpoint_credentials WHERE endpoint_name=?
@@ -710,15 +727,16 @@ func (s *SQLiteStorage) DeleteEndpoint(name string) error {
 	`, name); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM endpoint_credentials WHERE endpoint_name=?`, name); err != nil {
+	if _, err := tx.Exec(`DELETE FROM endpoint_credentials WHERE endpoint_name=?`, name); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM endpoint_runtime_status WHERE endpoint_name=?`, name); err != nil {
+	if _, err := tx.Exec(`DELETE FROM endpoint_runtime_status WHERE endpoint_name=?`, name); err != nil {
 		return err
 	}
-
-	_, err := s.db.Exec(`DELETE FROM endpoints WHERE name=?`, name)
-	return err
+	if _, err := tx.Exec(`DELETE FROM endpoints WHERE name=?`, name); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLiteStorage) UpsertEndpointRuntimeStatus(endpointName string, patch EndpointRuntimeStatusPatch) (*EndpointRuntimeStatus, error) {
@@ -1543,30 +1561,49 @@ func (s *SQLiteStorage) MergeFromBackup(backupDBPath string, strategy MergeStrat
 
 // mergeEndpoints 根据策略合并端点配置
 func (s *SQLiteStorage) mergeEndpoints(tx *sql.Tx, strategy MergeStrategy) error {
-	var backupHasAuthMode int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM backup.pragma_table_info('endpoints') WHERE name='auth_mode'`).Scan(&backupHasAuthMode); err != nil {
+	localHasProxyURL, err := tableHasColumn(tx, "main", "endpoints", "proxy_url")
+	if err != nil {
 		return err
 	}
-	var backupHasThinking int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM backup.pragma_table_info('endpoints') WHERE name='thinking'`).Scan(&backupHasThinking); err != nil {
+	backupHasAuthMode, err := tableHasColumn(tx, "backup", "endpoints", "auth_mode")
+	if err != nil {
 		return err
 	}
-	var backupHasForceStream int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM backup.pragma_table_info('endpoints') WHERE name='force_stream'`).Scan(&backupHasForceStream); err != nil {
+	backupHasThinking, err := tableHasColumn(tx, "backup", "endpoints", "thinking")
+	if err != nil {
+		return err
+	}
+	backupHasForceStream, err := tableHasColumn(tx, "backup", "endpoints", "force_stream")
+	if err != nil {
+		return err
+	}
+	backupHasProxyURL, err := tableHasColumn(tx, "backup", "endpoints", "proxy_url")
+	if err != nil {
 		return err
 	}
 
 	selectAuthMode := "'api_key'"
-	if backupHasAuthMode > 0 {
+	if backupHasAuthMode {
 		selectAuthMode = "COALESCE(auth_mode, 'api_key')"
 	}
 	selectThinking := "''"
-	if backupHasThinking > 0 {
+	if backupHasThinking {
 		selectThinking = "COALESCE(thinking, '')"
 	}
 	selectForceStream := "FALSE"
-	if backupHasForceStream > 0 {
+	if backupHasForceStream {
 		selectForceStream = "COALESCE(force_stream, FALSE)"
+	}
+	selectProxyURL := "''"
+	if backupHasProxyURL {
+		selectProxyURL = "COALESCE(proxy_url, '')"
+	}
+
+	targetColumns := "name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, remark, sort_order"
+	selectColumns := fmt.Sprintf("name, api_url, api_key, %s, enabled, transformer, model, %s, %s, remark, COALESCE(sort_order, 0)", selectAuthMode, selectThinking, selectForceStream)
+	if localHasProxyURL {
+		targetColumns = "name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, proxy_url, remark, sort_order"
+		selectColumns = fmt.Sprintf("name, api_url, api_key, %s, enabled, transformer, model, %s, %s, %s, remark, COALESCE(sort_order, 0)", selectAuthMode, selectThinking, selectForceStream, selectProxyURL)
 	}
 
 	switch strategy {
@@ -1574,23 +1611,47 @@ func (s *SQLiteStorage) mergeEndpoints(tx *sql.Tx, strategy MergeStrategy) error
 		// 只插入新端点（忽略冲突）
 		_, err := tx.Exec(fmt.Sprintf(`
 			INSERT OR IGNORE INTO endpoints
-			(name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, remark, sort_order)
-			SELECT name, api_url, api_key, %s, enabled, transformer, model, %s, %s, remark, COALESCE(sort_order, 0)
+			(%s)
+			SELECT %s
 			FROM backup.endpoints
-		`, selectAuthMode, selectThinking, selectForceStream))
+		`, targetColumns, selectColumns))
 		return err
 	case MergeStrategyOverwriteLocal:
 		// 替换已存在的端点
 		_, err := tx.Exec(fmt.Sprintf(`
 			INSERT OR REPLACE INTO endpoints
-			(name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, remark, sort_order)
-			SELECT name, api_url, api_key, %s, enabled, transformer, model, %s, %s, remark, COALESCE(sort_order, 0)
+			(%s)
+			SELECT %s
 			FROM backup.endpoints
-		`, selectAuthMode, selectThinking, selectForceStream))
+		`, targetColumns, selectColumns))
 		return err
 	default:
 		return fmt.Errorf("unknown merge strategy: %s", strategy)
 	}
+}
+
+func tableHasColumn(tx *sql.Tx, schemaName, tableName, columnName string) (bool, error) {
+	rows, err := tx.Query(fmt.Sprintf(`PRAGMA %s.table_info(%s)`, schemaName, tableName))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(strings.TrimSpace(name), columnName) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // mergeDailyStats 根据策略合并每日统计数据

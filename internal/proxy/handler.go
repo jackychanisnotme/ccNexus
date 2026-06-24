@@ -142,12 +142,10 @@ func (p *Proxy) UpdateConfigPreservingCurrentName(cfg *config.Config, currentEnd
 		previousEndpointName = p.getCurrentEndpointLocked().Name
 	}
 
-	p.config = cfg
-	p.resolver = NewEndpointResolverWithFunc(cfg.GetEndpoints)
 	newEndpointsSnapshot := cfg.GetEndpoints()
 
 	// Try to find the previous current endpoint in new config
-	newEndpoints := p.getEnabledEndpoints()
+	newEndpoints := enabledEndpoints(newEndpointsSnapshot)
 	newEndpointName := ""
 	if previousEndpointName != "" && len(newEndpoints) > 0 {
 		found := false
@@ -176,6 +174,7 @@ func (p *Proxy) UpdateConfigPreservingCurrentName(cfg *config.Config, currentEnd
 
 	p.clearEndpointCooldownsForConfigChange(oldEndpoints, newEndpointsSnapshot)
 	p.configEndpointsSnapshot = cloneEndpoints(newEndpointsSnapshot)
+	p.runtime.Store(newProxyRuntimeSnapshot(cfg))
 
 	// Clear models cache to force refresh with new endpoints
 	if p.modelsCache != nil {

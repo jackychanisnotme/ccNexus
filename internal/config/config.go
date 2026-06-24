@@ -295,6 +295,11 @@ type Config struct {
 	CodexProxy                *ProxyConfig    `json:"codexProxy,omitempty"`                // Codex dedicated proxy config
 	Failover                  *FailoverConfig `json:"failover,omitempty"`                  // Request fallback and endpoint cooldown config
 	mu                        sync.RWMutex
+	version                   uint64
+}
+
+func (c *Config) bumpVersionLocked() {
+	c.version++
 }
 
 // ReplaceWith copies all configuration fields from src into c under c's lock,
@@ -332,6 +337,34 @@ func (c *Config) ReplaceWith(src *Config) {
 	c.Proxy = src.Proxy
 	c.CodexProxy = src.CodexProxy
 	c.Failover = src.Failover
+	c.bumpVersionLocked()
+}
+
+// Snapshot returns an independent deep copy suitable for immutable runtime use.
+func (c *Config) Snapshot() *Config {
+	if c == nil {
+		return DefaultConfig()
+	}
+	c.mu.RLock()
+	data, err := json.Marshal(c)
+	c.mu.RUnlock()
+	if err != nil {
+		return DefaultConfig()
+	}
+	var snapshot Config
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return DefaultConfig()
+	}
+	return &snapshot
+}
+
+func (c *Config) Version() uint64 {
+	if c == nil {
+		return 0
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.version
 }
 
 // DefaultFailoverConfig returns the default request fallback behavior.
@@ -459,6 +492,9 @@ func (c *Config) Validate() error {
 			c.Endpoints[i].Transformer = "claude"
 		}
 		ApplyEndpointAuthModeRules(&c.Endpoints[i])
+		if !isSupportedTransformer(c.Endpoints[i].Transformer) {
+			return fmt.Errorf("endpoint %d (%s): unsupported transformer %q", i+1, c.Endpoints[i].Name, c.Endpoints[i].Transformer)
+		}
 
 		if c.Endpoints[i].APIUrl == "" {
 			return fmt.Errorf("endpoint %d: apiUrl is required", i+1)
@@ -481,6 +517,15 @@ func (c *Config) Validate() error {
 	c.Failover = NormalizeFailoverConfig(c.Failover)
 
 	return nil
+}
+
+func isSupportedTransformer(transformer string) bool {
+	switch providercompat.NormalizeTransformer(transformer) {
+	case providercompat.TransformerClaude, providercompat.TransformerOpenAI, providercompat.TransformerOpenAI2, providercompat.TransformerGemini, providercompat.TransformerDeepSeek, providercompat.TransformerKimi, providercompat.TransformerPoe:
+		return true
+	default:
+		return false
+	}
 }
 
 // GetEndpoints returns a copy of endpoints (thread-safe)
@@ -553,6 +598,7 @@ func (c *Config) UpdateBasicAuth(enabled bool, username, password string) {
 	c.BasicAuthEnabled = enabled
 	c.BasicAuthUsername = username
 	c.BasicAuthPassword = password
+	c.bumpVersionLocked()
 }
 
 // UpdateEndpoints updates the endpoints (thread-safe)
@@ -560,6 +606,7 @@ func (c *Config) UpdateEndpoints(endpoints []Endpoint) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Endpoints = endpoints
+	c.bumpVersionLocked()
 }
 
 // UpdatePort updates the port (thread-safe)
@@ -571,6 +618,7 @@ func (c *Config) UpdatePort(port int) {
 		return
 	}
 	c.Port = port
+	c.bumpVersionLocked()
 }
 
 // UpdateListenMode updates the listener mode (thread-safe)
@@ -578,6 +626,7 @@ func (c *Config) UpdateListenMode(mode string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ListenMode = NormalizeListenMode(mode)
+	c.bumpVersionLocked()
 }
 
 // LockPort locks the port so it cannot be changed via API
@@ -585,6 +634,7 @@ func (c *Config) LockPort() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.PortLocked = true
+	c.bumpVersionLocked()
 }
 
 // IsPortLocked returns true if the port is locked
@@ -599,6 +649,7 @@ func (c *Config) UpdateLogLevel(level int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.LogLevel = level
+	c.bumpVersionLocked()
 }
 
 // GetLanguage returns the configured language (thread-safe)
@@ -613,6 +664,7 @@ func (c *Config) UpdateLanguage(language string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Language = language
+	c.bumpVersionLocked()
 }
 
 // GetWindowSize returns the configured window size (thread-safe)
@@ -628,6 +680,7 @@ func (c *Config) UpdateWindowSize(width, height int) {
 	defer c.mu.Unlock()
 	c.WindowWidth = width
 	c.WindowHeight = height
+	c.bumpVersionLocked()
 }
 
 // GetCloseWindowBehavior returns the close window behavior (thread-safe)
@@ -644,6 +697,7 @@ func (c *Config) UpdateCloseWindowBehavior(behavior string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.CloseWindowBehavior = behavior
+	c.bumpVersionLocked()
 }
 
 // GetTheme returns the configured theme (thread-safe)
@@ -660,6 +714,7 @@ func (c *Config) UpdateTheme(theme string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Theme = theme
+	c.bumpVersionLocked()
 }
 
 // GetThemeAuto returns whether auto theme switching is enabled (thread-safe)
@@ -674,6 +729,7 @@ func (c *Config) UpdateThemeAuto(auto bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ThemeAuto = auto
+	c.bumpVersionLocked()
 }
 
 // GetAutoLightTheme returns the theme to use in daytime when auto mode is on (thread-safe)
@@ -688,6 +744,7 @@ func (c *Config) UpdateAutoLightTheme(theme string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.AutoLightTheme = theme
+	c.bumpVersionLocked()
 }
 
 // GetAutoDarkTheme returns the theme to use in nighttime when auto mode is on (thread-safe)
@@ -702,6 +759,7 @@ func (c *Config) UpdateAutoDarkTheme(theme string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.AutoDarkTheme = theme
+	c.bumpVersionLocked()
 }
 
 // GetWebDAV returns the WebDAV configuration (thread-safe)
@@ -716,6 +774,7 @@ func (c *Config) UpdateWebDAV(webdav *WebDAVConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.WebDAV = webdav
+	c.bumpVersionLocked()
 }
 
 // GetBackup returns the backup configuration (thread-safe)
@@ -730,6 +789,7 @@ func (c *Config) UpdateBackup(backup *BackupConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Backup = backup
+	c.bumpVersionLocked()
 }
 
 // GetUpdate returns the Update configuration (thread-safe)
@@ -750,6 +810,7 @@ func (c *Config) UpdateUpdate(update *UpdateConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Update = update
+	c.bumpVersionLocked()
 }
 
 // GetTerminal returns the Terminal configuration (thread-safe)
@@ -771,6 +832,7 @@ func (c *Config) UpdateTerminal(terminal *TerminalConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Terminal = terminal
+	c.bumpVersionLocked()
 }
 
 // GetProxy returns the Proxy configuration (thread-safe)
@@ -785,6 +847,7 @@ func (c *Config) UpdateProxy(proxy *ProxyConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Proxy = proxy
+	c.bumpVersionLocked()
 }
 
 // GetCodexProxy returns the Codex dedicated proxy configuration (thread-safe)
@@ -799,6 +862,7 @@ func (c *Config) UpdateCodexProxy(proxy *ProxyConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.CodexProxy = proxy
+	c.bumpVersionLocked()
 }
 
 // GetFailover returns the fallback configuration (thread-safe).
@@ -813,6 +877,7 @@ func (c *Config) UpdateFailover(failover *FailoverConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Failover = NormalizeFailoverConfig(failover)
+	c.bumpVersionLocked()
 }
 
 // GetClaudeNotification returns the Claude notification settings (thread-safe)
@@ -828,6 +893,7 @@ func (c *Config) UpdateClaudeNotification(enabled bool, notifType string) {
 	defer c.mu.Unlock()
 	c.ClaudeNotificationEnabled = enabled
 	c.ClaudeNotificationType = notifType
+	c.bumpVersionLocked()
 }
 
 // StorageAdapter defines the interface needed for loading/saving config

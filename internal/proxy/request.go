@@ -180,7 +180,12 @@ func buildProxyRequest(r *http.Request, endpoint config.Endpoint, apiKey string,
 	}
 	targetURL := fmt.Sprintf("%s%s", normalizedAPIUrl, targetPath)
 	if r.URL.RawQuery != "" {
-		targetURL += "?" + r.URL.RawQuery
+		query := r.URL.Query()
+		query.Del("endpoint")
+		query.Del("ep")
+		if encoded := query.Encode(); encoded != "" {
+			targetURL += "?" + encoded
+		}
 	}
 
 	proxyReq, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(requestBody))

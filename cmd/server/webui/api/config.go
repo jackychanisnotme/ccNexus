@@ -110,6 +110,10 @@ func (h *Handler) getConfig(w http.ResponseWriter, r *http.Request) {
 
 // updateConfig updates the full configuration
 func (h *Handler) updateConfig(w http.ResponseWriter, r *http.Request) {
+	oldPort := h.config.GetPort()
+	oldListenMode := h.config.GetListenMode()
+	oldLogLevel := h.config.GetLogLevel()
+	oldFailover := h.config.GetFailover()
 	var req struct {
 		Port     *int                   `json:"port"`
 		LogLevel *int                   `json:"logLevel"`
@@ -133,6 +137,18 @@ func (h *Handler) updateConfig(w http.ResponseWriter, r *http.Request) {
 
 	if req.Failover != nil {
 		h.config.UpdateFailover(req.Failover)
+	}
+
+	if err := h.proxy.RebindListener(); err != nil {
+		h.config.UpdatePort(oldPort)
+		h.config.UpdateListenMode(oldListenMode)
+		h.config.UpdateLogLevel(oldLogLevel)
+		h.config.UpdateFailover(oldFailover)
+		if rebindErr := h.proxy.RebindListener(); rebindErr != nil {
+			logger.Error("Failed to restore listener after config update failure: %v", rebindErr)
+		}
+		WriteError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	// Save to storage

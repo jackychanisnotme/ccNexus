@@ -426,6 +426,44 @@ func TestFetchModelsUsesProxyURLFromRequest(t *testing.T) {
 	}
 }
 
+func TestSwitchEndpointActuallyChangesCurrentEndpoint(t *testing.T) {
+	store := newAPITestStorage(t)
+	cfg := config.DefaultConfig()
+	cfg.BasicAuthEnabled = false
+	proxyInstance := proxy.New(cfg, nil, store, "test-device")
+	handler := NewHandler(cfg, proxyInstance, store)
+
+	saveAPITestEndpoint(t, store, storage.Endpoint{
+		Name:        "A",
+		APIUrl:      "https://a.example.com",
+		APIKey:      "key-a",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "model-a",
+	})
+	saveAPITestEndpoint(t, store, storage.Endpoint{
+		Name:        "B",
+		APIUrl:      "https://b.example.com",
+		APIKey:      "key-b",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "model-b",
+	})
+	if err := handler.reloadConfig(); err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+
+	rec := requestJSON(t, handler, http.MethodPost, "/api/endpoints/switch", map[string]any{"name": "B"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/endpoints/switch status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := proxyInstance.GetCurrentEndpointName(); got != "B" {
+		t.Fatalf("current endpoint = %q, want %q", got, "B")
+	}
+}
+
 func postJSON(t *testing.T, handler http.Handler, method, path string, payload map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 

@@ -1363,7 +1363,9 @@ func (p *Proxy) handleStreamingAsNonStreaming(w http.ResponseWriter, resp *http.
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	w.Write(transformedResp)
+	if _, err := w.Write(transformedResp); err != nil {
+		return 0, 0, "", fmt.Errorf("downstream delivery failed: %w", err)
+	}
 
 	return inputTokens, outputTokens, outputText, nil
 }

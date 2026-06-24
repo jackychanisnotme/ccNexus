@@ -44,10 +44,6 @@ func (s *SettingsService) UpdateConfig(configJSON string, proxy interface{ Updat
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	if err := proxy.UpdateConfig(&newConfig); err != nil {
-		return err
-	}
-
 	if s.storage != nil {
 		configAdapter := storage.NewConfigStorageAdapter(s.storage)
 		if err := newConfig.SaveToStorage(configAdapter); err != nil {
@@ -56,7 +52,7 @@ func (s *SettingsService) UpdateConfig(configJSON string, proxy interface{ Updat
 	}
 
 	s.config.ReplaceWith(&newConfig)
-	return nil
+	return proxy.UpdateConfig(s.config)
 }
 
 // UpdatePort updates the proxy port and applies the listener change immediately.

@@ -1002,6 +1002,91 @@ func TestMergeDailyStatsFromOldBackupUsesUnknownClientIP(t *testing.T) {
 	}
 }
 
+func TestMergeFromBackupPreservesEndpointProxyURL(t *testing.T) {
+	localPath := filepath.Join(t.TempDir(), "local.db")
+	store, err := NewSQLiteStorage(localPath)
+	if err != nil {
+		t.Fatalf("open local storage: %v", err)
+	}
+	defer store.Close()
+
+	backupPath := filepath.Join(t.TempDir(), "backup.db")
+	backup, err := NewSQLiteStorage(backupPath)
+	if err != nil {
+		t.Fatalf("open backup storage: %v", err)
+	}
+	if err := backup.SaveEndpoint(&Endpoint{
+		Name:        "BackupEndpoint",
+		APIUrl:      "https://api.example.com",
+		APIKey:      "key",
+		AuthMode:    "api_key",
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "gpt-test",
+		ProxyURL:    "http://127.0.0.1:7890",
+	}); err != nil {
+		t.Fatalf("save backup endpoint: %v", err)
+	}
+	if err := backup.Close(); err != nil {
+		t.Fatalf("close backup: %v", err)
+	}
+
+	if err := store.MergeFromBackup(backupPath, MergeStrategyKeepLocal); err != nil {
+		t.Fatalf("merge backup: %v", err)
+	}
+	endpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get merged endpoints: %v", err)
+	}
+	if len(endpoints) != 1 || endpoints[0].ProxyURL != "http://127.0.0.1:7890" {
+		t.Fatalf("merged endpoints = %#v, want proxy URL preserved", endpoints)
+	}
+}
+
+func TestDeleteCredentialAndEndpointRemoveCredentialUsage(t *testing.T) {
+	store := newTestStorage(t)
+	defer store.Close()
+	cred := &EndpointCredential{EndpointName: "ep", AccessToken: "tok", Enabled: true}
+	if err := store.SaveEndpointCredential(cred); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+	if err := store.UpsertCredentialUsage(cred.ID, "ep", 1, 0, 2, 3, time.Now()); err != nil {
+		t.Fatalf("save usage: %v", err)
+	}
+	if err := store.DeleteEndpointCredential("ep", cred.ID); err != nil {
+		t.Fatalf("delete credential: %v", err)
+	}
+	usage, err := store.GetCredentialUsageByEndpoint("ep")
+	if err != nil {
+		t.Fatalf("get usage: %v", err)
+	}
+	if len(usage) != 0 {
+		t.Fatalf("usage after credential delete = %#v, want empty", usage)
+	}
+
+	endpoint := &Endpoint{Name: "ep2", APIUrl: "https://api.example.com", APIKey: "key", AuthMode: "api_key", Enabled: true, Transformer: "openai", Model: "gpt-test"}
+	if err := store.SaveEndpoint(endpoint); err != nil {
+		t.Fatalf("save endpoint: %v", err)
+	}
+	cred = &EndpointCredential{EndpointName: "ep2", AccessToken: "tok2", Enabled: true}
+	if err := store.SaveEndpointCredential(cred); err != nil {
+		t.Fatalf("save endpoint credential: %v", err)
+	}
+	if err := store.UpsertCredentialUsage(cred.ID, "ep2", 1, 0, 2, 3, time.Now()); err != nil {
+		t.Fatalf("save endpoint usage: %v", err)
+	}
+	if err := store.DeleteEndpoint("ep2"); err != nil {
+		t.Fatalf("delete endpoint: %v", err)
+	}
+	usage, err = store.GetCredentialUsageByEndpoint("ep2")
+	if err != nil {
+		t.Fatalf("get endpoint usage: %v", err)
+	}
+	if len(usage) != 0 {
+		t.Fatalf("usage after endpoint delete = %#v, want empty", usage)
+	}
+}
+
 func hasStatsEndpointOption(options []StatsEndpointFilterOption, name string, deleted bool) bool {
 	for _, option := range options {
 		if option.Name == name && option.Deleted == deleted {
