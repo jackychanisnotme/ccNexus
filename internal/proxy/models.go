@@ -154,33 +154,10 @@ func (p *Proxy) fetchModelsFromEndpoint(ep config.Endpoint) ([]ModelInfo, error)
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Parse response
-	var result struct {
-		Data []struct {
-			ID      string `json:"id"`
-			Object  string `json:"object"`
-			Created int64  `json:"created"`
-			OwnedBy string `json:"owned_by"`
-		} `json:"data"`
+	if providercompat.IsGeminiTransformer(ep.Transformer) {
+		return decodeGeminiModels(resp, ep.Name)
 	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	// Convert to ModelInfo with endpoint_id
-	models := make([]ModelInfo, len(result.Data))
-	for i, m := range result.Data {
-		models[i] = ModelInfo{
-			ID:         m.ID,
-			Object:     m.Object,
-			Created:    m.Created,
-			OwnedBy:    m.OwnedBy,
-			EndpointID: ep.Name,
-		}
-	}
-
-	return models, nil
+	return decodeOpenAIModels(resp, ep.Name)
 }
 
 func (p *Proxy) fetchOpenAIModelsWithRequest(client *http.Client, req *http.Request, endpointName string) ([]ModelInfo, error) {
@@ -194,6 +171,10 @@ func (p *Proxy) fetchOpenAIModelsWithRequest(client *http.Client, req *http.Requ
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
+	return decodeOpenAIModels(resp, endpointName)
+}
+
+func decodeOpenAIModels(resp *http.Response, endpointName string) ([]ModelInfo, error) {
 	var result struct {
 		Data []struct {
 			ID      string `json:"id"`
@@ -205,6 +186,9 @@ func (p *Proxy) fetchOpenAIModelsWithRequest(client *http.Client, req *http.Requ
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	if result.Data == nil {
+		return nil, fmt.Errorf("models response schema missing data")
 	}
 
 	models := make([]ModelInfo, len(result.Data))
@@ -218,6 +202,39 @@ func (p *Proxy) fetchOpenAIModelsWithRequest(client *http.Client, req *http.Requ
 		}
 	}
 
+	return models, nil
+}
+
+func decodeGeminiModels(resp *http.Response, endpointName string) ([]ModelInfo, error) {
+	var result struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode Gemini models response: %w", err)
+	}
+	if result.Models == nil {
+		return nil, fmt.Errorf("Gemini models response schema missing models")
+	}
+	models := make([]ModelInfo, 0, len(result.Models))
+	for _, m := range result.Models {
+		id := strings.TrimSpace(m.Name)
+		id = strings.TrimPrefix(id, "models/")
+		if id == "" {
+			continue
+		}
+		models = append(models, ModelInfo{
+			ID:         id,
+			Object:     "model",
+			Created:    time.Now().Unix(),
+			OwnedBy:    "google",
+			EndpointID: endpointName,
+		})
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("Gemini models response contained no usable models")
+	}
 	return models, nil
 }
 
@@ -322,20 +339,21 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 
 	// Check for refresh parameter
 	refresh := r.URL.Query().Get("refresh") == "true"
-	refreshEnabled := p.config.ModelsCacheRefreshEnabled
+	runtimeSnapshot := p.runtimeSnapshot()
+	refreshEnabled := runtimeSnapshot.config.ModelsCacheRefreshEnabled
 
 	if refresh && !refreshEnabled {
 		http.Error(w, "Refresh is disabled in configuration", http.StatusForbidden)
 		return
 	}
 
-	allModels := p.loadModelsForResponse(refresh)
+	allModels := p.loadModelsForResponse(runtimeSnapshot, refresh)
 
 	// Write response
 	p.writeModelsResponse(w, allModels)
 }
 
-func (p *Proxy) loadModelsForResponse(refresh bool) []ModelInfo {
+func (p *Proxy) loadModelsForResponse(runtimeSnapshot *proxyRuntimeSnapshot, refresh bool) []ModelInfo {
 	if !refresh {
 		if cached, ok := p.modelsCache.Get(); ok {
 			return cached
@@ -343,7 +361,7 @@ func (p *Proxy) loadModelsForResponse(refresh bool) []ModelInfo {
 	}
 
 	// Fetch from endpoints
-	endpoints := p.config.GetEndpoints()
+	endpoints := runtimeSnapshot.endpoints
 	allModels := []ModelInfo{}
 	allFailed := true
 
@@ -401,7 +419,8 @@ func (p *Proxy) writeModelsResponse(w http.ResponseWriter, models []ModelInfo) {
 func (p *Proxy) refreshModelsCache() {
 	logger.Debug("Refreshing models cache in background")
 
-	endpoints := p.config.GetEndpoints()
+	runtimeSnapshot := p.runtimeSnapshot()
+	endpoints := runtimeSnapshot.endpoints
 	allModels := []ModelInfo{}
 
 	for _, ep := range endpoints {

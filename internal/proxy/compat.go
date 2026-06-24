@@ -14,7 +14,7 @@ func (p *Proxy) handleOllamaTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models := p.loadModelsForResponse(false)
+	models := p.loadModelsForResponse(p.runtimeSnapshot(), false)
 	tags := make([]map[string]interface{}, 0, len(models))
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, model := range models {

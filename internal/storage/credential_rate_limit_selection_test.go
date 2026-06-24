@@ -162,6 +162,64 @@ func TestGetUsableCodexCredentialAllowsCreditsAtPlanLimit(t *testing.T) {
 	}
 }
 
+func TestGetUsableCodexCredentialReturnsExpiredRefreshableFallback(t *testing.T) {
+	store := newTestStorage(t)
+	defer store.Close()
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	expiredAt := now.Add(-time.Minute)
+
+	credential := &EndpointCredential{
+		EndpointName: "pool",
+		ProviderType: ProviderTypeCodex,
+		AccessToken:  "expired-access",
+		RefreshToken: "refresh-token",
+		ExpiresAt:    &expiredAt,
+		Status:       credentialStatusActive,
+		Enabled:      true,
+	}
+	if err := store.SaveEndpointCredential(credential); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+
+	got, err := store.GetUsableEndpointCredentialByProvider("pool", ProviderTypeCodex, now)
+	if err != nil {
+		t.Fatalf("select credential: %v", err)
+	}
+	if got == nil || got.ID != credential.ID {
+		t.Fatalf("selected credential = %#v, want id=%d", got, credential.ID)
+	}
+	if got.Status != credentialStatusExpired {
+		t.Fatalf("status = %q, want %q", got.Status, credentialStatusExpired)
+	}
+}
+
+func TestGetUsableCodexCredentialDoesNotReturnExpiredWithoutRefreshToken(t *testing.T) {
+	store := newTestStorage(t)
+	defer store.Close()
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	expiredAt := now.Add(-time.Minute)
+
+	credential := &EndpointCredential{
+		EndpointName: "pool",
+		ProviderType: ProviderTypeCodex,
+		AccessToken:  "expired-access",
+		ExpiresAt:    &expiredAt,
+		Status:       credentialStatusActive,
+		Enabled:      true,
+	}
+	if err := store.SaveEndpointCredential(credential); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+
+	got, err := store.GetUsableEndpointCredentialByProvider("pool", ProviderTypeCodex, now)
+	if err != nil {
+		t.Fatalf("select credential: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected no usable credential, got %#v", got)
+	}
+}
+
 func saveCodexSelectionCredential(t *testing.T, store *SQLiteStorage, endpointName, token string) *EndpointCredential {
 	t.Helper()
 	credential := &EndpointCredential{

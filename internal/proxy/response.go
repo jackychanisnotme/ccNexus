@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 func (p *Proxy) handleNonStreamingResponse(w http.ResponseWriter, resp *http.Response, endpoint config.Endpoint, trans transformer.Transformer) (int, int, error) {
 	var bodyBytes []byte
 	var err error
+	defer resp.Body.Close()
 
 	if resp.Header.Get("Content-Encoding") == "gzip" {
 		bodyBytes, err = decompressGzip(resp.Body)
@@ -30,8 +32,6 @@ func (p *Proxy) handleNonStreamingResponse(w http.ResponseWriter, resp *http.Res
 			return 0, 0, err
 		}
 	}
-	resp.Body.Close()
-
 	logger.DebugLog("[%s] Response Body: %s", endpoint.Name, string(bodyBytes))
 
 	// Transform response back to Claude format
@@ -70,7 +70,9 @@ func (p *Proxy) handleNonStreamingResponse(w http.ResponseWriter, resp *http.Res
 	}
 
 	w.WriteHeader(resp.StatusCode)
-	w.Write(transformedResp)
+	if _, err := w.Write(transformedResp); err != nil {
+		return 0, 0, fmt.Errorf("downstream delivery failed: %w", err)
+	}
 
 	return inputTokens, outputTokens, nil
 }

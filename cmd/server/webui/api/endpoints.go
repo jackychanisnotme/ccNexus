@@ -522,6 +522,11 @@ func (h *Handler) handleSwitchEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.proxy.SetCurrentEndpoint(req.Name); err != nil {
+		WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	WriteSuccess(w, map[string]interface{}{
 		"message": "Endpoint switched successfully",
 		"name":    req.Name,
@@ -591,8 +596,8 @@ func (h *Handler) reloadConfigPreservingCurrentName(name string) error {
 		return err
 	}
 
-	h.config = cfg
-	if err := h.proxy.UpdateConfigPreservingCurrentName(cfg, name); err != nil {
+	h.config.ReplaceWith(cfg)
+	if err := h.proxy.UpdateConfigPreservingCurrentName(h.config, name); err != nil {
 		return err
 	}
 	h.resetCodexAuthManager()
