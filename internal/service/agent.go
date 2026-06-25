@@ -486,6 +486,7 @@ func (s *AgentService) postLocalJSON(path string, payload any) ([]byte, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+agentProviderPlaceholderKey)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(proxy.AgentNoEndpointThinkingHeader, "1")
 	client := s.httpClient
 	if client == nil {
 		client = &http.Client{Timeout: 120 * time.Second}

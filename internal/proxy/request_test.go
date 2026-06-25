@@ -16,6 +16,23 @@ import (
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
+func newThinkingProxyForTest(upstreamURL, thinking string, client *http.Client) *Proxy {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "ThinkingOpenAI2",
+		APIUrl:      upstreamURL,
+		APIKey:      "test-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai2",
+		Model:       "gpt-5.5",
+		Thinking:    thinking,
+	}})
+	p := New(cfg, noopStatsStorage{}, nil, "device-test")
+	p.httpClient = client
+	return p
+}
+
 func TestEnsureCodexResponsesPayload(t *testing.T) {
 	raw := []byte(`{"model":"gpt-4.1","stream":true}`)
 	out := ensureCodexResponsesPayload(raw)
@@ -674,6 +691,101 @@ func TestInjectEndpointThinkingInPayloadSkipsOff(t *testing.T) {
 	}
 	if _, ok := payload["reasoning"]; ok {
 		t.Fatalf("did not expect reasoning when thinking is off, got %#v", payload["reasoning"])
+	}
+}
+
+func TestHandleProxyInjectsEndpointThinkingForNormalResponsesRequest(t *testing.T) {
+	var upstreamPayload map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&upstreamPayload); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-ok","object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	defer upstream.Close()
+
+	p := newThinkingProxyForTest(upstream.URL, config.ThinkingMedium, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","stream":false,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	reasoning, ok := upstreamPayload["reasoning"].(map[string]interface{})
+	if !ok || reasoning["effort"] != "medium" {
+		t.Fatalf("expected endpoint reasoning injection, got %#v", upstreamPayload["reasoning"])
+	}
+}
+
+func TestHandleProxySkipsEndpointThinkingForAgentMarkedResponsesRequest(t *testing.T) {
+	var upstreamPayload map[string]interface{}
+	var upstreamMarker string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamMarker = r.Header.Get(AgentNoEndpointThinkingHeader)
+		if err := json.NewDecoder(r.Body).Decode(&upstreamPayload); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-ok","object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	defer upstream.Close()
+
+	p := newThinkingProxyForTest(upstream.URL, config.ThinkingHigh, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","stream":false,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(AgentNoEndpointThinkingHeader, "1")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if _, ok := upstreamPayload["reasoning"]; ok {
+		t.Fatalf("did not expect endpoint reasoning for agent request, got %#v", upstreamPayload["reasoning"])
+	}
+	if upstreamMarker != "1" {
+		t.Fatalf("expected marker to propagate upstream, got %q", upstreamMarker)
+	}
+}
+
+func TestAgentNoThinkingMarkerPropagatesAcrossNestedProxies(t *testing.T) {
+	var finalPayload map[string]interface{}
+	var finalMarker string
+	finalUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		finalMarker = r.Header.Get(AgentNoEndpointThinkingHeader)
+		if err := json.NewDecoder(r.Body).Decode(&finalPayload); err != nil {
+			t.Fatalf("decode final upstream request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-ok","object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	defer finalUpstream.Close()
+
+	secondProxy := newThinkingProxyForTest(finalUpstream.URL, config.ThinkingXHigh, finalUpstream.Client())
+	secondServer := httptest.NewServer(http.HandlerFunc(secondProxy.handleProxy))
+	defer secondServer.Close()
+
+	firstProxy := newThinkingProxyForTest(secondServer.URL, config.ThinkingHigh, secondServer.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","stream":false,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(AgentNoEndpointThinkingHeader, "1")
+	rec := httptest.NewRecorder()
+
+	firstProxy.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if _, ok := finalPayload["reasoning"]; ok {
+		t.Fatalf("did not expect nested proxy endpoint reasoning, got %#v", finalPayload["reasoning"])
+	}
+	if finalMarker != "1" {
+		t.Fatalf("expected marker to reach final upstream, got %q", finalMarker)
 	}
 }
 

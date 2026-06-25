@@ -970,7 +970,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			transformedBody = forceStreamInPayload(transformedBody)
 			logger.DebugLog("[%s] ForceStream enabled: forcing upstream stream=true for non-stream client", endpoint.Name)
 		}
-		if clientFormat != ClientFormatClaude {
+		if clientFormat != ClientFormatClaude && !isAgentNoEndpointThinkingRequest(r) {
 			transformedBody = injectEndpointThinkingInPayload(transformedBody, transformerName, endpoint.Thinking)
 		}
 		if compatIndices := compatRetryArgumentIndices[endpoint.Name]; len(compatIndices) > 0 {

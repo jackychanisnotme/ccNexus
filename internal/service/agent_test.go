@@ -2,15 +2,39 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lich0821/ccNexus/internal/config"
+	"github.com/lich0821/ccNexus/internal/proxy"
+	"github.com/lich0821/ccNexus/internal/storage"
 )
+
+type noopAgentStatsStorage struct{}
+
+func (noopAgentStatsStorage) RecordDailyStat(stat interface{}) error { return nil }
+func (noopAgentStatsStorage) GetTotalStats() (int, map[string]interface{}, error) {
+	return 0, map[string]interface{}{}, nil
+}
+func (noopAgentStatsStorage) GetDailyStats(endpointName, startDate, endDate string) ([]interface{}, error) {
+	return nil, nil
+}
+func (noopAgentStatsStorage) GetPeriodStatsAggregated(startDate, endDate string) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
+func (noopAgentStatsStorage) GetDailyStatsFiltered(endpointName, startDate, endDate string, filter storage.StatsFilter) ([]interface{}, error) {
+	return nil, nil
+}
+func (noopAgentStatsStorage) GetPeriodStatsAggregatedFiltered(startDate, endDate string, filter storage.StatsFilter) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
 
 func TestAgentRunRejectsEmptyTask(t *testing.T) {
 	svc := NewAgentServiceWithOptions(config.DefaultConfig(), nil, nil, AgentServiceOptions{})
@@ -254,6 +278,9 @@ func TestAgentRunUsesResponsesThenReturnsAnswer(t *testing.T) {
 		if r.URL.Path != "/v1/responses" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
+		if got := r.Header.Get(proxy.AgentNoEndpointThinkingHeader); got != "1" {
+			t.Fatalf("expected agent no-thinking marker header, got %q", got)
+		}
 		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode payload: %v", err)
@@ -302,6 +329,9 @@ func TestAgentRunFallsBackToChatCompletions(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
+		if got := r.Header.Get(proxy.AgentNoEndpointThinkingHeader); got != "1" {
+			t.Fatalf("expected agent no-thinking marker header on %s, got %q", r.URL.Path, got)
+		}
 		if r.URL.Path == "/v1/responses" {
 			http.Error(w, "unsupported", http.StatusNotFound)
 			return
@@ -325,6 +355,52 @@ func TestAgentRunFallsBackToChatCompletions(t *testing.T) {
 	}
 	if len(paths) != 2 || paths[0] != "/v1/responses" || paths[1] != "/v1/chat/completions" {
 		t.Fatalf("expected responses then chat paths, got %#v", paths)
+	}
+}
+
+func TestAgentRunSkipsEndpointThinkingThroughLocalProxy(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode upstream payload: %v", err)
+		}
+		if _, ok := payload["reasoning"]; ok {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"resp-reasoning","object":"response","status":"completed","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5},"output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"thinking"}]}]}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-ok","object":"response","status":"completed","usage":{"input_tokens":2,"output_tokens":2,"total_tokens":4},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"agent text"}]}]}`))
+	}))
+	defer upstream.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "ThinkingOpenAI2",
+		APIUrl:      upstream.URL,
+		APIKey:      "test-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai2",
+		Model:       "gpt-5.5",
+		Thinking:    config.ThinkingMedium,
+	}})
+	port := freeTCPPort(t)
+	cfg.UpdatePort(port)
+	p := proxy.New(cfg, noopAgentStatsStorage{}, nil, "agent-test-device")
+	go func() { _ = p.Start() }()
+	t.Cleanup(func() { _ = p.Stop() })
+	localBaseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	waitForTestHTTP(t, localBaseURL+"/health")
+
+	svc := NewAgentServiceWithOptions(cfg, p, nil, AgentServiceOptions{
+		LocalBaseURL: localBaseURL,
+	})
+
+	result := svc.Run(AgentRunRequest{Task: "你能帮我做什么"})
+
+	if !result.Success || result.Answer != "agent text" {
+		t.Fatalf("expected agent answer without endpoint thinking, got %#v", result)
 	}
 }
 
@@ -431,4 +507,34 @@ func mustMkdir(t *testing.T, path string) {
 	if err := os.MkdirAll(path, 0755); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
 	}
+}
+
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on free port: %v", err)
+	}
+	defer ln.Close()
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("expected TCP addr, got %T", ln.Addr())
+	}
+	return addr.Port
+}
+
+func waitForTestHTTP(t *testing.T, url string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 500 {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", url)
 }

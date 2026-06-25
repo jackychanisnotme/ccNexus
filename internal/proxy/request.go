@@ -29,6 +29,8 @@ import (
 	"github.com/lich0821/ccNexus/internal/transformer/cx/responses"
 )
 
+const AgentNoEndpointThinkingHeader = "X-AINexus-Agent-No-Endpoint-Thinking"
+
 // prepareTransformerForClient creates transformer based on client format and endpoint
 func prepareTransformerForClient(clientFormat ClientFormat, endpoint config.Endpoint) (transformer.Transformer, error) {
 	endpointTransformer := endpoint.Transformer
@@ -279,6 +281,13 @@ func ensureHeader(headers http.Header, key, value string) {
 	if strings.TrimSpace(headers.Get(key)) == "" {
 		headers.Set(key, value)
 	}
+}
+
+func isAgentNoEndpointThinkingRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get(AgentNoEndpointThinkingHeader)), "1")
 }
 
 // claudeUpstreamUserAgent presents a Claude-CLI identity to Claude upstreams.
