@@ -671,6 +671,28 @@ func shouldSoftFallbackMissingOpenAIResponsesCompleted(endpoint config.Endpoint,
 	return !streamResult.ResponsesCompletionSafe.Unsafe
 }
 
+func clientCanceledStreamingDiagnostics(streamResult streamResponseResult) string {
+	state := streamResult.ResponsesCompletionSafe
+	firstEvent := sanitizeLogField(streamResult.FirstTransformedEventType)
+	lastEvent := sanitizeLogField(streamResult.LastTransformedEventType)
+	if lastEvent == "" {
+		lastEvent = firstEvent
+	}
+	lastOutputItemType := sanitizeLogField(state.LastOutputItemType)
+	if lastOutputItemType == "" {
+		lastOutputItemType = "unknown"
+	}
+	return fmt.Sprintf(
+		"wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s last_transformed_event_type=%s responses_text_len=%d last_output_item_type=%s",
+		streamResult.WroteData,
+		streamResult.WroteSemanticData,
+		firstEvent,
+		lastEvent,
+		len(state.Text),
+		lastOutputItemType,
+	)
+}
+
 func missingOpenAIResponsesCompletedDiagnostics(streamResult streamResponseResult) (int, bool, string, string, string, bool, bool, int) {
 	state := streamResult.ResponsesCompletionSafe
 	lastTransformedEventType := streamResult.LastTransformedEventType
@@ -1065,7 +1087,9 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				status := p.recordEndpointFailure(endpoint.Name, retryReason)
 				p.emitEndpointRuntimeEvent(endpoint.Name, "failure", status)
 				p.markRequestInactive(endpoint.Name)
-				if endpointAttempts >= endpointFastFailoverAttempts || p.isEndpointInActiveCooldown(endpoint.Name) {
+				if shouldFastFailoverStreamingRequest(clientFormat, streamReq.Stream, retryReason) ||
+					endpointAttempts >= endpointFastFailoverAttempts ||
+					p.isEndpointInActiveCooldown(endpoint.Name) {
 					advanceForFailure(endpoint, retryReason, attemptNumber, nil)
 				} else {
 					logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, 0, retryReason, "Retryable transport error, retrying same endpoint: %v", err)
@@ -1450,11 +1474,9 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 						attemptNumber,
 						http.StatusOK,
 						"client_canceled",
-						"Client canceled streaming response: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s",
+						"Client canceled streaming response: %v %s",
 						streamResult.Err,
-						streamResult.WroteData,
-						streamResult.WroteSemanticData,
-						sanitizeLogField(streamResult.FirstTransformedEventType),
+						clientCanceledStreamingDiagnostics(streamResult),
 					)
 					p.markRequestInactive(endpoint.Name)
 					return

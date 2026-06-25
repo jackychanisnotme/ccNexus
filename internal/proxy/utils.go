@@ -175,6 +175,18 @@ func shouldRotateEndpointAfterHTTPFailure(endpointAttempts int, statusCode int, 
 	return endpointAttempts >= failoverAttemptsForHTTPFailure(statusCode, body)
 }
 
+func shouldFastFailoverStreamingRequest(clientFormat ClientFormat, clientRequestedStream bool, reason string) bool {
+	if clientFormat != ClientFormatOpenAIResponses || !clientRequestedStream {
+		return false
+	}
+	switch sanitizeLogField(reason) {
+	case "transient_network_error", retryReasonTransportProtocol:
+		return true
+	default:
+		return false
+	}
+}
+
 func failoverAttemptsForHTTPFailure(statusCode int, body string) int {
 	if isRouteUnavailableHTTPFailure(statusCode, body) {
 		return 1

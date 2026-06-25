@@ -59,6 +59,41 @@ func TestOpenAIStreamToOpenAI2EmitsSDKCompatibleTextStream(t *testing.T) {
 	assertOpenAI2TextStreamCompatible(t, parseOpenAI2StreamEvents(t, raw.String()), "hello world")
 }
 
+func TestOpenAIStreamToOpenAI2SuppressesReasoningOnlyChunksForSDKCompatibility(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	reasoning := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"reasoning_content":"think"},"finish_reason":null}]}`
+	out, err := OpenAIStreamToOpenAI2([]byte(reasoning), ctx)
+	if err != nil {
+		t.Fatalf("OpenAIStreamToOpenAI2 reasoning chunk failed: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected reasoning-only chunk not to emit downstream Responses events, got %s", string(out))
+	}
+
+	var raw strings.Builder
+	text := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}`
+	out, err = OpenAIStreamToOpenAI2([]byte(text), ctx)
+	if err != nil {
+		t.Fatalf("OpenAIStreamToOpenAI2 text chunk failed: %v", err)
+	}
+	raw.Write(out)
+	finish := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
+	out, err = OpenAIStreamToOpenAI2([]byte(finish), ctx)
+	if err != nil {
+		t.Fatalf("OpenAIStreamToOpenAI2 finish chunk failed: %v", err)
+	}
+	raw.Write(out)
+
+	events := parseOpenAI2StreamEvents(t, raw.String())
+	assertOpenAI2TextStreamCompatible(t, events, "hello")
+	for _, event := range events {
+		eventType, _ := event["type"].(string)
+		if strings.Contains(eventType, "reasoning") {
+			t.Fatalf("did not expect reasoning event in SDK-compatible downstream stream: %#v", event)
+		}
+	}
+}
+
 func TestGeminiStreamToOpenAI2EmitsSDKCompatibleTextStream(t *testing.T) {
 	ctx := transformer.NewStreamContext()
 	chunk := `data: {"candidates":[{"content":{"parts":[{"text":"gemini ok"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2,"totalTokenCount":7}}`

@@ -789,6 +789,14 @@ func OpenAIStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 	writeEvent := func(evt map[string]interface{}) {
 		writeOpenAI2StreamEvent(ctx, &result, evt)
 	}
+	ensureCreated := func() {
+		if ctx.MessageStartSent {
+			return
+		}
+		ctx.MessageStartSent = true
+		ctx.MessageID = chunk.ID
+		writeEvent(openAI2CreatedEvent(ctx))
+	}
 	writeReasoningDone := func() {
 		if !ctx.ReasoningOutputStarted || ctx.ReasoningOutputDone {
 			return
@@ -808,44 +816,19 @@ func OpenAIStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 		ctx.ReasoningOutputDone = true
 	}
 
-	if !ctx.MessageStartSent {
-		ctx.MessageStartSent = true
-		ctx.MessageID = chunk.ID
-		writeEvent(openAI2CreatedEvent(ctx))
-	}
-
 	if len(chunk.Choices) > 0 {
 		delta := chunk.Choices[0].Delta
 		finishReason := chunk.Choices[0].FinishReason
 
-		// Handle reasoning content before text content.
+		// Keep provider-specific reasoning internal for OpenAI Responses clients.
+		// Emitting reasoning-only items before text can corrupt SDK stream state.
 		if delta.ReasoningContent != "" {
-			if !ctx.ReasoningOutputStarted {
-				ctx.ReasoningOutputStarted = true
-				if ctx.ContentBlockStarted || ctx.ToolBlockStarted || ctx.ToolCallCounter > 0 {
-					ctx.ReasoningOutputIndex = 1
-				} else {
-					ctx.ReasoningOutputIndex = 0
-				}
-				writeEvent(map[string]interface{}{
-					"type":         "response.output_item.added",
-					"output_index": ctx.ReasoningOutputIndex,
-					"item":         openAI2ReasoningItem(ctx, ctx.ReasoningOutputIndex, "in_progress"),
-				})
-			}
 			ctx.ReasoningText += delta.ReasoningContent
-			recordOpenAI2Reasoning(ctx, ctx.ReasoningOutputIndex, delta.ReasoningContent)
-			writeEvent(map[string]interface{}{
-				"type":          "response.reasoning_text.delta",
-				"output_index":  ctx.ReasoningOutputIndex,
-				"content_index": 0,
-				"item_id":       openAI2OutputItemID(ctx, ctx.ReasoningOutputIndex),
-				"delta":         delta.ReasoningContent,
-			})
 		}
 
 		// Handle text content
 		if delta.Content != "" {
+			ensureCreated()
 			if !ctx.ContentBlockStarted {
 				ctx.ContentBlockStarted = true
 				outputIndex := responseMessageOutputIndex(ctx)
@@ -866,6 +849,7 @@ func OpenAIStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 			}
 			// New tool call (has ID)
 			if tc.ID != "" {
+				ensureCreated()
 				ctx.ToolCallCounter++
 				ctx.CurrentToolID = tc.ID
 				ctx.CurrentToolName = tc.Function.Name
@@ -879,6 +863,7 @@ func OpenAIStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 			}
 			// Accumulate arguments
 			if tc.Function.Arguments != "" {
+				ensureCreated()
 				ctx.ToolArguments += tc.Function.Arguments
 				outputIndex := responseToolOutputIndex(ctx, idx)
 				recordOpenAI2ToolArguments(ctx, outputIndex, tc.Function.Arguments)
@@ -893,6 +878,7 @@ func OpenAIStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 
 		// Handle finish
 		if finishReason != nil && *finishReason != "" {
+			ensureCreated()
 			writeReasoningDone()
 			if ctx.ContentBlockStarted {
 				outputIndex := responseMessageOutputIndex(ctx)

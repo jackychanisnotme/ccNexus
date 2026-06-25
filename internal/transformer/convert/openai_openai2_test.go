@@ -539,7 +539,7 @@ func TestOpenAI2StreamToOpenAIEmitsCompletedOnlyOutput(t *testing.T) {
 	}
 }
 
-func TestOpenAIStreamToOpenAI2PreservesReasoningDelta(t *testing.T) {
+func TestOpenAIStreamToOpenAI2SuppressesReasoningDeltaForResponsesSDK(t *testing.T) {
 	ctx := transformer.NewStreamContext()
 
 	chunk := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"reasoning_content":"think"},"finish_reason":null}]}`
@@ -547,15 +547,8 @@ func TestOpenAIStreamToOpenAI2PreservesReasoningDelta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenAIStreamToOpenAI2 failed: %v", err)
 	}
-	if out == nil {
-		t.Fatal("expected reasoning stream events, got nil")
-	}
-	events := string(out)
-	if !strings.Contains(events, `"type":"response.reasoning_text.delta"`) {
-		t.Fatalf("expected reasoning_text delta event, got %s", events)
-	}
-	if !strings.Contains(events, `"delta":"think"`) {
-		t.Fatalf("expected reasoning delta text, got %s", events)
+	if len(out) != 0 {
+		t.Fatalf("expected reasoning-only chunk to be suppressed for Responses SDK compatibility, got %s", string(out))
 	}
 
 	finish := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
@@ -563,8 +556,11 @@ func TestOpenAIStreamToOpenAI2PreservesReasoningDelta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finish event failed: %v", err)
 	}
-	if !strings.Contains(string(out), `"type":"response.reasoning_text.done"`) {
-		t.Fatalf("expected reasoning_text done event, got %s", string(out))
+	if strings.Contains(string(out), "reasoning_text") {
+		t.Fatalf("did not expect reasoning_text event in SDK-compatible stream, got %s", string(out))
+	}
+	if !strings.Contains(string(out), `"type":"response.completed"`) {
+		t.Fatalf("expected finish to produce response.completed, got %s", string(out))
 	}
 }
 

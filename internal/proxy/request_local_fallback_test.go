@@ -201,6 +201,70 @@ func TestHermesStreamingRouteUnavailableUsesImmediateRequestLocalFallback(t *tes
 	}
 }
 
+func TestHermesStreamingTransportErrorUsesImmediateRequestLocalFallback(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("test server does not support hijacking")
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Fatalf("hijack failed: %v", err)
+		}
+		_ = conn.Close()
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.created","response":{"id":"resp-fallback","object":"response","status":"in_progress","output":[]}}`,
+			"",
+			`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg-fallback","delta":"ok"}`,
+			"",
+			`data: {"type":"response.completed","response":{"id":"resp-fallback","object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[{"type":"message","id":"msg-fallback","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}]}}`,
+			"",
+		}, "\n")))
+	}))
+	defer fallback.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", primary.URL),
+		failoverPolicyTestEndpoint("Fallback", fallback.URL),
+	}, primary.Client())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "OpenAI/Python_2.31.0")
+	req.Header.Set(headerCCNexusRequestID, "req-hermes-stream-transport-fallback")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected streaming transport fallback success, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("expected streaming transport error Primary to be tried once, got %d", primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Fatalf("expected streaming Fallback to be tried once, got %d", fallbackHits)
+	}
+	if got := rec.Header().Get(headerCCNexusEndpoint); got != "Fallback" {
+		t.Fatalf("expected final streaming endpoint Fallback, got %q", got)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "response.completed") || strings.Contains(body, "All endpoints failed") {
+		t.Fatalf("expected completed fallback stream without terminal proxy error, got %q", body)
+	}
+}
+
 func TestHermesAuxiliaryRequestSkipsRouteUnavailableEndpointDuringCooldown(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
@@ -1549,8 +1613,8 @@ func TestStreamingResponseHeaderTimeoutKeepsDownstreamOpenAndFallsBack(t *testin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected downstream SSE to remain open and succeed, got status=%d body=%q", rec.Code, rec.Body.String())
 	}
-	if primaryHits != endpointFastFailoverAttempts {
-		t.Fatalf("expected Primary to time out %d times before fallback, got %d", endpointFastFailoverAttempts, primaryHits)
+	if primaryHits != 1 {
+		t.Fatalf("expected OpenAI Responses streaming Primary timeout to fail over after one attempt, got %d", primaryHits)
 	}
 	if fallbackHits != 1 {
 		t.Fatalf("expected fallback to be used once, got %d", fallbackHits)
@@ -1567,6 +1631,30 @@ func TestStreamingResponseHeaderTimeoutKeepsDownstreamOpenAndFallsBack(t *testin
 	if !strings.Contains(logs, "retry_reason=transient_network_error") ||
 		!strings.Contains(logs, "failover_reason=transient_network_error") {
 		t.Fatalf("expected transient timeout retry/fallback logs, got logs:\n%s", logs)
+	}
+}
+
+func TestClientCanceledStreamingDiagnosticsIncludeLastResponsesState(t *testing.T) {
+	diagnostics := clientCanceledStreamingDiagnostics(streamResponseResult{
+		WroteData:                 true,
+		WroteSemanticData:         true,
+		FirstTransformedEventType: "response.created",
+		LastTransformedEventType:  "response.output_text.delta",
+		ResponsesCompletionSafe: openAIResponsesCompletionState{
+			LastOutputItemType: "message",
+			Text:               "partial",
+		},
+	})
+	for _, want := range []string{
+		"wrote_semantic_data=true",
+		"first_transformed_event_type=response.created",
+		"last_transformed_event_type=response.output_text.delta",
+		"last_output_item_type=message",
+		"responses_text_len=7",
+	} {
+		if !strings.Contains(diagnostics, want) {
+			t.Fatalf("expected cancellation diagnostics to contain %q, got %q", want, diagnostics)
+		}
 	}
 }
 
