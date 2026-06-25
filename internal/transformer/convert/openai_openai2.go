@@ -3,6 +3,7 @@ package convert
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/lich0821/ccNexus/internal/transformer"
@@ -815,6 +816,41 @@ func OpenAIStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 		})
 		ctx.ReasoningOutputDone = true
 	}
+	writeToolDelta := func(outputIndex int, delta string) {
+		if delta == "" {
+			return
+		}
+		writeEvent(map[string]interface{}{
+			"type":         "response.function_call_arguments.delta",
+			"output_index": outputIndex,
+			"item_id":      openAI2OutputItemID(ctx, outputIndex),
+			"delta":        delta,
+		})
+	}
+	toolReady := func(outputIndex int) bool {
+		if ctx == nil {
+			return false
+		}
+		return strings.TrimSpace(ctx.ResponseToolCallIDByIndex[outputIndex]) != "" &&
+			strings.TrimSpace(ctx.ResponseToolNameByIndex[outputIndex]) != ""
+	}
+	ensureToolAdded := func(outputIndex int) bool {
+		ensureOpenAI2StreamState(ctx)
+		if ctx.ResponseToolAddedByIndex[outputIndex] {
+			return true
+		}
+		if !toolReady(outputIndex) {
+			return false
+		}
+		ensureCreated()
+		ctx.ResponseToolAddedByIndex[outputIndex] = true
+		writeEvent(map[string]interface{}{
+			"type": "response.output_item.added", "output_index": outputIndex,
+			"item": openAI2ToolItem(ctx, outputIndex, "in_progress"),
+		})
+		writeToolDelta(outputIndex, ctx.ResponseToolArgumentsByIndex[outputIndex])
+		return true
+	}
 
 	if len(chunk.Choices) > 0 {
 		delta := chunk.Choices[0].Delta
@@ -847,32 +883,16 @@ func OpenAIStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 			if tc.Index != nil {
 				idx = *tc.Index
 			}
-			// New tool call (has ID)
-			if tc.ID != "" {
-				ensureCreated()
-				ctx.ToolCallCounter++
-				ctx.CurrentToolID = tc.ID
-				ctx.CurrentToolName = tc.Function.Name
-				ctx.ToolArguments = ""
-				outputIndex := responseToolOutputIndex(ctx, idx)
+			outputIndex := responseToolOutputIndex(ctx, idx)
+			if tc.ID != "" || tc.Function.Name != "" {
 				recordOpenAI2ToolCall(ctx, outputIndex, tc.ID, tc.Function.Name)
-				writeEvent(map[string]interface{}{
-					"type": "response.output_item.added", "output_index": outputIndex,
-					"item": openAI2ToolItem(ctx, outputIndex, "in_progress"),
-				})
+				ensureToolAdded(outputIndex)
 			}
-			// Accumulate arguments
 			if tc.Function.Arguments != "" {
-				ensureCreated()
-				ctx.ToolArguments += tc.Function.Arguments
-				outputIndex := responseToolOutputIndex(ctx, idx)
 				recordOpenAI2ToolArguments(ctx, outputIndex, tc.Function.Arguments)
-				writeEvent(map[string]interface{}{
-					"type":         "response.function_call_arguments.delta",
-					"output_index": outputIndex,
-					"item_id":      openAI2OutputItemID(ctx, outputIndex),
-					"delta":        tc.Function.Arguments,
-				})
+				if ensureToolAdded(outputIndex) {
+					writeToolDelta(outputIndex, tc.Function.Arguments)
+				}
 			}
 		}
 
@@ -887,20 +907,21 @@ func OpenAIStreamToOpenAI2(event []byte, ctx *transformer.StreamContext) ([]byte
 				writeEvent(map[string]interface{}{"type": "response.output_item.done", "output_index": outputIndex, "item": openAI2MessageItem(ctx, outputIndex, "completed")})
 				ctx.ContentBlockStarted = false
 			}
-			if *finishReason == "tool_calls" && ctx.CurrentToolID != "" {
-				outputIndex := responseToolOutputIndex(ctx, 0)
-				writeEvent(map[string]interface{}{
-					"type":         "response.function_call_arguments.done",
-					"output_index": outputIndex,
-					"item_id":      openAI2OutputItemID(ctx, outputIndex),
-					"name":         ctx.CurrentToolName,
-					"arguments":    ctx.ToolArguments,
-				})
-				writeEvent(map[string]interface{}{
-					"type":         "response.output_item.done",
-					"output_index": outputIndex,
-					"item":         openAI2ToolItem(ctx, outputIndex, "completed"),
-				})
+			if *finishReason == "tool_calls" {
+				for _, outputIndex := range openAI2AddedToolOutputIndices(ctx) {
+					writeEvent(map[string]interface{}{
+						"type":         "response.function_call_arguments.done",
+						"output_index": outputIndex,
+						"item_id":      openAI2OutputItemID(ctx, outputIndex),
+						"name":         ctx.ResponseToolNameByIndex[outputIndex],
+						"arguments":    ctx.ResponseToolArgumentsByIndex[outputIndex],
+					})
+					writeEvent(map[string]interface{}{
+						"type":         "response.output_item.done",
+						"output_index": outputIndex,
+						"item":         openAI2ToolItem(ctx, outputIndex, "completed"),
+					})
+				}
 			}
 			writeEvent(openAI2CompletedEvent(ctx, 0))
 			result.WriteString("data: [DONE]\n\n")
@@ -928,6 +949,26 @@ func responseToolOutputIndex(ctx *transformer.StreamContext, toolIndex int) int 
 		outputIndex++
 	}
 	return outputIndex
+}
+
+func openAI2AddedToolOutputIndices(ctx *transformer.StreamContext) []int {
+	ensureOpenAI2StreamState(ctx)
+	if ctx == nil {
+		return nil
+	}
+	indices := make([]int, 0, len(ctx.ResponseToolAddedByIndex))
+	for outputIndex, added := range ctx.ResponseToolAddedByIndex {
+		if !added {
+			continue
+		}
+		if strings.TrimSpace(ctx.ResponseToolCallIDByIndex[outputIndex]) == "" ||
+			strings.TrimSpace(ctx.ResponseToolNameByIndex[outputIndex]) == "" {
+			continue
+		}
+		indices = append(indices, outputIndex)
+	}
+	sort.Ints(indices)
+	return indices
 }
 
 func buildOpenAIReasoningChunk(id, model, reasoning string) ([]byte, error) {

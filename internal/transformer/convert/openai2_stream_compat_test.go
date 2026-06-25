@@ -94,6 +94,85 @@ func TestOpenAIStreamToOpenAI2SuppressesReasoningOnlyChunksForSDKCompatibility(t
 	}
 }
 
+func TestOpenAIStreamToOpenAI2ToolArgumentsWaitForOutputItem(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	chunks := []string{
+		`data: {"id":"chatcmpl_tool_1","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\""}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_tool_1","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_tool_1","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"README.md\"}"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_tool_1","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+	}
+
+	var raw strings.Builder
+	for _, chunk := range chunks {
+		out, err := OpenAIStreamToOpenAI2([]byte(chunk), ctx)
+		if err != nil {
+			t.Fatalf("OpenAIStreamToOpenAI2 failed: %v", err)
+		}
+		raw.Write(out)
+	}
+
+	events := parseOpenAI2StreamEvents(t, raw.String())
+	assertOpenAI2ToolStreamDoesNotDeltaBeforeAdded(t, events)
+	assertOpenAI2EventOrder(t, events, []string{
+		"response.created",
+		"response.output_item.added",
+		"response.function_call_arguments.delta",
+		"response.function_call_arguments.delta",
+		"response.function_call_arguments.done",
+		"response.output_item.done",
+		"response.completed",
+	})
+	completed := firstOpenAI2Event(events, "response.completed")
+	completedResponse := mustMap(t, completed["response"], "completed.response")
+	completedOutput := mustSlice(t, completedResponse["output"], "completed.response.output")
+	if len(completedOutput) != 1 {
+		t.Fatalf("expected one completed tool output, got %#v", completedOutput)
+	}
+	item := mustMap(t, completedOutput[0], "completed.response.output[0]")
+	if item["type"] != "function_call" || item["call_id"] != "call_1" || item["name"] != "read_file" {
+		t.Fatalf("unexpected completed function_call item: %#v", item)
+	}
+	if item["arguments"] != `{"path":"README.md"}` {
+		t.Fatalf("expected accumulated arguments, got %#v", item["arguments"])
+	}
+}
+
+func TestOpenAIStreamToOpenAI2ParallelToolCallsKeepOutputIndexesValid(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	chunks := []string{
+		`data: {"id":"chatcmpl_tool_2","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"read_file"}},{"index":1,"id":"call_b","type":"function","function":{"name":"write_file"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_tool_2","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"path\":\"out.txt\"}"}},{"index":0,"function":{"arguments":"{\"path\":\"in.txt\"}"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_tool_2","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+	}
+
+	var raw strings.Builder
+	for _, chunk := range chunks {
+		out, err := OpenAIStreamToOpenAI2([]byte(chunk), ctx)
+		if err != nil {
+			t.Fatalf("OpenAIStreamToOpenAI2 failed: %v", err)
+		}
+		raw.Write(out)
+	}
+
+	events := parseOpenAI2StreamEvents(t, raw.String())
+	assertOpenAI2ToolStreamDoesNotDeltaBeforeAdded(t, events)
+	completed := firstOpenAI2Event(events, "response.completed")
+	completedResponse := mustMap(t, completed["response"], "completed.response")
+	completedOutput := mustSlice(t, completedResponse["output"], "completed.response.output")
+	if len(completedOutput) != 2 {
+		t.Fatalf("expected two completed tool outputs, got %#v", completedOutput)
+	}
+	first := mustMap(t, completedOutput[0], "completed.response.output[0]")
+	second := mustMap(t, completedOutput[1], "completed.response.output[1]")
+	if first["call_id"] != "call_a" || first["arguments"] != `{"path":"in.txt"}` {
+		t.Fatalf("unexpected first tool output: %#v", first)
+	}
+	if second["call_id"] != "call_b" || second["arguments"] != `{"path":"out.txt"}` {
+		t.Fatalf("unexpected second tool output: %#v", second)
+	}
+}
+
 func TestGeminiStreamToOpenAI2EmitsSDKCompatibleTextStream(t *testing.T) {
 	ctx := transformer.NewStreamContext()
 	chunk := `data: {"candidates":[{"content":{"parts":[{"text":"gemini ok"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2,"totalTokenCount":7}}`
@@ -193,6 +272,43 @@ func firstOpenAI2Event(events []map[string]interface{}, eventType string) map[st
 	panic("missing event type " + eventType)
 }
 
+func assertOpenAI2EventOrder(t *testing.T, events []map[string]interface{}, want []string) {
+	t.Helper()
+	got := make([]string, 0, len(events))
+	for _, event := range events {
+		eventType, _ := event["type"].(string)
+		got = append(got, eventType)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected event order %#v, got %#v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected event order %#v, got %#v", want, got)
+		}
+	}
+}
+
+func assertOpenAI2ToolStreamDoesNotDeltaBeforeAdded(t *testing.T, events []map[string]interface{}) {
+	t.Helper()
+	added := map[int]bool{}
+	for _, event := range events {
+		eventType, _ := event["type"].(string)
+		outputIndex := intFromEventNumber(t, event["output_index"], eventType+".output_index")
+		switch eventType {
+		case "response.output_item.added":
+			item := mustMap(t, event["item"], "output_item.added.item")
+			if item["type"] == "function_call" {
+				added[outputIndex] = true
+			}
+		case "response.function_call_arguments.delta":
+			if !added[outputIndex] {
+				t.Fatalf("function_call_arguments.delta emitted before output_item.added for output_index %d: %#v", outputIndex, event)
+			}
+		}
+	}
+}
+
 func assertOpenAI2MessageItemText(t *testing.T, item map[string]interface{}, wantText string) {
 	t.Helper()
 	if item["type"] != "message" {
@@ -224,4 +340,17 @@ func mustSlice(t *testing.T, value interface{}, name string) []interface{} {
 		t.Fatalf("%s should be an array, got %T %#v", name, value, value)
 	}
 	return s
+}
+
+func intFromEventNumber(t *testing.T, value interface{}, name string) int {
+	t.Helper()
+	switch v := value.(type) {
+	case nil:
+		return -1
+	case float64:
+		return int(v)
+	default:
+		t.Fatalf("%s should be a number, got %T %#v", name, value, value)
+		return -1
+	}
 }

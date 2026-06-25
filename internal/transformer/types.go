@@ -212,6 +212,7 @@ type StreamContext struct {
 	ResponseToolCallIDByIndex    map[int]string
 	ResponseToolNameByIndex      map[int]string
 	ResponseToolArgumentsByIndex map[int]string
+	ResponseToolAddedByIndex     map[int]bool
 	ResponseReasoningByIndex     map[int]string
 	// <think> tag handling for streaming text
 	InThinkingTag       bool   // Track if we are inside a <think> tag
@@ -250,6 +251,7 @@ func NewStreamContext() *StreamContext {
 		ResponseToolCallIDByIndex:    make(map[int]string),
 		ResponseToolNameByIndex:      make(map[int]string),
 		ResponseToolArgumentsByIndex: make(map[int]string),
+		ResponseToolAddedByIndex:     make(map[int]bool),
 		ResponseReasoningByIndex:     make(map[int]string),
 		InThinkingTag:                false,
 		ThinkingBuffer:               "",

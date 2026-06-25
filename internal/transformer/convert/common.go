@@ -110,6 +110,9 @@ func ensureOpenAI2StreamState(ctx *transformer.StreamContext) {
 	if ctx.ResponseToolArgumentsByIndex == nil {
 		ctx.ResponseToolArgumentsByIndex = make(map[int]string)
 	}
+	if ctx.ResponseToolAddedByIndex == nil {
+		ctx.ResponseToolAddedByIndex = make(map[int]bool)
+	}
 	if ctx.ResponseReasoningByIndex == nil {
 		ctx.ResponseReasoningByIndex = make(map[int]string)
 	}
@@ -405,6 +408,10 @@ func openAI2CompletedOutput(ctx *transformer.StreamContext) []interface{} {
 	output := make([]interface{}, 0, len(ordered))
 	for _, outputIndex := range ordered {
 		if _, ok := ctx.ResponseToolCallIDByIndex[outputIndex]; ok {
+			if strings.TrimSpace(ctx.ResponseToolCallIDByIndex[outputIndex]) == "" ||
+				strings.TrimSpace(ctx.ResponseToolNameByIndex[outputIndex]) == "" {
+				continue
+			}
 			output = append(output, openAI2ToolItem(ctx, outputIndex, "completed"))
 			continue
 		}
