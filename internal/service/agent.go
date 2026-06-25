@@ -434,6 +434,7 @@ func (s *AgentService) callResponses(task string, toolResults []AgentToolResult)
 		"instructions": agentSystemPrompt(),
 		"input": []map[string]any{
 			{
+				"type": "message",
 				"role": "user",
 				"content": []map[string]any{{
 					"type": "input_text",

@@ -91,18 +91,43 @@ func NormalizeOpenAI2RequestForUpstream(openai2Req []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	rawInput, ok := body["input"].([]interface{})
+	rawInput, ok := body["input"]
 	if !ok {
 		return openai2Req, nil
 	}
 
-	normalizedInput, _, err := normalizeOpenAI2InputForUpstream(rawInput)
+	var inputItems []interface{}
+	switch input := rawInput.(type) {
+	case []interface{}:
+		inputItems = input
+	case map[string]interface{}:
+		if !isOpenAI2SingleMessageInputObject(input) {
+			return openai2Req, nil
+		}
+		inputItems = []interface{}{input}
+	default:
+		return openai2Req, nil
+	}
+
+	normalizedInput, _, err := normalizeOpenAI2InputForUpstream(inputItems)
 	if err != nil {
 		return nil, err
 	}
 
 	body["input"] = normalizedInput
 	return json.Marshal(body)
+}
+
+func isOpenAI2SingleMessageInputObject(input map[string]interface{}) bool {
+	if input == nil {
+		return false
+	}
+	role := strings.TrimSpace(stringFromMap(input, "role"))
+	if role == "" {
+		return false
+	}
+	_, hasContent := input["content"]
+	return hasContent
 }
 
 func normalizeOpenAI2InputForUpstream(input []interface{}) ([]interface{}, bool, error) {

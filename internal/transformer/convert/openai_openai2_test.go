@@ -149,6 +149,92 @@ func TestNormalizeOpenAI2RequestForUpstreamConvertsToolRoleInput(t *testing.T) {
 	}
 }
 
+func TestNormalizeOpenAI2RequestForUpstreamWrapsSingleMessageInputObject(t *testing.T) {
+	openai2Req := `{
+		"model":"gpt-5.5",
+		"input":{"role":"user","content":[{"type":"input_text","text":"hello"}]}
+	}`
+
+	reqBytes, err := NormalizeOpenAI2RequestForUpstream([]byte(openai2Req))
+	if err != nil {
+		t.Fatalf("NormalizeOpenAI2RequestForUpstream failed: %v", err)
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(reqBytes, &req); err != nil {
+		t.Fatalf("unmarshal normalized req failed: %v", err)
+	}
+	input, ok := req["input"].([]interface{})
+	if !ok || len(input) != 1 {
+		t.Fatalf("expected input object to be wrapped as one-item array, got %#v", req["input"])
+	}
+	message := input[0].(map[string]interface{})
+	if message["type"] != "message" || message["role"] != "user" {
+		t.Fatalf("expected canonical message item, got %#v", message)
+	}
+}
+
+func TestNormalizeOpenAI2RequestForUpstreamAddsMissingMessageType(t *testing.T) {
+	openai2Req := `{
+		"model":"gpt-5.5",
+		"input":[{"role":"user","content":[{"type":"input_text","text":"hello"}]}]
+	}`
+
+	reqBytes, err := NormalizeOpenAI2RequestForUpstream([]byte(openai2Req))
+	if err != nil {
+		t.Fatalf("NormalizeOpenAI2RequestForUpstream failed: %v", err)
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(reqBytes, &req); err != nil {
+		t.Fatalf("unmarshal normalized req failed: %v", err)
+	}
+	input := req["input"].([]interface{})
+	message := input[0].(map[string]interface{})
+	if message["type"] != "message" {
+		t.Fatalf("expected missing message type to be added, got %#v", message)
+	}
+}
+
+func TestNormalizeOpenAI2RequestForUpstreamPreservesStringInput(t *testing.T) {
+	openai2Req := `{"model":"gpt-5.5","input":"hello"}`
+
+	reqBytes, err := NormalizeOpenAI2RequestForUpstream([]byte(openai2Req))
+	if err != nil {
+		t.Fatalf("NormalizeOpenAI2RequestForUpstream failed: %v", err)
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(reqBytes, &req); err != nil {
+		t.Fatalf("unmarshal normalized req failed: %v", err)
+	}
+	if req["input"] != "hello" {
+		t.Fatalf("expected string input to be preserved, got %#v", req["input"])
+	}
+}
+
+func TestNormalizeOpenAI2RequestForUpstreamPreservesCanonicalArrayInput(t *testing.T) {
+	openai2Req := `{
+		"model":"gpt-5.5",
+		"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]
+	}`
+
+	reqBytes, err := NormalizeOpenAI2RequestForUpstream([]byte(openai2Req))
+	if err != nil {
+		t.Fatalf("NormalizeOpenAI2RequestForUpstream failed: %v", err)
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(reqBytes, &req); err != nil {
+		t.Fatalf("unmarshal normalized req failed: %v", err)
+	}
+	input := req["input"].([]interface{})
+	message := input[0].(map[string]interface{})
+	if message["type"] != "message" || message["role"] != "user" {
+		t.Fatalf("expected canonical array input to be preserved, got %#v", message)
+	}
+}
+
 func TestAdaptOpenAI2FunctionCallArgumentsToObjectsParsesJSONObjectString(t *testing.T) {
 	openai2Req := `{
 		"model":"gpt-5.5",

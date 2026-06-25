@@ -58,6 +58,55 @@ func TestEnsureCodexResponsesPayloadRemovesMaxOutputTokens(t *testing.T) {
 	}
 }
 
+func TestResponsesLegacyInputObjectNormalizedBeforeOpenAI2Upstream(t *testing.T) {
+	var upstreamPayload map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("expected upstream /v1/responses, got %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&upstreamPayload); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-ok","object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	defer upstream.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "OpenAI2",
+		APIUrl:      upstream.URL,
+		APIKey:      "test-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Transformer: "openai2",
+		Model:       "gpt-5.5",
+		Enabled:     true,
+	}})
+	p := New(cfg, noopStatsStorage{}, nil, "device-test")
+	p.httpClient = upstream.Client()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{
+		"model":"gpt-5",
+		"input":{"role":"user","content":[{"type":"input_text","text":"hello"}]}
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected proxy success, got status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	input, ok := upstreamPayload["input"].([]interface{})
+	if !ok || len(input) != 1 {
+		t.Fatalf("expected upstream input as one-item array, got %#v", upstreamPayload["input"])
+	}
+	message := input[0].(map[string]interface{})
+	if message["type"] != "message" || message["role"] != "user" {
+		t.Fatalf("expected canonical upstream message item, got %#v", message)
+	}
+}
+
 func TestCodexProxyUsesStableClientIdentity(t *testing.T) {
 	endpoint := config.Endpoint{
 		Name:        "Codex Pool",

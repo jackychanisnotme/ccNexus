@@ -272,6 +272,9 @@ func TestAgentRunUsesResponsesThenReturnsAnswer(t *testing.T) {
 		if !ok || message["role"] != "user" {
 			t.Fatalf("expected responses input to contain only a user message, got %#v", input[0])
 		}
+		if message["type"] != "message" {
+			t.Fatalf("expected responses user input to include type=message, got %#v", message)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"output":[{"content":[{"type":"output_text","text":"agent answer"}]}]}`))
 	}))
