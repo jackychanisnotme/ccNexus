@@ -1,6 +1,7 @@
 package onlinelicense
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
@@ -35,8 +36,11 @@ type HTTPHandler struct {
 
 type adminSession struct {
 	Username  string
+	AccountID int64
 	ExpiresAt time.Time
 }
+
+type adminContextKey struct{}
 
 type adminSessionStore struct {
 	mu       sync.Mutex
@@ -56,6 +60,9 @@ type rateBucket struct {
 func NewHTTPHandler(service *Service, admin AdminConfig) *HTTPHandler {
 	if admin.SessionTTL <= 0 {
 		admin.SessionTTL = defaultAdminSessionTTL
+	}
+	if service != nil && strings.TrimSpace(admin.Username) != "" && strings.TrimSpace(admin.Password) != "" {
+		_, _ = service.EnsureBootstrapAdmin(admin.Username, admin.Password)
 	}
 	return &HTTPHandler{
 		service: service,
@@ -94,6 +101,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleLogin(w, r)
 	case path == "/api/admin/logout":
 		h.serveAdminMutation(w, r, h.handleLogout)
+	case path == "/api/admin/me":
+		h.serveAdmin(w, r, h.handleMe)
+	case path == "/api/admin/accounts":
+		h.serveAdminMutation(w, r, h.handleAccounts)
+	case strings.HasPrefix(path, "/api/admin/accounts/"):
+		h.serveAdminMutation(w, r, h.handleAccount)
 	case path == "/api/admin/cards":
 		h.serveAdmin(w, r, h.handleCards)
 	case path == "/api/admin/cards/generate":
@@ -134,20 +147,35 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	username := strings.TrimSpace(req.Username)
 	if !constantTimeEqual(username, h.admin.Username) || !constantTimeEqual(req.Password, h.admin.Password) {
-		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
-		return
+		if h.service == nil {
+			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+	}
+	var account *AdminAccount
+	var err error
+	if h.service != nil {
+		account, err = h.service.AuthenticateAdmin(username, req.Password)
+		if err != nil {
+			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+	} else {
+		account = &AdminAccount{Username: username, Status: AdminAccountStatusActive}
 	}
 	now := h.currentTime()
-	token, expiresAt, err := h.sessions.create(username, now, h.admin.SessionTTL)
+	token, expiresAt, err := h.sessions.create(account, now, h.admin.SessionTTL)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
 	http.SetCookie(w, h.sessionCookie(r, token, expiresAt))
 	h.recordAudit("admin_login", "admin", 0, clientIP(r))
-	writeJSONSuccess(w, map[string]interface{}{
-		"username":  username,
-		"expiresAt": expiresAt,
+	writeJSONSuccess(w, AdminSessionInfo{
+		Username:    account.Username,
+		Account:     *account,
+		Permissions: account.Permissions,
+		ExpiresAt:   expiresAt,
 	})
 }
 
@@ -162,6 +190,68 @@ func (h *HTTPHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, h.expiredSessionCookie(r))
 	h.recordAudit("admin_logout", "admin", 0, clientIP(r))
 	writeJSONSuccess(w, map[string]bool{"loggedOut": true})
+}
+
+func (h *HTTPHandler) handleMe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	account := adminFromContext(r)
+	writeJSONSuccess(w, map[string]interface{}{
+		"account":     account,
+		"permissions": account.Permissions,
+	})
+}
+
+func (h *HTTPHandler) handleAccounts(w http.ResponseWriter, r *http.Request) {
+	account := adminFromContext(r)
+	switch r.Method {
+	case http.MethodGet:
+		accounts, err := h.service.ListAdminAccountsFor(account)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		writeJSONSuccess(w, accounts)
+	case http.MethodPost:
+		var req CreateAdminAccountRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		created, err := h.service.CreateAdminAccount(account, req)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		writeJSONSuccess(w, created)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (h *HTTPHandler) handleAccount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	id, err := pathID(r.URL.Path, "/api/admin/accounts/", "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req UpdateAdminAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	updated, err := h.service.UpdateAdminAccount(adminFromContext(r), id, req)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	writeJSONSuccess(w, updated)
 }
 
 func (h *HTTPHandler) handleActivate(w http.ResponseWriter, r *http.Request) {
@@ -207,9 +297,9 @@ func (h *HTTPHandler) handleCards(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	cards, err := h.service.ListCards()
+	cards, err := h.service.ListCardsFor(adminFromContext(r))
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSONSuccess(w, cards)
@@ -225,9 +315,9 @@ func (h *HTTPHandler) handleGenerateCards(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	result, err := h.service.GenerateCards(req)
+	result, err := h.service.GenerateCardsFor(adminFromContext(r), req)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSONSuccess(w, result)
@@ -243,8 +333,8 @@ func (h *HTTPHandler) handleDisableCard(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.service.DisableCard(id); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+	if err := h.service.DisableCardFor(adminFromContext(r), id); err != nil {
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSONSuccess(w, map[string]bool{"disabled": true})
@@ -260,12 +350,12 @@ func (h *HTTPHandler) handleDeleteCard(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.service.DeleteCard(id); err != nil {
+	if err := h.service.DeleteCardFor(adminFromContext(r), id); err != nil {
 		if errors.Is(err, ErrInvalidCard) {
 			writeJSONError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSONSuccess(w, map[string]bool{"deleted": true})
@@ -276,9 +366,9 @@ func (h *HTTPHandler) handleActivations(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	activations, err := h.service.ListActivations()
+	activations, err := h.service.ListActivationsFor(adminFromContext(r))
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSONSuccess(w, activations)
@@ -294,8 +384,8 @@ func (h *HTTPHandler) handleDisableActivation(w http.ResponseWriter, r *http.Req
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.service.DisableActivation(id); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+	if err := h.service.DisableActivationFor(adminFromContext(r), id); err != nil {
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSONSuccess(w, map[string]bool{"disabled": true})
@@ -306,9 +396,9 @@ func (h *HTTPHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	devices, err := h.service.ListDevices()
+	devices, err := h.service.ListDevicesFor(adminFromContext(r))
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSONSuccess(w, devices)
@@ -328,12 +418,12 @@ func (h *HTTPHandler) handleSetDeviceExpiry(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusBadRequest, "device id and expiry are required")
 		return
 	}
-	if err := h.service.SetDeviceExpiry(req.DeviceID, req.ExpiresAt); err != nil {
+	if err := h.service.SetDeviceExpiryFor(adminFromContext(r), req.DeviceID, req.ExpiresAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSONError(w, http.StatusNotFound, "device not found")
 			return
 		}
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSONSuccess(w, map[string]bool{"updated": true})
@@ -353,12 +443,12 @@ func (h *HTTPHandler) handleSetDeviceRemark(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusBadRequest, "device id is required")
 		return
 	}
-	if err := h.service.SetDeviceRemark(req.DeviceID, req.Remark); err != nil {
+	if err := h.service.SetDeviceRemarkFor(adminFromContext(r), req.DeviceID, req.Remark); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSONError(w, http.StatusNotFound, "device not found")
 			return
 		}
-		writeJSONError(w, http.StatusBadRequest, err.Error())
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSONSuccess(w, map[string]bool{"updated": true})
@@ -367,6 +457,10 @@ func (h *HTTPHandler) handleSetDeviceRemark(w http.ResponseWriter, r *http.Reque
 func (h *HTTPHandler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !hasPermission(adminFromContext(r), PermissionHistoryView) {
+		writeJSONError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	history, err := h.service.ListAudit()
@@ -392,17 +486,18 @@ func (h *HTTPHandler) serveAdminMutation(w http.ResponseWriter, r *http.Request,
 
 func (h *HTTPHandler) withAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !h.hasValidSession(r) {
+		account, ok := h.adminFromRequest(r)
+		if !ok {
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminContextKey{}, account)))
 	})
 }
 
 func (h *HTTPHandler) AdminPageMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !h.hasValidSession(r) {
+		if _, ok := h.adminFromRequest(r); !ok {
 			http.Redirect(w, r, "/admin/login", http.StatusFound)
 			return
 		}
@@ -411,11 +506,33 @@ func (h *HTTPHandler) AdminPageMiddleware(next http.Handler) http.Handler {
 }
 
 func (h *HTTPHandler) hasValidSession(r *http.Request) bool {
+	_, ok := h.adminFromRequest(r)
+	return ok
+}
+
+func (h *HTTPHandler) adminFromRequest(r *http.Request) (*AdminAccount, bool) {
 	cookie, err := r.Cookie(adminSessionCookieName)
 	if err != nil {
-		return false
+		return nil, false
 	}
-	return h.sessions.valid(cookie.Value, h.currentTime())
+	session, ok := h.sessions.get(cookie.Value, h.currentTime())
+	if !ok {
+		return nil, false
+	}
+	if h.service == nil {
+		return &AdminAccount{ID: session.AccountID, Username: session.Username, Status: AdminAccountStatusActive, Permissions: allAdminPermissions()}, true
+	}
+	account, err := h.service.GetAdminAccount(session.AccountID)
+	if err != nil || account.Status != AdminAccountStatusActive {
+		h.sessions.delete(cookie.Value)
+		return nil, false
+	}
+	return account, true
+}
+
+func adminFromContext(r *http.Request) *AdminAccount {
+	account, _ := r.Context().Value(adminContextKey{}).(*AdminAccount)
+	return account
 }
 
 func (h *HTTPHandler) allowRate(w http.ResponseWriter, r *http.Request, scope string, limit int, window time.Duration) bool {
@@ -467,33 +584,44 @@ func (h *HTTPHandler) recordAudit(action, targetType string, targetID int64, det
 	_ = h.service.RecordAudit(action, targetType, targetID, detail)
 }
 
-func (s *adminSessionStore) create(username string, now time.Time, ttl time.Duration) (string, time.Time, error) {
+func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrForbidden):
+		writeJSONError(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, sql.ErrNoRows):
+		writeJSONError(w, http.StatusNotFound, "not found")
+	default:
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+	}
+}
+
+func (s *adminSessionStore) create(account *AdminAccount, now time.Time, ttl time.Duration) (string, time.Time, error) {
 	token, err := randomSessionToken()
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	expiresAt := now.Add(ttl).UTC()
 	s.mu.Lock()
-	s.sessions[token] = adminSession{Username: username, ExpiresAt: expiresAt}
+	s.sessions[token] = adminSession{Username: account.Username, AccountID: account.ID, ExpiresAt: expiresAt}
 	s.mu.Unlock()
 	return token, expiresAt, nil
 }
 
-func (s *adminSessionStore) valid(token string, now time.Time) bool {
+func (s *adminSessionStore) get(token string, now time.Time) (adminSession, bool) {
 	if strings.TrimSpace(token) == "" {
-		return false
+		return adminSession{}, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	session, ok := s.sessions[token]
 	if !ok {
-		return false
+		return adminSession{}, false
 	}
 	if now.After(session.ExpiresAt) {
 		delete(s.sessions, token)
-		return false
+		return adminSession{}, false
 	}
-	return true
+	return session, true
 }
 
 func (s *adminSessionStore) delete(token string) {

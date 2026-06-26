@@ -43,6 +43,9 @@ func main() {
 	}
 
 	service := onlinelicense.NewService(store, privateKey, onlinelicense.Options{})
+	if _, err := service.EnsureBootstrapAdmin(admin.Username, admin.Password); err != nil {
+		log.Fatalf("bootstrap admin account: %v", err)
+	}
 	apiHandler := onlinelicense.NewHTTPHandler(service, admin)
 	mux := http.NewServeMux()
 	mux.Handle("/api/", apiHandler)
@@ -60,7 +63,7 @@ func main() {
 	})
 
 	addr := fmt.Sprintf("%s:%d", *bind, *port)
-	log.Printf("ccNexus license server listening on %s", addr)
+	log.Printf("AINexus license server listening on %s", addr)
 	log.Printf("admin: http://%s/admin/", addr)
 	log.Printf("public key for client builds: %s", base64.StdEncoding.EncodeToString(publicKey))
 	if err := http.ListenAndServe(addr, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -161,7 +164,7 @@ const loginHTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ccNexus License Login</title>
+  <title>AINexus License Login</title>
   <style>
     :root{color-scheme:light;--bg:#eef2f6;--panel:#fff;--line:#d9dee7;--text:#172033;--muted:#657184;--accent:#1769aa;--danger:#b42318}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
@@ -175,7 +178,7 @@ const loginHTML = `<!doctype html>
 <body>
   <main>
     <form class="login" id="login-form">
-      <h1>ccNexus License Admin</h1>
+      <h1>AINexus License Admin</h1>
       <label for="username">账号</label>
       <input id="username" name="username" autocomplete="username" value="admin">
       <label for="password">密码</label>
@@ -209,7 +212,7 @@ const adminHTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ccNexus License Admin</title>
+  <title>AINexus License Admin</title>
   <style>
     :root{color-scheme:light;--bg:#f4f6f8;--panel:#fff;--line:#d9dee7;--text:#172033;--muted:#657184;--accent:#1769aa;--danger:#b42318;--ok:#067647}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
@@ -223,7 +226,7 @@ const adminHTML = `<!doctype html>
     button.secondary{background:#fff;color:var(--accent)}button.danger{border-color:var(--danger);background:var(--danger);color:#fff}.small-btn{padding:6px 9px;font-size:12px}
     table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid #e7ebf0;padding:8px;text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);background:#fafbfc;position:sticky;top:0}
     .table-wrap{overflow:auto;max-height:480px;border:1px solid #e7ebf0;border-radius:6px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.muted{color:var(--muted)}.status-active{color:var(--ok);font-weight:700}.status-disabled,.status-expired{color:var(--danger);font-weight:700}
-    .section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.section-head h2{margin:0}.inline-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}.inline-check input{width:auto;margin:0}
+    .section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.section-head h2{margin:0}.inline-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}.inline-check input{width:auto;margin:0}.permission-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px}.permission-grid label{margin:0;font-weight:500;color:var(--text)}
     .device-detail td{padding:0;background:#f8fafc}.device-detail[hidden]{display:none}.detail-inner{padding:12px 16px}.detail-inner table{background:#fff}.detail-inner th{position:static}.detail-label{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px}
     dialog{width:min(460px,calc(100% - 32px));border:1px solid var(--line);border-radius:8px;padding:0;color:var(--text);box-shadow:0 18px 55px rgba(23,32,51,.18)}dialog::backdrop{background:rgba(23,32,51,.38)}.dialog-body{padding:18px}.dialog-body h2{font-size:16px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
     #generated{white-space:pre-wrap;word-break:break-all;background:#f8fafc;border:1px solid #e7ebf0;border-radius:6px;padding:10px;margin-top:12px;max-height:180px;overflow:auto}.message{min-height:20px;margin-top:10px;color:var(--danger)}.empty{text-align:center;color:var(--muted);padding:20px!important}
@@ -233,8 +236,8 @@ const adminHTML = `<!doctype html>
 <body>
   <header>
     <div>
-      <h1>ccNexus License Admin</h1>
-      <div class="top-note">卡密、设备激活和历史记录</div>
+      <h1>AINexus License Admin</h1>
+      <div class="top-note">卡密、设备激活、后台账号和历史记录</div>
     </div>
     <div class="toolbar">
       <button class="secondary" onclick="refreshAll()">刷新</button>
@@ -248,6 +251,7 @@ const adminHTML = `<!doctype html>
       <select id="plan"><option value="monthly">月卡 30天</option><option value="quarterly">季卡 90天</option><option value="half_year">半年 180天</option><option value="yearly">年卡 365天</option><option value="custom">自定义</option></select>
       <div class="row"><div><label>自定义天数</label><input id="days" type="number" min="1" value="30"></div><div><label>生成数量</label><input id="count" type="number" min="1" value="1"></div></div>
       <div class="row"><div><label>允许设备数</label><input id="maxDevices" type="number" min="1" value="1"></div><div><label>客户</label><input id="customer" placeholder="客户名"></div></div>
+      <label>归属账号</label><select id="ownerAccount"></select>
       <label>备注</label><textarea id="remark" placeholder="订单、渠道、说明"></textarea>
       <div class="actions"><button onclick="generateCards()">生成</button><button class="secondary" onclick="refreshAll()">刷新</button><button class="secondary" onclick="copyGenerated()">复制结果</button></div>
       <div id="generated" class="muted">尚未生成卡密</div>
@@ -256,7 +260,16 @@ const adminHTML = `<!doctype html>
     <div class="stack">
       <section>
         <h2>卡密</h2>
-        <div class="table-wrap"><table><thead><tr><th>ID</th><th>状态</th><th>套餐</th><th>天数</th><th>设备</th><th>客户/备注</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="cards"><tr><td colspan="8" class="empty">加载中</td></tr></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>ID</th><th>归属</th><th>状态</th><th>套餐</th><th>天数</th><th>设备</th><th>客户/备注</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="cards"><tr><td colspan="9" class="empty">加载中</td></tr></tbody></table></div>
+      </section>
+      <section>
+        <div class="section-head"><h2>后台账号</h2><button class="secondary small-btn" onclick="refreshAccounts()">刷新账号</button></div>
+        <div class="row"><div><label>用户名</label><input id="accountUsername" autocomplete="off"></div><div><label>密码</label><input id="accountPassword" type="password" autocomplete="new-password"></div></div>
+        <div class="row"><div><label>显示名</label><input id="accountDisplayName"></div><div><label>级别</label><select id="accountLevel"><option value="2">二级分销</option><option value="3">三级分销</option><option value="1">一级管理员</option></select></div></div>
+        <label>父级账号</label><select id="accountParent"></select>
+        <div class="permission-grid" id="accountPermissions"></div>
+        <div class="actions"><button onclick="createAccount()">创建账号</button></div>
+        <div class="table-wrap"><table><thead><tr><th>ID</th><th>账号</th><th>级别</th><th>父级</th><th>状态</th><th>权限</th><th>操作</th></tr></thead><tbody id="accounts"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table></div>
       </section>
       <section>
         <h2>设备授权</h2>
@@ -288,7 +301,14 @@ const adminHTML = `<!doctype html>
   </dialog>
   <script>
     let historyRows = [];
+    let accountRows = [];
+    let currentAccount = null;
     let editingDeviceId = '';
+    const permissionCatalog = [
+      ['cards:view','看卡密'],['cards:generate','生成卡密'],['cards:disable','禁用卡密'],['cards:delete','删除卡密'],
+      ['devices:view','看设备'],['devices:remark','备注设备'],['devices:expiry','改到期'],['activations:disable','禁用授权'],
+      ['accounts:view','看账号'],['accounts:manage','管账号'],['history:view','看历史']
+    ];
     const historyBody = document.getElementById('history');
     const showRefreshInput = document.getElementById('showRefresh');
     async function api(path, options={}) {
@@ -306,14 +326,65 @@ const adminHTML = `<!doctype html>
     function esc(v){return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
     function dt(v){return v ? new Date(v).toLocaleString() : '-'}
     function setError(err){message.textContent = err ? err.message || String(err) : ''}
+    function can(permission){return currentAccount && Array.isArray(currentAccount.permissions) && currentAccount.permissions.includes(permission)}
     function statusCell(value){const names={active:'有效',disabled:'已禁用',expired:'已到期'};return '<span class="status-'+esc(value)+'">'+esc(names[value]||value)+'</span>'}
-    function actionName(value){return ({admin_login:'登录',admin_logout:'退出',generate_card:'生成卡密',activate:'兑换卡密',refresh:'自动校验',disable_card:'禁用卡密',delete_card:'删除卡密',disable_activation:'禁用授权明细',set_device_expiry:'修改设备到期',set_device_remark:'修改设备备注'}[value] || value)}
+    function actionName(value){return ({admin_login:'登录',admin_logout:'退出',generate_card:'生成卡密',activate:'兑换卡密',refresh:'自动校验',disable_card:'禁用卡密',delete_card:'删除卡密',disable_activation:'禁用授权明细',set_device_expiry:'修改设备到期',set_device_remark:'修改设备备注',create_admin_account:'创建账号',update_admin_account:'修改账号'}[value] || value)}
     function planName(value){return ({monthly:'月卡',quarterly:'季卡',half_year:'半年卡',yearly:'年卡',custom:'自定义'}[value] || value)}
+    function levelName(value){return ({1:'一级',2:'二级',3:'三级'}[Number(value)] || value)}
     function toLocalInput(value){const date=new Date(value);date.setMinutes(date.getMinutes()-date.getTimezoneOffset());return date.toISOString().slice(0,19)}
+    async function refreshMe(){
+      const me = await api('/api/admin/me');
+      currentAccount = me.account;
+    }
+    function renderPermissionChoices(selected){
+      const selectedSet = new Set(selected || []);
+      accountPermissions.innerHTML = permissionCatalog.map(p => '<label><input type="checkbox" value="'+esc(p[0])+'" '+(selectedSet.has(p[0])?'checked':'')+'> '+esc(p[1])+'</label>').join('');
+    }
+    function accountLabel(account){return account ? account.username+' #'+account.id : '-'}
+    function refreshAccountSelectors(){
+      const visible = accountRows.length ? accountRows : (currentAccount ? [currentAccount] : []);
+      ownerAccount.innerHTML = visible.map(a => '<option value="'+a.id+'">'+esc(accountLabel(a))+'</option>').join('');
+      accountParent.innerHTML = visible.map(a => '<option value="'+a.id+'">'+esc(accountLabel(a))+'</option>').join('');
+      if (currentAccount) {
+        ownerAccount.value = String(currentAccount.id);
+        accountParent.value = String(currentAccount.id);
+      }
+    }
+    async function refreshAccounts(){
+      if (!can('accounts:view')) {
+        accountRows = currentAccount ? [currentAccount] : [];
+        accounts.innerHTML = '<tr><td colspan="7" class="empty">无账号管理权限</td></tr>';
+        refreshAccountSelectors();
+        renderPermissionChoices([]);
+        return;
+      }
+      accountRows = await api('/api/admin/accounts');
+      accounts.innerHTML = accountRows.length ? accountRows.map(a => '<tr><td>'+a.id+'</td><td>'+esc(a.username)+'<br><span class="muted">'+esc(a.displayName||'')+'</span></td><td>'+esc(levelName(a.level))+'</td><td>'+esc(a.parentId||'-')+'</td><td>'+statusCell(a.status)+'</td><td class="mono">'+esc((a.permissions||[]).join(', '))+'</td><td><div class="actions">'+(can('accounts:manage')?'<button class="secondary small-btn" onclick="editAccountPermissions('+a.id+')">权限</button><button class="secondary small-btn" onclick="toggleAccountStatus('+a.id+',\\''+(a.status==='active'?'disabled':'active')+'\\')">'+(a.status==='active'?'禁用':'启用')+'</button>':'-')+'</div></td></tr>').join('') : '<tr><td colspan="7" class="empty">暂无后台账号</td></tr>';
+      refreshAccountSelectors();
+      renderPermissionChoices(defaultPermissionsForLevel(Number(accountLevel.value)));
+    }
+    function defaultPermissionsForLevel(level){
+      if (level === 1) return permissionCatalog.map(p => p[0]);
+      if (level === 2) return ['cards:view','cards:generate','cards:disable','devices:view','devices:remark','devices:expiry','activations:disable','accounts:view','accounts:manage','history:view'];
+      return ['cards:view','cards:generate','cards:disable','devices:view','devices:remark','devices:expiry','activations:disable','history:view'];
+    }
+    async function createAccount(){
+      setError('');
+      try {
+        const permissions = Array.from(accountPermissions.querySelectorAll('input:checked')).map(i => i.value);
+        const payload = {username:accountUsername.value,password:accountPassword.value,displayName:accountDisplayName.value,level:Number(accountLevel.value),parentId:Number(accountParent.value||0),permissions};
+        await api('/api/admin/accounts',{method:'POST',body:JSON.stringify(payload)});
+        accountUsername.value=''; accountPassword.value=''; accountDisplayName.value='';
+        await refreshAccounts();
+      } catch (err) { setError(err); }
+    }
+    async function toggleAccountStatus(id,status){try{await api('/api/admin/accounts/'+id,{method:'PATCH',body:JSON.stringify({status})});await refreshAccounts();}catch(err){setError(err)}}
+    async function editAccountPermissions(id){const account=accountRows.find(a=>a.id===id);const value=prompt('权限列表（英文逗号分隔）',(account.permissions||[]).join(','));if(value===null)return;try{await api('/api/admin/accounts/'+id,{method:'PATCH',body:JSON.stringify({permissions:value.split(',').map(v=>v.trim()).filter(Boolean)})});await refreshAccounts();}catch(err){setError(err)}}
+    accountLevel.addEventListener('change', () => renderPermissionChoices(defaultPermissionsForLevel(Number(accountLevel.value))));
     async function generateCards(){
       setError('');
       try {
-        const payload = {plan:plan.value,days:Number(days.value||0),count:Number(count.value||1),maxDevices:Number(maxDevices.value||1),customer:customer.value,remark:remark.value};
+        const payload = {plan:plan.value,days:Number(days.value||0),count:Number(count.value||1),maxDevices:Number(maxDevices.value||1),customer:customer.value,remark:remark.value,ownerAccountId:Number(ownerAccount.value||0)};
         const data = await api('/api/admin/cards/generate',{method:'POST',body:JSON.stringify(payload)});
         generated.textContent = data.cards.map(c => c.cardKey).join('\n');
         await refreshAll();
@@ -321,14 +392,14 @@ const adminHTML = `<!doctype html>
     }
     async function refreshCards(){
       const rows = await api('/api/admin/cards');
-      cards.innerHTML = rows.length ? rows.map(c => '<tr><td>'+c.id+'</td><td>'+statusCell(c.status)+'</td><td>'+esc(c.plan)+'</td><td>'+c.days+'</td><td>'+c.activations+'/'+c.maxDevices+'</td><td>'+esc(c.customer)+'<br><span class="muted">'+esc(c.remark)+'</span></td><td>'+dt(c.createdAt)+'</td><td><div class="actions">'+(c.status==='active'?'<button class="danger small-btn" onclick="disableCard('+c.id+')">禁用</button>':'')+'<button class="danger small-btn" onclick="deleteCard('+c.id+')">删除</button></div></td></tr>').join('') : '<tr><td colspan="8" class="empty">暂无卡密</td></tr>';
+      cards.innerHTML = rows.length ? rows.map(c => '<tr><td>'+c.id+'</td><td>'+esc(c.ownerUsername||c.ownerAccountId||'-')+'</td><td>'+statusCell(c.status)+'</td><td>'+esc(c.plan)+'</td><td>'+c.days+'</td><td>'+c.activations+'/'+c.maxDevices+'</td><td>'+esc(c.customer)+'<br><span class="muted">'+esc(c.remark)+'</span></td><td>'+dt(c.createdAt)+'</td><td><div class="actions">'+(c.status==='active'&&can('cards:disable')?'<button class="danger small-btn" onclick="disableCard('+c.id+')">禁用</button>':'')+(can('cards:delete')?'<button class="danger small-btn" onclick="deleteCard('+c.id+')">删除</button>':'')+'</div></td></tr>').join('') : '<tr><td colspan="9" class="empty">暂无卡密</td></tr>';
     }
     function licenseRows(device){
-      return device.licenses.map(a => '<tr><td>'+a.cardId+'</td><td>'+statusCell(a.status)+'</td><td>'+esc(planName(a.plan))+' / '+a.days+'天</td><td>'+dt(a.activatedAt)+'</td><td>'+dt(a.expiresAt)+'</td><td>'+esc(a.customer)+'<br><span class="muted">'+esc(a.remark)+'</span></td><td>'+(a.status==='active'?'<button class="danger small-btn" onclick="disableActivation('+a.id+')">禁用此明细</button>':'-')+'</td></tr>').join('');
+      return device.licenses.map(a => '<tr><td>'+a.cardId+'</td><td>'+statusCell(a.status)+'</td><td>'+esc(planName(a.plan))+' / '+a.days+'天</td><td>'+dt(a.activatedAt)+'</td><td>'+dt(a.expiresAt)+'</td><td>'+esc(a.customer)+'<br><span class="muted">'+esc(a.remark)+'</span></td><td>'+(a.status==='active'&&can('activations:disable')?'<button class="danger small-btn" onclick="disableActivation('+a.id+')">禁用此明细</button>':'-')+'</td></tr>').join('');
     }
     async function refreshDevices(){
       const rows = await api('/api/admin/devices');
-      devices.innerHTML = rows.length ? rows.map((d,index) => '<tr><td class="mono">'+esc(d.deviceId)+'</td><td>'+esc(d.remark||'-')+'</td><td>'+statusCell(d.status)+'</td><td>'+dt(d.expiresAt)+'</td><td>'+dt(d.lastCheckedAt)+'</td><td>'+esc(d.platform)+'<br><span class="muted">'+esc(d.appVersion)+'</span></td><td class="mono">'+esc(d.ipAddress)+'</td><td>'+d.licenses.length+'</td><td><div class="actions"><button class="secondary small-btn" onclick="toggleDevice('+index+')">明细</button><button class="secondary small-btn" onclick="openRemark('+index+')">备注</button><button class="small-btn" onclick="openExpiry('+index+')">修改到期</button>'+(d.status==='active'?'<button class="danger small-btn" onclick="disableActivation('+d.currentActivationId+')">禁用当前</button>':'')+'</div></td></tr><tr id="device-detail-'+index+'" class="device-detail" hidden><td colspan="9"><div class="detail-inner"><div class="detail-label">卡密兑换与失效明细</div><table><thead><tr><th>卡ID</th><th>状态</th><th>套餐</th><th>兑换时间</th><th>该次累计到期</th><th>客户/备注</th><th>操作</th></tr></thead><tbody>'+licenseRows(d)+'</tbody></table></div></td></tr>').join('') : '<tr><td colspan="9" class="empty">暂无授权设备</td></tr>';
+      devices.innerHTML = rows.length ? rows.map((d,index) => '<tr><td class="mono">'+esc(d.deviceId)+'</td><td>'+esc(d.remark||'-')+'</td><td>'+statusCell(d.status)+'</td><td>'+dt(d.expiresAt)+'</td><td>'+dt(d.lastCheckedAt)+'</td><td>'+esc(d.platform)+'<br><span class="muted">'+esc(d.appVersion)+'</span></td><td class="mono">'+esc(d.ipAddress)+'</td><td>'+d.licenses.length+'</td><td><div class="actions"><button class="secondary small-btn" onclick="toggleDevice('+index+')">明细</button>'+(can('devices:remark')?'<button class="secondary small-btn" onclick="openRemark('+index+')">备注</button>':'')+(can('devices:expiry')?'<button class="small-btn" onclick="openExpiry('+index+')">修改到期</button>':'')+(d.status==='active'&&can('activations:disable')?'<button class="danger small-btn" onclick="disableActivation('+d.currentActivationId+')">禁用当前</button>':'')+'</div></td></tr><tr id="device-detail-'+index+'" class="device-detail" hidden><td colspan="9"><div class="detail-inner"><div class="detail-label">卡密兑换与失效明细</div><table><thead><tr><th>卡ID</th><th>状态</th><th>套餐</th><th>兑换时间</th><th>该次累计到期</th><th>客户/备注</th><th>操作</th></tr></thead><tbody>'+licenseRows(d)+'</tbody></table></div></td></tr>').join('') : '<tr><td colspan="9" class="empty">暂无授权设备</td></tr>';
       window.deviceRows = rows;
     }
     async function refreshHistory(){
@@ -344,7 +415,7 @@ const adminHTML = `<!doctype html>
     async function disableCard(id){if(confirm('禁用这张卡密？该卡对应的激活会立即失效，到期时间会同步调整。')){try{await api('/api/admin/cards/'+id+'/disable',{method:'POST'});await refreshAll();}catch(err){setError(err);}}}
     async function deleteCard(id){if(confirm('删除这张卡密及其设备激活记录？')){try{await api('/api/admin/cards/'+id,{method:'DELETE'});await refreshAll();}catch(err){setError(err);}}}
     async function disableActivation(id){if(confirm('禁用这条授权明细？它的到期时间会立即调整。')){try{await api('/api/admin/activations/'+id+'/disable',{method:'POST'});await refreshAll();}catch(err){setError(err);}}}
-    async function refreshAll(){setError('');try{await Promise.all([refreshCards(),refreshDevices(),refreshHistory()]);}catch(err){setError(err);}}
+    async function refreshAll(){setError('');try{await refreshMe();await refreshAccounts();await Promise.all([refreshCards(),refreshDevices(),refreshHistory()]);}catch(err){setError(err);}}
     async function copyGenerated(){try{await navigator.clipboard.writeText(generated.textContent || '');}catch(err){setError(err);}}
     async function logout(){try{await api('/api/admin/logout',{method:'POST'});}finally{location.replace('/admin/login');}}
     refreshAll();

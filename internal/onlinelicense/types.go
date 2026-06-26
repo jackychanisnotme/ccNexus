@@ -14,6 +14,28 @@ const (
 	DefaultLicenseServerURL = "http://207.57.134.147:24220"
 )
 
+const (
+	AdminLevelRoot        = 1
+	AdminLevelReseller    = 2
+	AdminLevelDistributor = 3
+
+	AdminAccountStatusActive   = "active"
+	AdminAccountStatusDisabled = "disabled"
+
+	PermissionCardsView          = "cards:view"
+	PermissionCardsGenerate      = "cards:generate"
+	PermissionCardsDisable       = "cards:disable"
+	PermissionCardsDelete        = "cards:delete"
+	PermissionDevicesView        = "devices:view"
+	PermissionDevicesRemark      = "devices:remark"
+	PermissionDevicesExpiry      = "devices:expiry"
+	PermissionActivationsView    = "activations:view"
+	PermissionActivationsDisable = "activations:disable"
+	PermissionHistoryView        = "history:view"
+	PermissionAccountsView       = "accounts:view"
+	PermissionAccountsManage     = "accounts:manage"
+)
+
 type Plan string
 
 const (
@@ -29,12 +51,14 @@ type Options struct {
 }
 
 type GenerateCardsRequest struct {
-	Plan       Plan   `json:"plan"`
-	Days       int    `json:"days"`
-	Count      int    `json:"count"`
-	MaxDevices int    `json:"maxDevices"`
-	Customer   string `json:"customer"`
-	Remark     string `json:"remark"`
+	Plan               Plan   `json:"plan"`
+	Days               int    `json:"days"`
+	Count              int    `json:"count"`
+	MaxDevices         int    `json:"maxDevices"`
+	Customer           string `json:"customer"`
+	Remark             string `json:"remark"`
+	OwnerAccountID     int64  `json:"ownerAccountId,omitempty"`
+	CreatedByAccountID int64  `json:"-"`
 }
 
 type GenerateCardsResult struct {
@@ -48,30 +72,36 @@ type AdminLoginRequest struct {
 }
 
 type GeneratedCard struct {
-	ID         int64     `json:"id"`
-	CardKey    string    `json:"cardKey,omitempty"`
-	CardHash   string    `json:"cardHash,omitempty"`
-	Plan       Plan      `json:"plan"`
-	Days       int       `json:"days"`
-	MaxDevices int       `json:"maxDevices"`
-	Customer   string    `json:"customer,omitempty"`
-	Remark     string    `json:"remark,omitempty"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID                 int64     `json:"id"`
+	CardKey            string    `json:"cardKey,omitempty"`
+	CardHash           string    `json:"cardHash,omitempty"`
+	Plan               Plan      `json:"plan"`
+	Days               int       `json:"days"`
+	MaxDevices         int       `json:"maxDevices"`
+	Customer           string    `json:"customer,omitempty"`
+	Remark             string    `json:"remark,omitempty"`
+	Status             string    `json:"status"`
+	OwnerAccountID     int64     `json:"ownerAccountId,omitempty"`
+	CreatedByAccountID int64     `json:"createdByAccountId,omitempty"`
+	OwnerUsername      string    `json:"ownerUsername,omitempty"`
+	CreatedAt          time.Time `json:"createdAt"`
 }
 
 type CardRecord struct {
-	ID          int64     `json:"id"`
-	CardHash    string    `json:"cardHash"`
-	Plan        Plan      `json:"plan"`
-	Days        int       `json:"days"`
-	MaxDevices  int       `json:"maxDevices"`
-	Status      string    `json:"status"`
-	Customer    string    `json:"customer,omitempty"`
-	Remark      string    `json:"remark,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	DisabledAt  time.Time `json:"disabledAt,omitempty"`
-	Activations int       `json:"activations"`
+	ID                 int64     `json:"id"`
+	CardHash           string    `json:"cardHash"`
+	Plan               Plan      `json:"plan"`
+	Days               int       `json:"days"`
+	MaxDevices         int       `json:"maxDevices"`
+	Status             string    `json:"status"`
+	Customer           string    `json:"customer,omitempty"`
+	Remark             string    `json:"remark,omitempty"`
+	OwnerAccountID     int64     `json:"ownerAccountId,omitempty"`
+	CreatedByAccountID int64     `json:"createdByAccountId,omitempty"`
+	OwnerUsername      string    `json:"ownerUsername,omitempty"`
+	CreatedAt          time.Time `json:"createdAt"`
+	DisabledAt         time.Time `json:"disabledAt,omitempty"`
+	Activations        int       `json:"activations"`
 }
 
 type ActivationRequest struct {
@@ -106,26 +136,30 @@ type ActivationResult struct {
 }
 
 type ActivationRecord struct {
-	ID            int64     `json:"id"`
-	CardID        int64     `json:"cardId"`
-	CardStatus    string    `json:"cardStatus"`
-	Plan          Plan      `json:"plan"`
-	Days          int       `json:"days"`
-	DeviceID      string    `json:"deviceId"`
-	Status        string    `json:"status"`
-	ActivatedAt   time.Time `json:"activatedAt"`
-	ExpiresAt     time.Time `json:"expiresAt"`
-	LastCheckedAt time.Time `json:"lastCheckedAt"`
-	DisabledAt    time.Time `json:"disabledAt,omitempty"`
-	Platform      string    `json:"platform,omitempty"`
-	AppVersion    string    `json:"appVersion,omitempty"`
-	IPAddress     string    `json:"ipAddress,omitempty"`
-	Customer      string    `json:"customer,omitempty"`
-	Remark        string    `json:"remark,omitempty"`
+	ID             int64     `json:"id"`
+	CardID         int64     `json:"cardId"`
+	CardStatus     string    `json:"cardStatus"`
+	Plan           Plan      `json:"plan"`
+	Days           int       `json:"days"`
+	DeviceID       string    `json:"deviceId"`
+	Status         string    `json:"status"`
+	ActivatedAt    time.Time `json:"activatedAt"`
+	ExpiresAt      time.Time `json:"expiresAt"`
+	LastCheckedAt  time.Time `json:"lastCheckedAt"`
+	DisabledAt     time.Time `json:"disabledAt,omitempty"`
+	Platform       string    `json:"platform,omitempty"`
+	AppVersion     string    `json:"appVersion,omitempty"`
+	IPAddress      string    `json:"ipAddress,omitempty"`
+	Customer       string    `json:"customer,omitempty"`
+	Remark         string    `json:"remark,omitempty"`
+	OwnerAccountID int64     `json:"ownerAccountId,omitempty"`
+	OwnerUsername  string    `json:"ownerUsername,omitempty"`
 }
 
 type DeviceRecord struct {
 	DeviceID            string             `json:"deviceId"`
+	OwnerAccountID      int64              `json:"ownerAccountId,omitempty"`
+	OwnerUsername       string             `json:"ownerUsername,omitempty"`
 	Remark              string             `json:"remark,omitempty"`
 	Status              string             `json:"status"`
 	ExpiresAt           time.Time          `json:"expiresAt"`
@@ -135,6 +169,44 @@ type DeviceRecord struct {
 	IPAddress           string             `json:"ipAddress,omitempty"`
 	CurrentActivationID int64              `json:"currentActivationId"`
 	Licenses            []ActivationRecord `json:"licenses"`
+}
+
+type AdminAccount struct {
+	ID          int64     `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"displayName,omitempty"`
+	Level       int       `json:"level"`
+	ParentID    int64     `json:"parentId,omitempty"`
+	Status      string    `json:"status"`
+	Permissions []string  `json:"permissions"`
+	CreatedBy   int64     `json:"createdBy,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+type CreateAdminAccountRequest struct {
+	Username    string   `json:"username"`
+	Password    string   `json:"password"`
+	DisplayName string   `json:"displayName"`
+	Level       int      `json:"level"`
+	ParentID    int64    `json:"parentId"`
+	Permissions []string `json:"permissions"`
+}
+
+type UpdateAdminAccountRequest struct {
+	Password    string   `json:"password"`
+	DisplayName string   `json:"displayName"`
+	Level       int      `json:"level"`
+	ParentID    int64    `json:"parentId"`
+	Status      string   `json:"status"`
+	Permissions []string `json:"permissions"`
+}
+
+type AdminSessionInfo struct {
+	Username    string       `json:"username"`
+	Account     AdminAccount `json:"account"`
+	Permissions []string     `json:"permissions"`
+	ExpiresAt   time.Time    `json:"expiresAt"`
 }
 
 type SetDeviceExpiryRequest struct {

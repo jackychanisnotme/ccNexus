@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -30,6 +32,7 @@ var (
 	ErrActivationBlocked = errors.New("license activation is disabled")
 	ErrInvalidTicket     = errors.New("invalid license ticket")
 	ErrTicketExpired     = errors.New("license ticket grace period expired")
+	ErrForbidden         = errors.New("forbidden")
 )
 
 type Store interface {
@@ -37,6 +40,7 @@ type Store interface {
 	FindCardByHash(hash string) (*CardRecord, error)
 	GetCard(id int64) (*CardRecord, error)
 	ListCards() ([]CardRecord, error)
+	ListCardsByOwner(ownerIDs []int64) ([]CardRecord, error)
 	DisableCard(id int64, now time.Time) error
 	DeleteCard(id int64) error
 	ActivateCard(cardHash, deviceID string, now time.Time, platform, appVersion, ipAddress string) (*ActivationRecord, error)
@@ -45,6 +49,7 @@ type Store interface {
 	LatestActivationForDevice(deviceID string) (*ActivationRecord, error)
 	GetActivation(id int64) (*ActivationRecord, error)
 	ListActivations() ([]ActivationRecord, error)
+	ListActivationsByOwner(ownerIDs []int64) ([]ActivationRecord, error)
 	UpsertActivation(activation *ActivationRecord) error
 	TouchActivation(id int64, now time.Time, platform, appVersion, ipAddress string) error
 	DisableActivation(id int64, now time.Time) error
@@ -53,6 +58,12 @@ type Store interface {
 	SetDeviceRemark(deviceID, remark string, now time.Time) error
 	AddAudit(action, targetType string, targetID int64, detail string, now time.Time) error
 	ListAudit(limit int) ([]AuditRecord, error)
+	UpsertAdminAccount(account *AdminAccount, passwordHash string) error
+	GetAdminAccount(id int64) (*AdminAccount, string, error)
+	GetAdminAccountByUsername(username string) (*AdminAccount, string, error)
+	ListAdminAccounts() ([]AdminAccount, error)
+	UpdateAdminAccount(account *AdminAccount, passwordHash string) error
+	ClaimUnownedCards(ownerID int64) error
 }
 
 type Service struct {
@@ -100,6 +111,183 @@ func NewVerifier(publicKey ed25519.PublicKey, opts Options) *Service {
 	return service
 }
 
+func (s *Service) EnsureBootstrapAdmin(username, password string) (*AdminAccount, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil, fmt.Errorf("admin username is required")
+	}
+	if strings.TrimSpace(password) == "" {
+		return nil, fmt.Errorf("admin password is required")
+	}
+	now := s.currentTime()
+	passwordHash, err := hashAdminPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	account := &AdminAccount{
+		Username:    username,
+		DisplayName: "AINexus Admin",
+		Level:       AdminLevelRoot,
+		Status:      AdminAccountStatusActive,
+		Permissions: defaultPermissionsForLevel(AdminLevelRoot),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if existing, _, err := s.store.GetAdminAccountByUsername(username); err == nil {
+		account.ID = existing.ID
+		account.DisplayName = existing.DisplayName
+		account.CreatedAt = existing.CreatedAt
+		account.CreatedBy = existing.CreatedBy
+	}
+	if err := s.store.UpsertAdminAccount(account, passwordHash); err != nil {
+		return nil, err
+	}
+	if err := s.store.ClaimUnownedCards(account.ID); err != nil {
+		return nil, err
+	}
+	return account, nil
+}
+
+func (s *Service) AuthenticateAdmin(username, password string) (*AdminAccount, error) {
+	account, passwordHash, err := s.store.GetAdminAccountByUsername(strings.TrimSpace(username))
+	if err != nil {
+		return nil, err
+	}
+	if account.Status != AdminAccountStatusActive {
+		return nil, ErrForbidden
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
+		return nil, ErrForbidden
+	}
+	return account, nil
+}
+
+func (s *Service) GetAdminAccount(id int64) (*AdminAccount, error) {
+	account, _, err := s.store.GetAdminAccount(id)
+	return account, err
+}
+
+func (s *Service) ListAdminAccountsFor(actor *AdminAccount) ([]AdminAccount, error) {
+	if actor == nil || !hasPermission(actor, PermissionAccountsView) {
+		return nil, ErrForbidden
+	}
+	accounts, err := s.store.ListAdminAccounts()
+	if err != nil {
+		return nil, err
+	}
+	if actor.Level == AdminLevelRoot {
+		return accounts, nil
+	}
+	scope := accountScopeMap(actor, accounts)
+	filtered := make([]AdminAccount, 0)
+	for _, account := range accounts {
+		if scope[account.ID] {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered, nil
+}
+
+func (s *Service) CreateAdminAccount(actor *AdminAccount, req CreateAdminAccountRequest) (*AdminAccount, error) {
+	if actor == nil || !hasPermission(actor, PermissionAccountsManage) {
+		return nil, ErrForbidden
+	}
+	username := strings.TrimSpace(req.Username)
+	if username == "" || strings.TrimSpace(req.Password) == "" {
+		return nil, fmt.Errorf("username and password are required")
+	}
+	level := req.Level
+	if level == 0 {
+		level = AdminLevelDistributor
+	}
+	if level < AdminLevelRoot || level > AdminLevelDistributor {
+		return nil, fmt.Errorf("unsupported admin level")
+	}
+	parentID := req.ParentID
+	if parentID == 0 && level != AdminLevelRoot {
+		parentID = actor.ID
+	}
+	if actor.Level != AdminLevelRoot && parentID != actor.ID {
+		if ok, err := s.accountInScope(actor, parentID); err != nil || !ok {
+			if err != nil {
+				return nil, err
+			}
+			return nil, ErrForbidden
+		}
+	}
+	permissions := req.Permissions
+	if len(permissions) == 0 {
+		permissions = defaultPermissionsForLevel(level)
+	}
+	now := s.currentTime()
+	passwordHash, err := hashAdminPassword(req.Password)
+	if err != nil {
+		return nil, err
+	}
+	account := &AdminAccount{
+		Username:    username,
+		DisplayName: strings.TrimSpace(req.DisplayName),
+		Level:       level,
+		ParentID:    parentID,
+		Status:      AdminAccountStatusActive,
+		Permissions: normalizePermissions(permissions),
+		CreatedBy:   actor.ID,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := s.store.UpsertAdminAccount(account, passwordHash); err != nil {
+		return nil, err
+	}
+	_ = s.store.AddAudit("create_admin_account", "admin_account", account.ID, fmt.Sprintf("username=%s level=%d parent=%d", account.Username, account.Level, account.ParentID), now)
+	return account, nil
+}
+
+func (s *Service) UpdateAdminAccount(actor *AdminAccount, id int64, req UpdateAdminAccountRequest) (*AdminAccount, error) {
+	if actor == nil || !hasPermission(actor, PermissionAccountsManage) {
+		return nil, ErrForbidden
+	}
+	account, _, err := s.store.GetAdminAccount(id)
+	if err != nil {
+		return nil, err
+	}
+	if actor.Level != AdminLevelRoot {
+		if ok, err := s.accountInScope(actor, id); err != nil || !ok || actor.ID == id {
+			if err != nil {
+				return nil, err
+			}
+			return nil, ErrForbidden
+		}
+	}
+	if strings.TrimSpace(req.DisplayName) != "" {
+		account.DisplayName = strings.TrimSpace(req.DisplayName)
+	}
+	if req.Level != 0 {
+		account.Level = req.Level
+	}
+	if req.ParentID != 0 {
+		account.ParentID = req.ParentID
+	}
+	if strings.TrimSpace(req.Status) != "" {
+		account.Status = strings.TrimSpace(req.Status)
+	}
+	if len(req.Permissions) > 0 {
+		account.Permissions = normalizePermissions(req.Permissions)
+	}
+	account.UpdatedAt = s.currentTime()
+	passwordHash := ""
+	if strings.TrimSpace(req.Password) != "" {
+		passwordHash, err = hashAdminPassword(req.Password)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := s.store.UpdateAdminAccount(account, passwordHash); err != nil {
+		return nil, err
+	}
+	_ = s.store.AddAudit("update_admin_account", "admin_account", account.ID, fmt.Sprintf("username=%s status=%s level=%d parent=%d", account.Username, account.Status, account.Level, account.ParentID), account.UpdatedAt)
+	return account, nil
+}
+
 func (s *Service) GenerateCards(req GenerateCardsRequest) (*GenerateCardsResult, error) {
 	count := req.Count
 	if count <= 0 {
@@ -121,14 +309,16 @@ func (s *Service) GenerateCards(req GenerateCardsRequest) (*GenerateCardsResult,
 			return nil, err
 		}
 		card := &CardRecord{
-			CardHash:   HashCardKey(cardKey),
-			Plan:       req.Plan,
-			Days:       days,
-			MaxDevices: maxDevices,
-			Status:     CardStatusActive,
-			Customer:   strings.TrimSpace(req.Customer),
-			Remark:     strings.TrimSpace(req.Remark),
-			CreatedAt:  now,
+			CardHash:           HashCardKey(cardKey),
+			Plan:               req.Plan,
+			Days:               days,
+			MaxDevices:         maxDevices,
+			Status:             CardStatusActive,
+			Customer:           strings.TrimSpace(req.Customer),
+			Remark:             strings.TrimSpace(req.Remark),
+			OwnerAccountID:     req.OwnerAccountID,
+			CreatedByAccountID: req.CreatedByAccountID,
+			CreatedAt:          now,
 		}
 		if err := s.store.CreateCard(card); err != nil {
 			return nil, err
@@ -138,16 +328,18 @@ func (s *Service) GenerateCards(req GenerateCardsRequest) (*GenerateCardsResult,
 			return nil, err
 		}
 		result.Cards = append(result.Cards, GeneratedCard{
-			ID:         card.ID,
-			CardKey:    cardKey,
-			CardHash:   card.CardHash,
-			Plan:       card.Plan,
-			Days:       card.Days,
-			MaxDevices: card.MaxDevices,
-			Customer:   card.Customer,
-			Remark:     card.Remark,
-			Status:     card.Status,
-			CreatedAt:  card.CreatedAt,
+			ID:                 card.ID,
+			CardKey:            cardKey,
+			CardHash:           card.CardHash,
+			Plan:               card.Plan,
+			Days:               card.Days,
+			MaxDevices:         card.MaxDevices,
+			Customer:           card.Customer,
+			Remark:             card.Remark,
+			Status:             card.Status,
+			OwnerAccountID:     card.OwnerAccountID,
+			CreatedByAccountID: card.CreatedByAccountID,
+			CreatedAt:          card.CreatedAt,
 		})
 	}
 	csvText, err := cardsCSV(result.Cards)
@@ -251,8 +443,36 @@ func (s *Service) ListCards() ([]CardRecord, error) {
 	return s.store.ListCards()
 }
 
+func (s *Service) ListCardsFor(actor *AdminAccount) ([]CardRecord, error) {
+	if actor == nil || !hasPermission(actor, PermissionCardsView) {
+		return nil, ErrForbidden
+	}
+	if actor.Level == AdminLevelRoot {
+		return s.store.ListCards()
+	}
+	ownerIDs, err := s.ownerScopeIDs(actor)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.ListCardsByOwner(ownerIDs)
+}
+
 func (s *Service) ListActivations() ([]ActivationRecord, error) {
 	return s.store.ListActivations()
+}
+
+func (s *Service) ListActivationsFor(actor *AdminAccount) ([]ActivationRecord, error) {
+	if actor == nil || !hasPermission(actor, PermissionActivationsView) {
+		return nil, ErrForbidden
+	}
+	if actor.Level == AdminLevelRoot {
+		return s.store.ListActivations()
+	}
+	ownerIDs, err := s.ownerScopeIDs(actor)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.ListActivationsByOwner(ownerIDs)
 }
 
 func (s *Service) ListDevices() ([]DeviceRecord, error) {
@@ -260,6 +480,28 @@ func (s *Service) ListDevices() ([]DeviceRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.devicesFromActivations(activations)
+}
+
+func (s *Service) ListDevicesFor(actor *AdminAccount) ([]DeviceRecord, error) {
+	if actor == nil || !hasPermission(actor, PermissionDevicesView) {
+		return nil, ErrForbidden
+	}
+	if actor.Level == AdminLevelRoot {
+		return s.ListDevices()
+	}
+	ownerIDs, err := s.ownerScopeIDs(actor)
+	if err != nil {
+		return nil, err
+	}
+	activations, err := s.store.ListActivationsByOwner(ownerIDs)
+	if err != nil {
+		return nil, err
+	}
+	return s.devicesFromActivations(activations)
+}
+
+func (s *Service) devicesFromActivations(activations []ActivationRecord) ([]DeviceRecord, error) {
 	remarks, err := s.store.ListDeviceRemarks()
 	if err != nil {
 		return nil, err
@@ -280,6 +522,10 @@ func (s *Service) ListDevices() ([]DeviceRecord, error) {
 		}
 		device := &devices[position]
 		device.Licenses = append(device.Licenses, activation)
+		if device.OwnerAccountID == 0 {
+			device.OwnerAccountID = activation.OwnerAccountID
+			device.OwnerUsername = activation.OwnerUsername
+		}
 		if device.LastCheckedAt.IsZero() || activation.LastCheckedAt.After(device.LastCheckedAt) {
 			device.LastCheckedAt = activation.LastCheckedAt
 			device.Platform = activation.Platform
@@ -310,6 +556,25 @@ func (s *Service) ListDevices() ([]DeviceRecord, error) {
 	return devices, nil
 }
 
+func (s *Service) GenerateCardsFor(actor *AdminAccount, req GenerateCardsRequest) (*GenerateCardsResult, error) {
+	if actor == nil || !hasPermission(actor, PermissionCardsGenerate) {
+		return nil, ErrForbidden
+	}
+	ownerID := req.OwnerAccountID
+	if ownerID == 0 {
+		ownerID = actor.ID
+	}
+	if ok, err := s.accountInScope(actor, ownerID); err != nil || !ok {
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrForbidden
+	}
+	req.OwnerAccountID = ownerID
+	req.CreatedByAccountID = actor.ID
+	return s.GenerateCards(req)
+}
+
 func (s *Service) ListAudit() ([]AuditRecord, error) {
 	return s.store.ListAudit(200)
 }
@@ -325,6 +590,23 @@ func (s *Service) DisableCard(id int64) error {
 	}
 	detail := fmt.Sprintf("plan=%s days=%d disabledAt=%s", card.Plan, card.Days, now.Format(time.RFC3339))
 	return s.store.AddAudit("disable_card", "card", id, detail, now)
+}
+
+func (s *Service) DisableCardFor(actor *AdminAccount, id int64) error {
+	if actor == nil || !hasPermission(actor, PermissionCardsDisable) {
+		return ErrForbidden
+	}
+	card, err := s.store.GetCard(id)
+	if err != nil {
+		return err
+	}
+	if ok, err := s.accountInScope(actor, card.OwnerAccountID); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		return ErrForbidden
+	}
+	return s.DisableCard(id)
 }
 
 func (s *Service) DeleteCard(id int64) error {
@@ -343,6 +625,23 @@ func (s *Service) DeleteCard(id int64) error {
 	return s.store.AddAudit("delete_card", "card", id, detail, now)
 }
 
+func (s *Service) DeleteCardFor(actor *AdminAccount, id int64) error {
+	if actor == nil || !hasPermission(actor, PermissionCardsDelete) {
+		return ErrForbidden
+	}
+	card, err := s.store.GetCard(id)
+	if err != nil {
+		return err
+	}
+	if ok, err := s.accountInScope(actor, card.OwnerAccountID); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		return ErrForbidden
+	}
+	return s.DeleteCard(id)
+}
+
 func (s *Service) DisableActivation(id int64) error {
 	now := s.currentTime()
 	activation, err := s.store.GetActivation(id)
@@ -354,6 +653,23 @@ func (s *Service) DisableActivation(id int64) error {
 	}
 	detail := fmt.Sprintf("device=%s oldExpiry=%s newExpiry=%s", activation.DeviceID, activation.ExpiresAt.Format(time.RFC3339), now.Format(time.RFC3339))
 	return s.store.AddAudit("disable_activation", "activation", id, detail, now)
+}
+
+func (s *Service) DisableActivationFor(actor *AdminAccount, id int64) error {
+	if actor == nil || !hasPermission(actor, PermissionActivationsDisable) {
+		return ErrForbidden
+	}
+	activation, err := s.store.GetActivation(id)
+	if err != nil {
+		return err
+	}
+	if ok, err := s.accountInScope(actor, activation.OwnerAccountID); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		return ErrForbidden
+	}
+	return s.DisableActivation(id)
 }
 
 func (s *Service) SetDeviceExpiry(deviceID string, expiresAt time.Time) error {
@@ -382,6 +698,19 @@ func (s *Service) SetDeviceExpiry(deviceID string, expiresAt time.Time) error {
 	}
 	detail := fmt.Sprintf("device=%s oldExpiry=%s newExpiry=%s", deviceID, current.ExpiresAt.Format(time.RFC3339), expiresAt.Format(time.RFC3339))
 	return s.store.AddAudit("set_device_expiry", "activation", current.CurrentActivationID, detail, now)
+}
+
+func (s *Service) SetDeviceExpiryFor(actor *AdminAccount, deviceID string, expiresAt time.Time) error {
+	if actor == nil || !hasPermission(actor, PermissionDevicesExpiry) {
+		return ErrForbidden
+	}
+	if ok, err := s.deviceInScope(actor, deviceID); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		return ErrForbidden
+	}
+	return s.SetDeviceExpiry(deviceID, expiresAt)
 }
 
 func (s *Service) SetDeviceRemark(deviceID, remark string) error {
@@ -415,8 +744,180 @@ func (s *Service) SetDeviceRemark(deviceID, remark string) error {
 	return s.store.AddAudit("set_device_remark", "device", 0, detail, now)
 }
 
+func (s *Service) SetDeviceRemarkFor(actor *AdminAccount, deviceID, remark string) error {
+	if actor == nil || !hasPermission(actor, PermissionDevicesRemark) {
+		return ErrForbidden
+	}
+	if ok, err := s.deviceInScope(actor, deviceID); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		return ErrForbidden
+	}
+	return s.SetDeviceRemark(deviceID, remark)
+}
+
 func (s *Service) RecordAudit(action, targetType string, targetID int64, detail string) error {
 	return s.store.AddAudit(strings.TrimSpace(action), strings.TrimSpace(targetType), targetID, strings.TrimSpace(detail), s.currentTime())
+}
+
+func (s *Service) ownerScopeIDs(actor *AdminAccount) ([]int64, error) {
+	if actor == nil {
+		return nil, ErrForbidden
+	}
+	if actor.Level == AdminLevelRoot {
+		accounts, err := s.store.ListAdminAccounts()
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]int64, 0, len(accounts))
+		for _, account := range accounts {
+			ids = append(ids, account.ID)
+		}
+		return ids, nil
+	}
+	accounts, err := s.store.ListAdminAccounts()
+	if err != nil {
+		return nil, err
+	}
+	scope := accountScopeMap(actor, accounts)
+	ids := make([]int64, 0, len(scope))
+	for id := range scope {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func (s *Service) accountInScope(actor *AdminAccount, accountID int64) (bool, error) {
+	if actor == nil || accountID == 0 {
+		return false, nil
+	}
+	if actor.Level == AdminLevelRoot {
+		return true, nil
+	}
+	accounts, err := s.store.ListAdminAccounts()
+	if err != nil {
+		return false, err
+	}
+	return accountScopeMap(actor, accounts)[accountID], nil
+}
+
+func (s *Service) deviceInScope(actor *AdminAccount, deviceID string) (bool, error) {
+	devices, err := s.ListDevicesFor(actor)
+	if err != nil {
+		return false, err
+	}
+	for _, device := range devices {
+		if device.DeviceID == strings.TrimSpace(deviceID) {
+			return true, nil
+		}
+	}
+	return false, sql.ErrNoRows
+}
+
+func accountScopeMap(actor *AdminAccount, accounts []AdminAccount) map[int64]bool {
+	scope := map[int64]bool{actor.ID: true}
+	changed := true
+	for changed {
+		changed = false
+		for _, account := range accounts {
+			if scope[account.ParentID] && !scope[account.ID] {
+				scope[account.ID] = true
+				changed = true
+			}
+		}
+	}
+	return scope
+}
+
+func hasPermission(account *AdminAccount, permission string) bool {
+	if account == nil || account.Status != AdminAccountStatusActive {
+		return false
+	}
+	for _, value := range account.Permissions {
+		if value == permission || value == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultPermissionsForLevel(level int) []string {
+	switch level {
+	case AdminLevelRoot:
+		return allAdminPermissions()
+	case AdminLevelReseller:
+		return []string{
+			PermissionCardsView,
+			PermissionCardsGenerate,
+			PermissionCardsDisable,
+			PermissionDevicesView,
+			PermissionDevicesRemark,
+			PermissionDevicesExpiry,
+			PermissionActivationsView,
+			PermissionActivationsDisable,
+			PermissionHistoryView,
+			PermissionAccountsView,
+			PermissionAccountsManage,
+		}
+	case AdminLevelDistributor:
+		return []string{
+			PermissionCardsView,
+			PermissionCardsGenerate,
+			PermissionCardsDisable,
+			PermissionDevicesView,
+			PermissionDevicesRemark,
+			PermissionDevicesExpiry,
+			PermissionActivationsView,
+			PermissionActivationsDisable,
+			PermissionHistoryView,
+		}
+	default:
+		return []string{}
+	}
+}
+
+func allAdminPermissions() []string {
+	return []string{
+		PermissionCardsView,
+		PermissionCardsGenerate,
+		PermissionCardsDisable,
+		PermissionCardsDelete,
+		PermissionDevicesView,
+		PermissionDevicesRemark,
+		PermissionDevicesExpiry,
+		PermissionActivationsView,
+		PermissionActivationsDisable,
+		PermissionHistoryView,
+		PermissionAccountsView,
+		PermissionAccountsManage,
+	}
+}
+
+func normalizePermissions(permissions []string) []string {
+	allowed := map[string]bool{}
+	for _, permission := range allAdminPermissions() {
+		allowed[permission] = true
+	}
+	seen := map[string]bool{}
+	result := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		permission = strings.TrimSpace(permission)
+		if permission == "" || !allowed[permission] || seen[permission] {
+			continue
+		}
+		seen[permission] = true
+		result = append(result, permission)
+	}
+	return result
+}
+
+func hashAdminPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
 }
 
 func ResolveDurationDays(plan Plan, customDays int) (int, error) {

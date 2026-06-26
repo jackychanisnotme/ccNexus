@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -84,18 +85,80 @@ func (s *SQLiteStore) init() error {
 		updated_at DATETIME NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS admin_accounts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		display_name TEXT,
+		level INTEGER NOT NULL,
+		parent_id INTEGER NOT NULL DEFAULT 0,
+		status TEXT NOT NULL DEFAULT 'active',
+		permissions TEXT NOT NULL DEFAULT '',
+		created_by INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_license_cards_status ON license_cards(status);
 	CREATE INDEX IF NOT EXISTS idx_license_cards_created_at ON license_cards(created_at);
 	CREATE INDEX IF NOT EXISTS idx_license_activations_device ON license_activations(device_id);
 	CREATE INDEX IF NOT EXISTS idx_license_activations_status ON license_activations(status);
 	CREATE INDEX IF NOT EXISTS idx_license_activations_expires ON license_activations(expires_at);
 	CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON admin_audit_logs(created_at);
+	CREATE INDEX IF NOT EXISTS idx_admin_accounts_parent ON admin_accounts(parent_id);
 
 	UPDATE license_activations
 	SET expires_at = disabled_at, updated_at = CURRENT_TIMESTAMP
 	WHERE status = 'disabled' AND disabled_at IS NOT NULL AND expires_at > disabled_at;
 	`
-	_, err := s.db.Exec(schema)
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	for _, column := range []struct {
+		table      string
+		name       string
+		definition string
+	}{
+		{"license_cards", "owner_account_id", "INTEGER NOT NULL DEFAULT 0"},
+		{"license_cards", "created_by_account_id", "INTEGER NOT NULL DEFAULT 0"},
+		{"admin_audit_logs", "actor_account_id", "INTEGER NOT NULL DEFAULT 0"},
+		{"admin_audit_logs", "actor_username", "TEXT"},
+		{"admin_audit_logs", "ip_address", "TEXT"},
+	} {
+		if err := s.ensureColumn(column.table, column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_license_cards_owner ON license_cards(owner_account_id)`); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ensureColumn(table, name, definition string) error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var columnName string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if columnName == name {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + name + ` ` + definition)
 	return err
 }
 
@@ -104,9 +167,9 @@ func (s *SQLiteStore) CreateCard(card *CardRecord) error {
 		return fmt.Errorf("card is required")
 	}
 	result, err := s.db.Exec(`
-		INSERT INTO license_cards (card_hash, plan, days, max_devices, status, customer, remark, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, card.CardHash, string(card.Plan), card.Days, card.MaxDevices, card.Status, card.Customer, card.Remark, formatTime(card.CreatedAt))
+		INSERT INTO license_cards (card_hash, plan, days, max_devices, status, customer, remark, owner_account_id, created_by_account_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, card.CardHash, string(card.Plan), card.Days, card.MaxDevices, card.Status, card.Customer, card.Remark, card.OwnerAccountID, card.CreatedByAccountID, formatTime(card.CreatedAt))
 	if err != nil {
 		return err
 	}
@@ -116,18 +179,23 @@ func (s *SQLiteStore) CreateCard(card *CardRecord) error {
 
 func (s *SQLiteStore) FindCardByHash(hash string) (*CardRecord, error) {
 	row := s.db.QueryRow(`
-		SELECT id, card_hash, plan, days, max_devices, status, COALESCE(customer, ''), COALESCE(remark, ''), created_at, disabled_at
-		FROM license_cards WHERE card_hash = ?
+		SELECT c.id, c.card_hash, c.plan, c.days, c.max_devices, c.status, COALESCE(c.customer, ''), COALESCE(c.remark, ''),
+			c.owner_account_id, c.created_by_account_id, COALESCE(a.username, ''), c.created_at, c.disabled_at
+		FROM license_cards c
+		LEFT JOIN admin_accounts a ON a.id = c.owner_account_id
+		WHERE c.card_hash = ?
 	`, hash)
 	return scanCard(row)
 }
 
 func (s *SQLiteStore) GetCard(id int64) (*CardRecord, error) {
 	row := s.db.QueryRow(`
-		SELECT c.id, c.card_hash, c.plan, c.days, c.max_devices, c.status, COALESCE(c.customer, ''), COALESCE(c.remark, ''), c.created_at, c.disabled_at,
+		SELECT c.id, c.card_hash, c.plan, c.days, c.max_devices, c.status, COALESCE(c.customer, ''), COALESCE(c.remark, ''),
+			c.owner_account_id, c.created_by_account_id, COALESCE(owner.username, ''), c.created_at, c.disabled_at,
 			COUNT(a.id)
 		FROM license_cards c
 		LEFT JOIN license_activations a ON a.card_id = c.id AND a.status = ?
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
 		WHERE c.id = ?
 		GROUP BY c.id
 	`, ActivationStatusActive, id)
@@ -136,13 +204,49 @@ func (s *SQLiteStore) GetCard(id int64) (*CardRecord, error) {
 
 func (s *SQLiteStore) ListCards() ([]CardRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT c.id, c.card_hash, c.plan, c.days, c.max_devices, c.status, COALESCE(c.customer, ''), COALESCE(c.remark, ''), c.created_at, c.disabled_at,
+		SELECT c.id, c.card_hash, c.plan, c.days, c.max_devices, c.status, COALESCE(c.customer, ''), COALESCE(c.remark, ''),
+			c.owner_account_id, c.created_by_account_id, COALESCE(owner.username, ''), c.created_at, c.disabled_at,
 			COUNT(a.id)
 		FROM license_cards c
 		LEFT JOIN license_activations a ON a.card_id = c.id AND a.status = ?
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
 		GROUP BY c.id
 		ORDER BY c.id DESC
 	`, ActivationStatusActive)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]CardRecord, 0)
+	for rows.Next() {
+		card, err := scanCardWithCount(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *card)
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) ListCardsByOwner(ownerIDs []int64) ([]CardRecord, error) {
+	if len(ownerIDs) == 0 {
+		return []CardRecord{}, nil
+	}
+	placeholders, args := int64Placeholders(ownerIDs)
+	query := `
+		SELECT c.id, c.card_hash, c.plan, c.days, c.max_devices, c.status, COALESCE(c.customer, ''), COALESCE(c.remark, ''),
+			c.owner_account_id, c.created_by_account_id, COALESCE(owner.username, ''), c.created_at, c.disabled_at,
+			COUNT(a.id)
+		FROM license_cards c
+		LEFT JOIN license_activations a ON a.card_id = c.id AND a.status = ?
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
+		WHERE c.owner_account_id IN (` + placeholders + `)
+		GROUP BY c.id
+		ORDER BY c.id DESC
+	`
+	queryArgs := append([]interface{}{ActivationStatusActive}, args...)
+	rows, err := s.db.Query(query, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -332,9 +436,10 @@ func (s *SQLiteStore) FindActivation(cardID int64, deviceID string) (*Activation
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
 			c.status, c.plan, c.days,
-			COALESCE(c.customer, ''), COALESCE(c.remark, '')
+			COALESCE(c.customer, ''), COALESCE(c.remark, ''), c.owner_account_id, COALESCE(owner.username, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
 		WHERE a.card_id = ? AND a.device_id = ?
 	`, cardID, deviceID)
 	return scanActivation(row)
@@ -345,9 +450,10 @@ func (s *SQLiteStore) GetActivation(id int64) (*ActivationRecord, error) {
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
 			c.status, c.plan, c.days,
-			COALESCE(c.customer, ''), COALESCE(c.remark, '')
+			COALESCE(c.customer, ''), COALESCE(c.remark, ''), c.owner_account_id, COALESCE(owner.username, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
 		WHERE a.id = ?
 	`, id)
 	return scanActivation(row)
@@ -358,9 +464,10 @@ func (s *SQLiteStore) LatestActivationForDevice(deviceID string) (*ActivationRec
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
 			c.status, c.plan, c.days,
-			COALESCE(c.customer, ''), COALESCE(c.remark, '')
+			COALESCE(c.customer, ''), COALESCE(c.remark, ''), c.owner_account_id, COALESCE(owner.username, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
 		WHERE a.device_id = ? AND a.status = ?
 		ORDER BY a.expires_at DESC
 		LIMIT 1
@@ -373,11 +480,45 @@ func (s *SQLiteStore) ListActivations() ([]ActivationRecord, error) {
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
 			c.status, c.plan, c.days,
-			COALESCE(c.customer, ''), COALESCE(c.remark, '')
+			COALESCE(c.customer, ''), COALESCE(c.remark, ''), c.owner_account_id, COALESCE(owner.username, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
 		ORDER BY a.id DESC
 	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]ActivationRecord, 0)
+	for rows.Next() {
+		activation, err := scanActivation(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *activation)
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) ListActivationsByOwner(ownerIDs []int64) ([]ActivationRecord, error) {
+	if len(ownerIDs) == 0 {
+		return []ActivationRecord{}, nil
+	}
+	placeholders, args := int64Placeholders(ownerIDs)
+	query := `
+		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
+			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
+			c.status, c.plan, c.days,
+			COALESCE(c.customer, ''), COALESCE(c.remark, ''), c.owner_account_id, COALESCE(owner.username, '')
+		FROM license_activations a
+		INNER JOIN license_cards c ON c.id = a.card_id
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
+		WHERE c.owner_account_id IN (` + placeholders + `)
+		ORDER BY a.id DESC
+	`
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -421,8 +562,11 @@ func (tx *sqliteImmediateTx) QueryRow(query string, args ...interface{}) *sql.Ro
 
 func findCardByHashTx(tx dbRunner, hash string) (*CardRecord, error) {
 	row := tx.QueryRow(`
-		SELECT id, card_hash, plan, days, max_devices, status, COALESCE(customer, ''), COALESCE(remark, ''), created_at, disabled_at
-		FROM license_cards WHERE card_hash = ?
+		SELECT c.id, c.card_hash, c.plan, c.days, c.max_devices, c.status, COALESCE(c.customer, ''), COALESCE(c.remark, ''),
+			c.owner_account_id, c.created_by_account_id, COALESCE(owner.username, ''), c.created_at, c.disabled_at
+		FROM license_cards c
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
+		WHERE c.card_hash = ?
 	`, hash)
 	return scanCard(row)
 }
@@ -438,9 +582,10 @@ func findActivationTx(tx dbRunner, cardID int64, deviceID string) (*ActivationRe
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
 			c.status, c.plan, c.days,
-			COALESCE(c.customer, ''), COALESCE(c.remark, '')
+			COALESCE(c.customer, ''), COALESCE(c.remark, ''), c.owner_account_id, COALESCE(owner.username, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
 		WHERE a.card_id = ? AND a.device_id = ?
 	`, cardID, deviceID)
 	return scanActivation(row)
@@ -451,9 +596,10 @@ func latestActivationForDeviceTx(tx dbRunner, deviceID string) (*ActivationRecor
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
 			c.status, c.plan, c.days,
-			COALESCE(c.customer, ''), COALESCE(c.remark, '')
+			COALESCE(c.customer, ''), COALESCE(c.remark, ''), c.owner_account_id, COALESCE(owner.username, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
 		WHERE a.device_id = ? AND a.status = ?
 		ORDER BY a.expires_at DESC
 		LIMIT 1
@@ -506,9 +652,10 @@ func findActivationForRunner(db dbRunner, cardID int64, deviceID string) (*Activ
 		SELECT a.id, a.card_id, a.device_id, a.status, a.activated_at, a.expires_at, a.last_checked_at, a.disabled_at,
 			COALESCE(a.platform, ''), COALESCE(a.app_version, ''), COALESCE(a.ip_address, ''),
 			c.status, c.plan, c.days,
-			COALESCE(c.customer, ''), COALESCE(c.remark, '')
+			COALESCE(c.customer, ''), COALESCE(c.remark, ''), c.owner_account_id, COALESCE(owner.username, '')
 		FROM license_activations a
 		INNER JOIN license_cards c ON c.id = a.card_id
+		LEFT JOIN admin_accounts owner ON owner.id = c.owner_account_id
 		WHERE a.card_id = ? AND a.device_id = ?
 	`, cardID, deviceID)
 	return scanActivation(row)
@@ -672,8 +819,199 @@ func (s *SQLiteStore) ListAudit(limit int) ([]AuditRecord, error) {
 	return result, rows.Err()
 }
 
+func (s *SQLiteStore) UpsertAdminAccount(account *AdminAccount, passwordHash string) error {
+	if account == nil {
+		return fmt.Errorf("admin account is required")
+	}
+	if account.CreatedAt.IsZero() {
+		account.CreatedAt = time.Now().UTC()
+	}
+	if account.UpdatedAt.IsZero() {
+		account.UpdatedAt = account.CreatedAt
+	}
+	result, err := s.db.Exec(`
+		INSERT INTO admin_accounts (username, password_hash, display_name, level, parent_id, status, permissions, created_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(username) DO UPDATE SET
+			password_hash=excluded.password_hash,
+			display_name=excluded.display_name,
+			level=excluded.level,
+			parent_id=excluded.parent_id,
+			status=excluded.status,
+			permissions=excluded.permissions,
+			updated_at=excluded.updated_at
+	`, account.Username, passwordHash, account.DisplayName, account.Level, account.ParentID, account.Status, encodePermissions(account.Permissions), account.CreatedBy, formatTime(account.CreatedAt), formatTime(account.UpdatedAt))
+	if err != nil {
+		return err
+	}
+	if account.ID == 0 {
+		if id, err := result.LastInsertId(); err == nil && id > 0 {
+			account.ID = id
+		}
+	}
+	if account.ID == 0 {
+		existing, _, err := s.GetAdminAccountByUsername(account.Username)
+		if err != nil {
+			return err
+		}
+		account.ID = existing.ID
+		account.CreatedAt = existing.CreatedAt
+	}
+	return nil
+}
+
+func (s *SQLiteStore) GetAdminAccount(id int64) (*AdminAccount, string, error) {
+	row := s.db.QueryRow(`
+		SELECT id, username, password_hash, COALESCE(display_name, ''), level, parent_id, status, COALESCE(permissions, ''), created_by, created_at, updated_at
+		FROM admin_accounts
+		WHERE id = ?
+	`, id)
+	return scanAdminAccount(row)
+}
+
+func (s *SQLiteStore) GetAdminAccountByUsername(username string) (*AdminAccount, string, error) {
+	row := s.db.QueryRow(`
+		SELECT id, username, password_hash, COALESCE(display_name, ''), level, parent_id, status, COALESCE(permissions, ''), created_by, created_at, updated_at
+		FROM admin_accounts
+		WHERE username = ?
+	`, username)
+	return scanAdminAccount(row)
+}
+
+func (s *SQLiteStore) ListAdminAccounts() ([]AdminAccount, error) {
+	rows, err := s.db.Query(`
+		SELECT id, username, password_hash, COALESCE(display_name, ''), level, parent_id, status, COALESCE(permissions, ''), created_by, created_at, updated_at
+		FROM admin_accounts
+		ORDER BY level ASC, id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]AdminAccount, 0)
+	for rows.Next() {
+		account, _, err := scanAdminAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *account)
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) UpdateAdminAccount(account *AdminAccount, passwordHash string) error {
+	if account == nil {
+		return fmt.Errorf("admin account is required")
+	}
+	if account.UpdatedAt.IsZero() {
+		account.UpdatedAt = time.Now().UTC()
+	}
+	var result sql.Result
+	var err error
+	if strings.TrimSpace(passwordHash) == "" {
+		result, err = s.db.Exec(`
+			UPDATE admin_accounts
+			SET display_name = ?, level = ?, parent_id = ?, status = ?, permissions = ?, updated_at = ?
+			WHERE id = ?
+		`, account.DisplayName, account.Level, account.ParentID, account.Status, encodePermissions(account.Permissions), formatTime(account.UpdatedAt), account.ID)
+	} else {
+		result, err = s.db.Exec(`
+			UPDATE admin_accounts
+			SET password_hash = ?, display_name = ?, level = ?, parent_id = ?, status = ?, permissions = ?, updated_at = ?
+			WHERE id = ?
+		`, passwordHash, account.DisplayName, account.Level, account.ParentID, account.Status, encodePermissions(account.Permissions), formatTime(account.UpdatedAt), account.ID)
+	}
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ClaimUnownedCards(ownerID int64) error {
+	_, err := s.db.Exec(`
+		UPDATE license_cards
+		SET owner_account_id = CASE WHEN owner_account_id = 0 THEN ? ELSE owner_account_id END,
+			created_by_account_id = CASE WHEN created_by_account_id = 0 THEN ? ELSE created_by_account_id END
+		WHERE owner_account_id = 0 OR created_by_account_id = 0
+	`, ownerID, ownerID)
+	return err
+}
+
 type rowScanner interface {
 	Scan(dest ...interface{}) error
+}
+
+func int64Placeholders(values []int64) (string, []interface{}) {
+	placeholders := make([]string, 0, len(values))
+	args := make([]interface{}, 0, len(values))
+	for _, value := range values {
+		placeholders = append(placeholders, "?")
+		args = append(args, value)
+	}
+	return strings.Join(placeholders, ","), args
+}
+
+func encodePermissions(permissions []string) string {
+	clean := make([]string, 0, len(permissions))
+	seen := map[string]bool{}
+	for _, permission := range permissions {
+		permission = strings.TrimSpace(permission)
+		if permission == "" || seen[permission] {
+			continue
+		}
+		seen[permission] = true
+		clean = append(clean, permission)
+	}
+	return strings.Join(clean, ",")
+}
+
+func decodePermissions(encoded string) []string {
+	if strings.TrimSpace(encoded) == "" {
+		return []string{}
+	}
+	parts := strings.Split(encoded, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+func scanAdminAccount(row rowScanner) (*AdminAccount, string, error) {
+	account := &AdminAccount{}
+	var passwordHash string
+	var permissions string
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(
+		&account.ID,
+		&account.Username,
+		&passwordHash,
+		&account.DisplayName,
+		&account.Level,
+		&account.ParentID,
+		&account.Status,
+		&permissions,
+		&account.CreatedBy,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return nil, "", err
+	}
+	account.Permissions = decodePermissions(permissions)
+	account.CreatedAt = parseTime(createdAt)
+	account.UpdatedAt = parseTime(updatedAt)
+	return account, passwordHash, nil
 }
 
 func scanCard(row rowScanner) (*CardRecord, error) {
@@ -681,7 +1019,21 @@ func scanCard(row rowScanner) (*CardRecord, error) {
 	var plan string
 	var createdAt string
 	var disabledAt sql.NullString
-	if err := row.Scan(&card.ID, &card.CardHash, &plan, &card.Days, &card.MaxDevices, &card.Status, &card.Customer, &card.Remark, &createdAt, &disabledAt); err != nil {
+	if err := row.Scan(
+		&card.ID,
+		&card.CardHash,
+		&plan,
+		&card.Days,
+		&card.MaxDevices,
+		&card.Status,
+		&card.Customer,
+		&card.Remark,
+		&card.OwnerAccountID,
+		&card.CreatedByAccountID,
+		&card.OwnerUsername,
+		&createdAt,
+		&disabledAt,
+	); err != nil {
 		return nil, err
 	}
 	card.Plan = Plan(plan)
@@ -697,7 +1049,22 @@ func scanCardWithCount(row rowScanner) (*CardRecord, error) {
 	var plan string
 	var createdAt string
 	var disabledAt sql.NullString
-	if err := row.Scan(&card.ID, &card.CardHash, &plan, &card.Days, &card.MaxDevices, &card.Status, &card.Customer, &card.Remark, &createdAt, &disabledAt, &card.Activations); err != nil {
+	if err := row.Scan(
+		&card.ID,
+		&card.CardHash,
+		&plan,
+		&card.Days,
+		&card.MaxDevices,
+		&card.Status,
+		&card.Customer,
+		&card.Remark,
+		&card.OwnerAccountID,
+		&card.CreatedByAccountID,
+		&card.OwnerUsername,
+		&createdAt,
+		&disabledAt,
+		&card.Activations,
+	); err != nil {
 		return nil, err
 	}
 	card.Plan = Plan(plan)
@@ -732,6 +1099,8 @@ func scanActivation(row rowScanner) (*ActivationRecord, error) {
 		&activation.Days,
 		&activation.Customer,
 		&activation.Remark,
+		&activation.OwnerAccountID,
+		&activation.OwnerUsername,
 	); err != nil {
 		return nil, err
 	}
