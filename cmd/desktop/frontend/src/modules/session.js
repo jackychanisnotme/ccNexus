@@ -1,4 +1,4 @@
-import { GetSessions, DeleteSession, RenameSession, GetSessionData, GetCodexSessions, GetCodexSessionData, DeleteCodexSession, RenameCodexSession } from '../../wailsjs/go/main/App';
+import { GetSessions, DeleteSession, RenameSession, GetSessionData, GetCodexSessions, GetCodexSessionData, DeleteCodexSession, RenameCodexSession, RepairCodexSessionVisibility } from '../../wailsjs/go/main/App';
 import { t } from '../i18n/index.js';
 import { showNotification } from './modal.js';
 import { parseMarkdown } from '../utils/markdown.js';
@@ -8,6 +8,10 @@ let currentProjectDir = '';
 let sessions = [];
 let selectedSessions = {}; // 按目录存储已确认选中的会话
 let tempSelectedSession = null; // 临时选中的会话（未确认）
+let codexVisibilityRepairMode = 'quick';
+let codexVisibilityRepairSessionScope = 'all';
+let codexVisibilityRepairRunning = false;
+let codexVisibilityRepairResult = null;
 
 export function initSession() {
     window.showSessionModal = showSessionModal;
@@ -18,6 +22,11 @@ export function initSession() {
     window.renameSession = renameSession;
     window.viewSessionDetail = viewSessionDetail;
     window.closeSessionDetailModal = closeSessionDetailModal;
+    window.showCodexVisibilityRepairModal = showCodexVisibilityRepairModal;
+    window.closeCodexVisibilityRepairModal = closeCodexVisibilityRepairModal;
+    window.setCodexVisibilityRepairMode = setCodexVisibilityRepairMode;
+    window.setCodexVisibilityRepairSessionScope = setCodexVisibilityRepairSessionScope;
+    window.startCodexVisibilityRepair = startCodexVisibilityRepair;
 }
 
 // 获取选中的会话
@@ -41,6 +50,173 @@ export function clearAllSelectedSessions() {
     }
 }
 
+function getCurrentCodexVisibilitySelectedSession() {
+    if (tempSelectedSession?.sessionId) {
+        return tempSelectedSession;
+    }
+    if (currentProjectDir && selectedSessions[currentProjectDir]?.sessionId) {
+        return selectedSessions[currentProjectDir];
+    }
+    const selected = Object.values(selectedSessions).filter(item => item?.sessionId);
+    return selected.length === 1 ? selected[0] : null;
+}
+
+export function showCodexVisibilityRepairModal() {
+    codexVisibilityRepairMode = 'quick';
+    codexVisibilityRepairSessionScope = getCurrentCodexVisibilitySelectedSession() ? 'selected' : 'all';
+    codexVisibilityRepairRunning = false;
+    codexVisibilityRepairResult = null;
+    renderCodexVisibilityRepairModal();
+}
+
+function closeCodexVisibilityRepairModal() {
+    if (codexVisibilityRepairRunning) return;
+    const modal = document.getElementById('codexVisibilityRepairModal');
+    if (modal) {
+        modal.classList.remove('active');
+        setTimeout(() => modal.remove(), 200);
+    }
+}
+
+function setCodexVisibilityRepairMode(mode) {
+    if (codexVisibilityRepairRunning) return;
+    codexVisibilityRepairMode = mode === 'deep' ? 'deep' : 'quick';
+    renderCodexVisibilityRepairModal();
+}
+
+function setCodexVisibilityRepairSessionScope(scope) {
+    if (codexVisibilityRepairRunning) return;
+    if (scope === 'selected' && !getCurrentCodexVisibilitySelectedSession()) {
+        return;
+    }
+    codexVisibilityRepairSessionScope = scope === 'selected' ? 'selected' : 'all';
+    renderCodexVisibilityRepairModal();
+}
+
+function renderCodexVisibilityRepairModal() {
+    const selected = getCurrentCodexVisibilitySelectedSession();
+    if (!selected && codexVisibilityRepairSessionScope === 'selected') {
+        codexVisibilityRepairSessionScope = 'all';
+    }
+    let modal = document.getElementById('codexVisibilityRepairModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'codexVisibilityRepairModal';
+        modal.className = 'modal active';
+        modal.style.zIndex = '1002';
+        document.body.appendChild(modal);
+    }
+
+    const selectedLabel = selected?.info?.alias || selected?.info?.summary || selected?.sessionId || '';
+    const selectedDesc = selected
+        ? t('session.codexRepairSelectedDesc').replace('{name}', escapeHtml(selectedLabel))
+        : t('session.codexRepairSelectedUnavailable');
+    const result = codexVisibilityRepairResult;
+    const resultHTML = result ? `
+        <div class="codex-visibility-repair-result ${result.success ? 'success' : 'failed'}">
+            <strong>${result.success ? t('session.codexRepairDone') : t('session.codexRepairFailed')}</strong>
+            <div>${escapeHtml(result.message || '')}</div>
+            ${result.targetProvider ? `<div>${t('session.codexRepairTargetProvider')}: <code>${escapeHtml(result.targetProvider)}</code></div>` : ''}
+            ${Number.isFinite(result.updatedSqliteRowCount) ? `<div>${t('session.codexRepairSqliteRows')}: ${result.updatedSqliteRowCount}</div>` : ''}
+            ${Number.isFinite(result.changedRolloutFileCount) ? `<div>${t('session.codexRepairRolloutFiles')}: ${result.changedRolloutFileCount}</div>` : ''}
+            ${result.backupDir ? `<div>${t('session.codexRepairBackupDir')}: <code>${escapeHtml(result.backupDir)}</code></div>` : ''}
+        </div>
+    ` : '';
+
+    modal.innerHTML = `
+        <div class="modal-content codex-visibility-repair-modal">
+            <div class="modal-header">
+                <h2>${t('session.codexRepairTitle')}</h2>
+                <button class="modal-close" onclick="window.closeCodexVisibilityRepairModal()">&times;</button>
+            </div>
+            <div class="modal-body codex-visibility-repair-body">
+                <p class="codex-visibility-repair-copy">${t('session.codexRepairCopy')}</p>
+                <div class="codex-visibility-repair-section">
+                    <div class="codex-visibility-repair-label">${t('session.codexRepairModeTitle')}</div>
+                    <div class="codex-visibility-repair-grid">
+                        <button class="codex-visibility-repair-card ${codexVisibilityRepairMode === 'quick' ? 'selected' : ''}" onclick="window.setCodexVisibilityRepairMode('quick')" ${codexVisibilityRepairRunning ? 'disabled' : ''}>
+                            <strong>${t('session.codexRepairQuick')}</strong>
+                            <span>${t('session.codexRepairQuickDesc')}</span>
+                        </button>
+                        <button class="codex-visibility-repair-card ${codexVisibilityRepairMode === 'deep' ? 'selected' : ''}" onclick="window.setCodexVisibilityRepairMode('deep')" ${codexVisibilityRepairRunning ? 'disabled' : ''}>
+                            <strong>${t('session.codexRepairDeep')}</strong>
+                            <span>${t('session.codexRepairDeepDesc')}</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="codex-visibility-repair-section">
+                    <div class="codex-visibility-repair-label">${t('session.codexRepairTargetInstance')}</div>
+                    <div class="codex-visibility-repair-instance">${t('session.codexRepairDefaultInstance')}</div>
+                </div>
+                <div class="codex-visibility-repair-section">
+                    <div class="codex-visibility-repair-label">${t('session.codexRepairSessionScopeTitle')}</div>
+                    <div class="codex-visibility-repair-grid">
+                        <button class="codex-visibility-repair-card ${codexVisibilityRepairSessionScope === 'all' ? 'selected' : ''}" onclick="window.setCodexVisibilityRepairSessionScope('all')" ${codexVisibilityRepairRunning ? 'disabled' : ''}>
+                            <strong>${t('session.codexRepairAllSessions')}</strong>
+                            <span>${t('session.codexRepairAllSessionsDesc')}</span>
+                        </button>
+                        <button class="codex-visibility-repair-card ${codexVisibilityRepairSessionScope === 'selected' ? 'selected' : ''}" onclick="window.setCodexVisibilityRepairSessionScope('selected')" ${(!selected || codexVisibilityRepairRunning) ? 'disabled' : ''}>
+                            <strong>${t('session.codexRepairSelectedSession')}</strong>
+                            <span>${selectedDesc}</span>
+                        </button>
+                    </div>
+                </div>
+                ${codexVisibilityRepairRunning ? `<div class="codex-visibility-repair-running">${t('session.codexRepairRunning')}</div>` : ''}
+                ${resultHTML}
+            </div>
+            <div class="modal-footer codex-visibility-repair-footer">
+                <button class="btn btn-secondary" onclick="window.closeCodexVisibilityRepairModal()" ${codexVisibilityRepairRunning ? 'disabled' : ''}>
+                    ${t('common.close')}
+                </button>
+                <button class="btn btn-primary" onclick="window.startCodexVisibilityRepair()" ${codexVisibilityRepairRunning ? 'disabled' : ''}>
+                    ↻ ${codexVisibilityRepairRunning ? t('session.codexRepairRunningShort') : t('session.codexRepairStart')}
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+async function startCodexVisibilityRepair() {
+    if (codexVisibilityRepairRunning) return;
+    const selected = getCurrentCodexVisibilitySelectedSession();
+    const request = {
+        mode: codexVisibilityRepairMode,
+        sessionScope: codexVisibilityRepairSessionScope,
+        sessionIds: codexVisibilityRepairSessionScope === 'selected' && selected ? [selected.sessionId] : []
+    };
+    codexVisibilityRepairRunning = true;
+    codexVisibilityRepairResult = null;
+    renderCodexVisibilityRepairModal();
+    try {
+        const raw = await RepairCodexSessionVisibility(JSON.stringify(request));
+        const response = JSON.parse(raw);
+        if (!response.success) {
+            throw new Error(response.error || t('session.codexRepairFailed'));
+        }
+        const data = response.data || {};
+        codexVisibilityRepairResult = {
+            success: true,
+            message: data.message || t('session.codexRepairDone'),
+            targetProvider: data.targetProvider,
+            updatedSqliteRowCount: data.updatedSqliteRowCount,
+            changedRolloutFileCount: data.changedRolloutFileCount,
+            backupDir: data.backupDir
+        };
+        showNotification(t('session.codexRepairDone'), 'success');
+        await loadSessions();
+    } catch (err) {
+        console.error('Failed to repair Codex session visibility:', err);
+        codexVisibilityRepairResult = {
+            success: false,
+            message: err?.message || t('session.codexRepairFailed')
+        };
+        showNotification(t('session.codexRepairFailed'), 'error');
+    } finally {
+        codexVisibilityRepairRunning = false;
+        renderCodexVisibilityRepairModal();
+    }
+}
+
 export async function showSessionModal(projectDir) {
     currentProjectDir = projectDir;
     // 初始化临时选择为当前已确认的选择
@@ -59,6 +235,9 @@ export function closeSessionModal() {
 
 async function loadSessions() {
     const listContainer = document.getElementById('sessionList');
+    if (!listContainer) {
+        return;
+    }
     listContainer.innerHTML = `<div class="session-loading">${t('session.loading')}</div>`;
 
     try {

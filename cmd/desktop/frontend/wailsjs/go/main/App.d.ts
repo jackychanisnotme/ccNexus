@@ -185,6 +185,8 @@ export function RenameSession(arg1:string,arg2:string,arg3:string):Promise<void>
 
 export function ReorderEndpoints(arg1:Array<string>):Promise<void>;
 
+export function RepairCodexSessionVisibility(arg1:string):Promise<string>;
+
 export function RepairAgentConfigs(arg1:string):Promise<string>;
 
 export function RestoreAgentProviderBackup(arg1:string,arg2:string):Promise<string>;

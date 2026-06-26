@@ -4886,6 +4886,10 @@ body {
     width: 100%;
 }
 
+.codex-visibility-repair-header-btn {
+    white-space: nowrap;
+}
+
 
 #terminalModal .form-help {
     display: block;
@@ -5133,6 +5137,136 @@ body {
 .session-btn-view:hover {
     color: var(--primary-color, #667eea);
     background: rgba(102, 126, 234, 0.1);
+}
+
+.codex-visibility-repair-modal {
+    max-width: min(760px, 92vw);
+    width: 92vw;
+}
+
+.codex-visibility-repair-body {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.codex-visibility-repair-copy {
+    margin: 0;
+    color: var(--text-secondary, #666);
+    line-height: 1.6;
+}
+
+.codex-visibility-repair-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.codex-visibility-repair-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary, #333);
+}
+
+.codex-visibility-repair-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.codex-visibility-repair-card {
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: 8px;
+    background: var(--bg-primary, #fff);
+    color: var(--text-primary, #333);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 92px;
+    padding: 16px;
+    text-align: left;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.codex-visibility-repair-card strong {
+    font-size: 15px;
+}
+
+.codex-visibility-repair-card span {
+    color: var(--text-secondary, #666);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.codex-visibility-repair-card:hover:not(:disabled),
+.codex-visibility-repair-card.selected {
+    border-color: var(--primary-color, #667eea);
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.16);
+}
+
+.codex-visibility-repair-card.selected {
+    background: rgba(102, 126, 234, 0.08);
+}
+
+.codex-visibility-repair-card:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.codex-visibility-repair-instance {
+    align-items: center;
+    background: var(--bg-secondary, #f8f9fa);
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: 8px;
+    color: var(--text-primary, #333);
+    display: flex;
+    font-weight: 700;
+    min-height: 46px;
+    padding: 0 16px;
+}
+
+.codex-visibility-repair-running,
+.codex-visibility-repair-result {
+    border-radius: 8px;
+    line-height: 1.55;
+    padding: 12px 14px;
+}
+
+.codex-visibility-repair-running {
+    background: rgba(102, 126, 234, 0.1);
+    color: var(--primary-color, #667eea);
+}
+
+.codex-visibility-repair-result {
+    border: 1px solid var(--border-color, #e0e0e0);
+    color: var(--text-primary, #333);
+}
+
+.codex-visibility-repair-result.success {
+    background: rgba(16, 185, 129, 0.08);
+    border-color: rgba(16, 185, 129, 0.24);
+}
+
+.codex-visibility-repair-result.failed {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.24);
+}
+
+.codex-visibility-repair-result code {
+    word-break: break-all;
+}
+
+.codex-visibility-repair-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+@media (max-width: 700px) {
+    .codex-visibility-repair-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* ========== Session Detail Modal Styles ========== */

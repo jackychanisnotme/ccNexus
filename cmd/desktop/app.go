@@ -1524,3 +1524,7 @@ func (a *App) DeleteCodexSession(sessionID string) error {
 func (a *App) RenameCodexSession(sessionID, alias string) error {
 	return a.terminal.RenameCodexSession(sessionID, alias)
 }
+
+func (a *App) RepairCodexSessionVisibility(requestJSON string) string {
+	return a.terminal.RepairCodexSessionVisibility(requestJSON)
+}
