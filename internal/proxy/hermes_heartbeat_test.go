@@ -92,6 +92,25 @@ func TestOpenAIResponsesStreamHeartbeatIsResponseCreated(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponsesStreamHeartbeatDoesNotReplaceRealResponseID(t *testing.T) {
+	rec := httptest.NewRecorder()
+	session := newDownstreamStreamSession(rec, time.Hour, ClientFormatOpenAIResponses)
+
+	if _, err := session.writeOpenAIResponsesWaitingCreatedIfNeeded(); err != nil {
+		t.Fatalf("writeOpenAIResponsesWaitingCreatedIfNeeded failed: %v", err)
+	}
+
+	realCreated := []byte(`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-real","object":"response","status":"in_progress","output":[]}}` + "\n\n")
+	if err := session.Write(realCreated); err != nil {
+		t.Fatalf("Write real response.created failed: %v", err)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"id":"resp-real"`) {
+		t.Fatalf("expected real response id to reach client, got body: %s", body)
+	}
+}
+
 // TestOpenAIResponsesStreamFromChatUpstreamEmitsCreatedOnce verifies that when
 // a Codex Desktop /v1/responses streaming client hits a Poe (OpenAI Chat)
 // upstream behind AINexus, the downstream SSE body contains exactly one

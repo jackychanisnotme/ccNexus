@@ -260,6 +260,10 @@ func (s *downstreamStreamSession) filterDuplicateOpenAIResponsesCreatedLocked(da
 		}
 		if sseBlockEventType(part) == "response.created" {
 			if s.responsesCreatedWritten {
+				if s.responsesWaitingCreated {
+					s.responsesWaitingCreated = false
+					filtered.WriteString(part)
+				}
 				continue
 			}
 			s.responsesCreatedWritten = true

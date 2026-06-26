@@ -1039,25 +1039,37 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 
 	case "response.output_item.added":
 		if evt.Item != nil && evt.Item.Type == "function_call" {
-			ctx.ToolBlockStarted = true
-			ctx.CurrentToolID = evt.Item.CallID
-			ctx.CurrentToolName = evt.Item.Name
-			ctx.ToolArguments = ""
+			callID := evt.Item.CallID
+			if callID == "" {
+				callID = evt.Item.ID
+			}
+			recordOpenAI2ToolCall(ctx, evt.OutputIndex, callID, evt.Item.Name)
+			if evt.Item.Arguments != "" {
+				recordOpenAI2ToolArguments(ctx, evt.OutputIndex, evt.Item.Arguments)
+			}
 		}
 		return nil, nil
 
 	case "response.function_call_arguments.delta":
-		if ctx.ToolBlockStarted {
-			ctx.ToolArguments += evt.Delta
-		}
+		recordOpenAI2ToolArguments(ctx, evt.OutputIndex, evt.Delta)
 		return nil, nil
 
 	case "response.output_item.done":
-		if evt.Item != nil && evt.Item.Type == "function_call" && ctx.ToolBlockStarted {
-			ctx.ToolBlockStarted = false
+		if evt.Item != nil && evt.Item.Type == "function_call" {
+			callID := evt.Item.CallID
+			if callID == "" {
+				callID = evt.Item.ID
+			}
+			recordOpenAI2ToolCall(ctx, evt.OutputIndex, callID, evt.Item.Name)
+			if evt.Item.Arguments != "" && ctx.ResponseToolArgumentsByIndex[evt.OutputIndex] == "" {
+				recordOpenAI2ToolArguments(ctx, evt.OutputIndex, evt.Item.Arguments)
+			}
 			return buildOpenAIChunk(ctx.MessageID, model, "", []map[string]interface{}{
-				{"index": ctx.ToolIndex, "id": ctx.CurrentToolID, "type": "function",
-					"function": map[string]interface{}{"name": ctx.CurrentToolName, "arguments": ctx.ToolArguments}},
+				{"index": evt.OutputIndex, "id": ctx.ResponseToolCallIDByIndex[evt.OutputIndex], "type": "function",
+					"function": map[string]interface{}{
+						"name":      ctx.ResponseToolNameByIndex[evt.OutputIndex],
+						"arguments": ctx.ResponseToolArgumentsByIndex[evt.OutputIndex],
+					}},
 			}, "")
 		}
 		return nil, nil
@@ -1075,7 +1087,7 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 			}
 		}
 		finishReason := "stop"
-		if ctx.CurrentToolID != "" {
+		if len(ctx.ResponseToolCallIDByIndex) > 0 {
 			finishReason = "tool_calls"
 		}
 		usage := map[string]interface{}{

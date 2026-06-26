@@ -14,13 +14,15 @@ func OpenAI2ReqToGemini(openai2Req []byte, model string) ([]byte, error) {
 	if err := json.Unmarshal(openai2Req, &req); err != nil {
 		return nil, err
 	}
+	developerInstructions, cleanedInput := extractOpenAI2DeveloperInstructions(req.Input)
+	req.Input = cleanedInput
 
 	geminiReq := map[string]interface{}{}
 
 	// Convert instructions to system instruction
-	if req.Instructions != "" {
+	if systemText := joinInstructionParts(req.Instructions, developerInstructions); systemText != "" {
 		geminiReq["systemInstruction"] = map[string]interface{}{
-			"parts": []map[string]interface{}{{"text": req.Instructions}},
+			"parts": []map[string]interface{}{{"text": systemText}},
 		}
 	}
 
@@ -67,12 +69,7 @@ func OpenAI2ReqToGemini(openai2Req []byte, model string) ([]byte, error) {
 		}
 		if len(funcDecls) > 0 {
 			geminiReq["tools"] = []map[string]interface{}{{"functionDeclarations": funcDecls}}
-			// Add toolConfig to enable function calling
-			geminiReq["toolConfig"] = map[string]interface{}{
-				"functionCallingConfig": map[string]interface{}{
-					"mode": "AUTO",
-				},
-			}
+			geminiReq["toolConfig"] = geminiToolConfigFromToolChoice(req.ToolChoice)
 		}
 	}
 
@@ -283,28 +280,37 @@ func OpenAI2StreamToGemini(event []byte, ctx *transformer.StreamContext) ([]byte
 
 	case "response.output_item.added":
 		if evt.Item != nil && evt.Item.Type == "function_call" {
-			ctx.ToolBlockStarted = true
-			ctx.CurrentToolID = evt.Item.CallID
-			ctx.CurrentToolName = evt.Item.Name
-			ctx.ToolArguments = ""
+			callID := evt.Item.CallID
+			if callID == "" {
+				callID = evt.Item.ID
+			}
+			recordOpenAI2ToolCall(ctx, evt.OutputIndex, callID, evt.Item.Name)
+			if evt.Item.Arguments != "" {
+				recordOpenAI2ToolArguments(ctx, evt.OutputIndex, evt.Item.Arguments)
+			}
 		}
 		return nil, nil
 
 	case "response.function_call_arguments.delta":
-		if ctx.ToolBlockStarted {
-			ctx.ToolArguments += evt.Delta
-		}
+		recordOpenAI2ToolArguments(ctx, evt.OutputIndex, evt.Delta)
 		return nil, nil
 
 	case "response.output_item.done":
-		if evt.Item != nil && evt.Item.Type == "function_call" && ctx.ToolBlockStarted {
-			ctx.ToolBlockStarted = false
+		if evt.Item != nil && evt.Item.Type == "function_call" {
+			callID := evt.Item.CallID
+			if callID == "" {
+				callID = evt.Item.ID
+			}
+			recordOpenAI2ToolCall(ctx, evt.OutputIndex, callID, evt.Item.Name)
+			if evt.Item.Arguments != "" && ctx.ResponseToolArgumentsByIndex[evt.OutputIndex] == "" {
+				recordOpenAI2ToolArguments(ctx, evt.OutputIndex, evt.Item.Arguments)
+			}
 			var args map[string]interface{}
-			json.Unmarshal([]byte(ctx.ToolArguments), &args)
+			json.Unmarshal([]byte(ctx.ResponseToolArgumentsByIndex[evt.OutputIndex]), &args)
 			chunk := map[string]interface{}{
 				"candidates": []map[string]interface{}{
 					{"content": map[string]interface{}{"role": "model", "parts": []map[string]interface{}{
-						{"functionCall": map[string]interface{}{"name": ctx.CurrentToolName, "args": args}},
+						{"functionCall": map[string]interface{}{"name": ctx.ResponseToolNameByIndex[evt.OutputIndex], "args": args}},
 					}}},
 				},
 			}

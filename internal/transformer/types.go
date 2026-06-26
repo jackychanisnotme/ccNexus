@@ -214,6 +214,12 @@ type StreamContext struct {
 	ResponseToolArgumentsByIndex map[int]string
 	ResponseToolAddedByIndex     map[int]bool
 	ResponseReasoningByIndex     map[int]string
+	ClaudeToolBlockIndexByKey    map[int]int
+	ClaudeToolIDByKey            map[int]string
+	ClaudeToolNameByKey          map[int]string
+	ClaudeToolArgumentsByKey     map[int]string
+	ClaudeToolStartedByKey       map[int]bool
+	ClaudeToolDoneByKey          map[int]bool
 	// <think> tag handling for streaming text
 	InThinkingTag       bool   // Track if we are inside a <think> tag
 	ThinkingBuffer      string // Buffer for trailing partial tag detection
@@ -253,6 +259,12 @@ func NewStreamContext() *StreamContext {
 		ResponseToolArgumentsByIndex: make(map[int]string),
 		ResponseToolAddedByIndex:     make(map[int]bool),
 		ResponseReasoningByIndex:     make(map[int]string),
+		ClaudeToolBlockIndexByKey:    make(map[int]int),
+		ClaudeToolIDByKey:            make(map[int]string),
+		ClaudeToolNameByKey:          make(map[int]string),
+		ClaudeToolArgumentsByKey:     make(map[int]string),
+		ClaudeToolStartedByKey:       make(map[int]bool),
+		ClaudeToolDoneByKey:          make(map[int]bool),
 		InThinkingTag:                false,
 		ThinkingBuffer:               "",
 		PendingThinkingText:          "",
@@ -408,9 +420,12 @@ type OpenAI2OutputItem struct {
 
 // OpenAI2Response represents an OpenAI Responses API response
 type OpenAI2Response struct {
-	ID     string              `json:"id"`
-	Object string              `json:"object"` // "response"
-	Status string              `json:"status"` // "completed", "failed", etc.
+	ID                string `json:"id"`
+	Object            string `json:"object"` // "response"
+	Status            string `json:"status"` // "completed", "failed", etc.
+	IncompleteDetails *struct {
+		Reason string `json:"reason,omitempty"`
+	} `json:"incomplete_details,omitempty"`
 	Output []OpenAI2OutputItem `json:"output"`
 	Usage  struct {
 		InputTokens  int `json:"input_tokens"`

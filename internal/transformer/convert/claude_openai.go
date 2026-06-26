@@ -162,22 +162,8 @@ func ClaudeReqToOpenAIWithThinking(claudeReq []byte, model string, thinking stri
 				},
 			})
 		}
-		// Convert tool_choice
-		if req.ToolChoice != nil {
-			switch tc := req.ToolChoice.(type) {
-			case map[string]interface{}:
-				if choiceType, _ := tc["type"].(string); choiceType == "tool" {
-					if name, ok := tc["name"].(string); ok {
-						openaiReq.ToolChoice = map[string]interface{}{"type": "function", "function": map[string]string{"name": name}}
-					}
-				} else if choiceType == "any" {
-					openaiReq.ToolChoice = "required"
-				} else if choiceType == "auto" {
-					openaiReq.ToolChoice = "auto"
-				}
-			case string:
-				openaiReq.ToolChoice = tc
-			}
+		if mapped := mapClaudeToolChoiceToOpenAIChat(req.ToolChoice); mapped != nil {
+			openaiReq.ToolChoice = mapped
 		} else {
 			openaiReq.ToolChoice = "auto"
 		}
@@ -197,6 +183,7 @@ func OpenAIReqToClaude(openaiReq []byte, model string) ([]byte, error) {
 	if err := json.Unmarshal(openaiReq, &req); err != nil {
 		return nil, err
 	}
+	normalizeOpenAIRequestRoles(&req)
 
 	claudeReq := map[string]interface{}{
 		"model":      model,
@@ -292,6 +279,9 @@ func OpenAIReqToClaude(openaiReq []byte, model string) ([]byte, error) {
 			claudeReq["tools"] = tools
 		}
 	}
+	if mapped := mapOpenAIToolChoiceToClaude(req.ToolChoice); mapped != nil {
+		claudeReq["tool_choice"] = mapped
+	}
 
 	return json.Marshal(claudeReq)
 }
@@ -337,10 +327,7 @@ func ClaudeRespToOpenAI(claudeResp []byte, model string) ([]byte, error) {
 		message["tool_calls"] = toolCalls
 	}
 
-	finishReason := "stop"
-	if resp.StopReason == "tool_use" {
-		finishReason = "tool_calls"
-	}
+	finishReason := mapClaudeStopReasonToOpenAIFinishReason(resp.StopReason)
 
 	openaiResp := map[string]interface{}{
 		"id":      resp.ID,
@@ -369,6 +356,7 @@ func OpenAIRespToClaude(openaiResp []byte) ([]byte, error) {
 
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
+		stopReason = mapOpenAIFinishReasonToClaudeStopReason(choice.FinishReason)
 		if choice.Message.ReasoningContent != "" {
 			content = append(content, map[string]interface{}{
 				"type":     "thinking",
@@ -423,15 +411,23 @@ func ClaudeStreamToOpenAI(event []byte, ctx *transformer.StreamContext, model st
 	case "message_start":
 		if msg, ok := data["message"].(map[string]interface{}); ok {
 			ctx.MessageID, _ = msg["id"].(string)
+			if usage, ok := msg["usage"].(map[string]interface{}); ok {
+				if in, ok := usage["input_tokens"].(float64); ok {
+					ctx.InputTokens = int(in)
+				}
+			}
 		}
 		return nil, nil
 
 	case "content_block_start":
+		idx, _ := data["index"].(float64)
+		blockIdx := int(idx)
 		if block, ok := data["content_block"].(map[string]interface{}); ok {
 			if block["type"] == "tool_use" {
 				ctx.ToolBlockStarted = true
-				ctx.CurrentToolID, _ = block["id"].(string)
-				ctx.CurrentToolName, _ = block["name"].(string)
+				callID, _ := block["id"].(string)
+				name, _ := block["name"].(string)
+				recordClaudeToolCall(ctx, blockIdx, callID, name)
 			}
 		}
 		return nil, nil
@@ -447,20 +443,24 @@ func ClaudeStreamToOpenAI(event []byte, ctx *transformer.StreamContext, model st
 			return buildOpenAIChunk(ctx.MessageID, model, text, nil, "")
 		case "input_json_delta":
 			if partial, ok := delta["partial_json"].(string); ok {
-				ctx.ToolArguments += partial
+				idx, _ := data["index"].(float64)
+				recordClaudeToolArguments(ctx, int(idx), partial)
 			}
 		}
 		return nil, nil
 
 	case "content_block_stop":
-		if ctx.ToolBlockStarted {
+		idx, _ := data["index"].(float64)
+		blockIdx := int(idx)
+		if callID := strings.TrimSpace(ctx.ClaudeToolIDByKey[blockIdx]); callID != "" {
 			chunk, _ := buildOpenAIChunk(ctx.MessageID, model, "", []map[string]interface{}{
-				{"index": ctx.ContentIndex, "id": ctx.CurrentToolID, "type": "function",
-					"function": map[string]interface{}{"name": ctx.CurrentToolName, "arguments": ctx.ToolArguments}},
+				{"index": blockIdx, "id": callID, "type": "function",
+					"function": map[string]interface{}{
+						"name":      ctx.ClaudeToolNameByKey[blockIdx],
+						"arguments": ctx.ClaudeToolArgumentsByKey[blockIdx],
+					}},
 			}, "")
-			ctx.ToolBlockStarted = false
-			ctx.ToolArguments = ""
-			ctx.ContentIndex++
+			ctx.ClaudeToolDoneByKey[blockIdx] = true
 			return chunk, nil
 		}
 		return nil, nil
@@ -468,11 +468,15 @@ func ClaudeStreamToOpenAI(event []byte, ctx *transformer.StreamContext, model st
 	case "message_delta":
 		if delta, ok := data["delta"].(map[string]interface{}); ok {
 			stopReason, _ := delta["stop_reason"].(string)
-			finish := "stop"
-			if stopReason == "tool_use" {
-				finish = "tool_calls"
+			finish := mapClaudeStopReasonToOpenAIFinishReason(stopReason)
+			var usage map[string]interface{}
+			if rawUsage, ok := data["usage"].(map[string]interface{}); ok {
+				if out, ok := rawUsage["output_tokens"].(float64); ok {
+					ctx.OutputTokens = int(out)
+				}
+				usage = currentOpenAIUsage(ctx)
 			}
-			return buildOpenAIChunk(ctx.MessageID, model, "", nil, finish)
+			return buildOpenAIChunkWithUsage(ctx.MessageID, model, "", nil, finish, usage)
 		}
 		return nil, nil
 
@@ -500,9 +504,9 @@ func OpenAIStreamToClaude(event []byte, ctx *transformer.StreamContext) ([]byte,
 				result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ContentIndex})...)
 				ctx.ContentBlockStarted = false
 			}
-			if ctx.ToolBlockStarted {
-				result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ToolIndex})...)
-				ctx.ToolBlockStarted = false
+			for _, key := range claudeStartedToolKeys(ctx) {
+				result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ClaudeToolBlockIndexByKey[key]})...)
+				ctx.ClaudeToolDoneByKey[key] = true
 			}
 			// Send message_delta with stop_reason if not sent
 			if !ctx.FinishReasonSent {
@@ -615,8 +619,12 @@ func OpenAIStreamToClaude(event []byte, ctx *transformer.StreamContext) ([]byte,
 
 	// Tool calls
 	for _, tc := range delta.ToolCalls {
+		toolKey := 0
+		if tc.Index != nil {
+			toolKey = *tc.Index
+		}
 		// New tool call (has ID)
-		if tc.ID != "" {
+		if tc.ID != "" || tc.Function.Name != "" {
 			// Close thinking block if open
 			if ctx.ThinkingBlockStarted {
 				result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ThinkingIndex})...)
@@ -628,26 +636,32 @@ func OpenAIStreamToClaude(event []byte, ctx *transformer.StreamContext) ([]byte,
 				ctx.ContentBlockStarted = false
 				ctx.ContentIndex++
 			}
-			// Close previous tool block if open
-			if ctx.ToolBlockStarted {
-				result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ToolIndex})...)
-				ctx.ContentIndex++
+			recordClaudeToolCall(ctx, toolKey, tc.ID, tc.Function.Name)
+			if !ctx.ClaudeToolStartedByKey[toolKey] && ctx.ClaudeToolIDByKey[toolKey] != "" && ctx.ClaudeToolNameByKey[toolKey] != "" {
+				blockIndex := claudeToolBlockIndex(ctx, toolKey)
+				ctx.ToolBlockStarted = true
+				ctx.ClaudeToolStartedByKey[toolKey] = true
+				result = append(result, buildClaudeEvent("content_block_start", map[string]interface{}{
+					"index": blockIndex, "content_block": map[string]interface{}{
+						"type": "tool_use", "id": ctx.ClaudeToolIDByKey[toolKey], "name": ctx.ClaudeToolNameByKey[toolKey], "input": map[string]interface{}{},
+					},
+				})...)
+				if buffered := ctx.ClaudeToolArgumentsByKey[toolKey]; buffered != "" {
+					result = append(result, buildClaudeEvent("content_block_delta", map[string]interface{}{
+						"index": blockIndex, "delta": map[string]interface{}{"type": "input_json_delta", "partial_json": buffered},
+					})...)
+				}
 			}
-			ctx.ToolBlockStarted = true
-			ctx.ToolIndex = ctx.ContentIndex
-			ctx.CurrentToolID = tc.ID
-			ctx.CurrentToolName = tc.Function.Name
-			ctx.ToolArguments = ""
-			result = append(result, buildClaudeEvent("content_block_start", map[string]interface{}{
-				"index": ctx.ToolIndex, "content_block": map[string]interface{}{"type": "tool_use", "id": tc.ID, "name": tc.Function.Name, "input": map[string]interface{}{}},
-			})...)
 		}
 		// Accumulate arguments
 		if tc.Function.Arguments != "" {
-			ctx.ToolArguments += tc.Function.Arguments
-			result = append(result, buildClaudeEvent("content_block_delta", map[string]interface{}{
-				"index": ctx.ToolIndex, "delta": map[string]interface{}{"type": "input_json_delta", "partial_json": tc.Function.Arguments},
-			})...)
+			recordClaudeToolArguments(ctx, toolKey, tc.Function.Arguments)
+			if ctx.ClaudeToolStartedByKey[toolKey] {
+				result = append(result, buildClaudeEvent("content_block_delta", map[string]interface{}{
+					"index": ctx.ClaudeToolBlockIndexByKey[toolKey],
+					"delta": map[string]interface{}{"type": "input_json_delta", "partial_json": tc.Function.Arguments},
+				})...)
+			}
 		}
 	}
 
@@ -661,14 +675,12 @@ func OpenAIStreamToClaude(event []byte, ctx *transformer.StreamContext) ([]byte,
 			result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ContentIndex})...)
 			ctx.ContentBlockStarted = false
 		}
-		if ctx.ToolBlockStarted {
-			result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ToolIndex})...)
-			ctx.ToolBlockStarted = false
+		for _, key := range claudeStartedToolKeys(ctx) {
+			result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ClaudeToolBlockIndexByKey[key]})...)
+			ctx.ClaudeToolDoneByKey[key] = true
 		}
 		stopReason := "end_turn"
-		if *choice.FinishReason == "tool_calls" {
-			stopReason = "tool_use"
-		}
+		stopReason = mapOpenAIFinishReasonToClaudeStopReason(*choice.FinishReason)
 		result = append(result, buildClaudeEvent("message_delta", map[string]interface{}{
 			"delta": map[string]interface{}{"stop_reason": stopReason, "stop_sequence": nil},
 			"usage": map[string]interface{}{"output_tokens": 0},

@@ -221,7 +221,6 @@ func claudeToolResultIDsAndBlocks(msg map[string]interface{}, idx int, protocol 
 	}
 	blocks := claudeContentToBlocks(msg["content"])
 	var ids []string
-	var resultBlocks []map[string]interface{}
 	for _, block := range blocks {
 		if blockType, _ := block["type"].(string); blockType != "tool_result" {
 			continue
@@ -232,9 +231,8 @@ func claudeToolResultIDsAndBlocks(msg map[string]interface{}, idx int, protocol 
 			continue
 		}
 		ids = append(ids, callID)
-		resultBlocks = append(resultBlocks, block)
 	}
-	return ids, resultBlocks, nil
+	return ids, blocks, nil
 }
 
 func extractClaudeBlockIDs(content interface{}, blockType string, field string, idx int, protocol string) ([]string, error) {

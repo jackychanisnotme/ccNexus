@@ -71,12 +71,7 @@ func ClaudeReqToGemini(claudeReq []byte, model string) ([]byte, error) {
 			})
 		}
 		geminiReq["tools"] = []map[string]interface{}{{"functionDeclarations": funcDecls}}
-		// Add toolConfig to enable function calling
-		geminiReq["toolConfig"] = map[string]interface{}{
-			"functionCallingConfig": map[string]interface{}{
-				"mode": "AUTO",
-			},
-		}
+		geminiReq["toolConfig"] = geminiToolConfigFromToolChoice(req.ToolChoice)
 	}
 
 	return json.Marshal(geminiReq)
@@ -109,6 +104,8 @@ func GeminiReqToClaude(geminiReq []byte, model string) ([]byte, error) {
 
 	// Convert contents to messages
 	var messages []map[string]interface{}
+	callQueuesByName := make(map[string][]string)
+	callCounterByName := make(map[string]int)
 	for _, content := range req.Contents {
 		role := content.Role
 		if role == "model" {
@@ -131,17 +128,27 @@ func GeminiReqToClaude(geminiReq []byte, model string) ([]byte, error) {
 				contentBlocks = append(contentBlocks, map[string]interface{}{"type": "text", "text": part.Text})
 			}
 			if part.FunctionCall != nil {
+				name := part.FunctionCall.Name
+				callCounterByName[name]++
+				callID := fmt.Sprintf("call_%s_%d", name, callCounterByName[name])
+				callQueuesByName[name] = append(callQueuesByName[name], callID)
 				contentBlocks = append(contentBlocks, map[string]interface{}{
 					"type":  "tool_use",
-					"id":    fmt.Sprintf("call_%s", part.FunctionCall.Name),
-					"name":  part.FunctionCall.Name,
+					"id":    callID,
+					"name":  name,
 					"input": part.FunctionCall.Args,
 				})
 			}
 			if part.FunctionResponse != nil {
+				name := part.FunctionResponse.Name
+				callID := fmt.Sprintf("call_%s", name)
+				if queue := callQueuesByName[name]; len(queue) > 0 {
+					callID = queue[0]
+					callQueuesByName[name] = queue[1:]
+				}
 				contentBlocks = append(contentBlocks, map[string]interface{}{
 					"type":        "tool_result",
-					"tool_use_id": fmt.Sprintf("call_%s", part.FunctionResponse.Name),
+					"tool_use_id": callID,
 					"content":     part.FunctionResponse.Response,
 				})
 			}

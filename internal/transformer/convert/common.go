@@ -116,6 +116,79 @@ func ensureOpenAI2StreamState(ctx *transformer.StreamContext) {
 	if ctx.ResponseReasoningByIndex == nil {
 		ctx.ResponseReasoningByIndex = make(map[int]string)
 	}
+	if ctx.ClaudeToolBlockIndexByKey == nil {
+		ctx.ClaudeToolBlockIndexByKey = make(map[int]int)
+	}
+	if ctx.ClaudeToolIDByKey == nil {
+		ctx.ClaudeToolIDByKey = make(map[int]string)
+	}
+	if ctx.ClaudeToolNameByKey == nil {
+		ctx.ClaudeToolNameByKey = make(map[int]string)
+	}
+	if ctx.ClaudeToolArgumentsByKey == nil {
+		ctx.ClaudeToolArgumentsByKey = make(map[int]string)
+	}
+	if ctx.ClaudeToolStartedByKey == nil {
+		ctx.ClaudeToolStartedByKey = make(map[int]bool)
+	}
+	if ctx.ClaudeToolDoneByKey == nil {
+		ctx.ClaudeToolDoneByKey = make(map[int]bool)
+	}
+}
+
+func ensureClaudeToolState(ctx *transformer.StreamContext) {
+	ensureOpenAI2StreamState(ctx)
+}
+
+func recordClaudeToolCall(ctx *transformer.StreamContext, key int, callID, name string) {
+	ensureClaudeToolState(ctx)
+	if ctx == nil {
+		return
+	}
+	if strings.TrimSpace(callID) != "" {
+		ctx.ClaudeToolIDByKey[key] = callID
+	}
+	if strings.TrimSpace(name) != "" {
+		ctx.ClaudeToolNameByKey[key] = name
+	}
+}
+
+func recordClaudeToolArguments(ctx *transformer.StreamContext, key int, delta string) {
+	ensureClaudeToolState(ctx)
+	if ctx == nil || delta == "" {
+		return
+	}
+	ctx.ClaudeToolArgumentsByKey[key] += delta
+}
+
+func claudeToolBlockIndex(ctx *transformer.StreamContext, key int) int {
+	ensureClaudeToolState(ctx)
+	if ctx == nil {
+		return key
+	}
+	if idx, ok := ctx.ClaudeToolBlockIndexByKey[key]; ok {
+		return idx
+	}
+	idx := ctx.ContentIndex
+	ctx.ClaudeToolBlockIndexByKey[key] = idx
+	ctx.ContentIndex++
+	return idx
+}
+
+func claudeStartedToolKeys(ctx *transformer.StreamContext) []int {
+	ensureClaudeToolState(ctx)
+	if ctx == nil {
+		return nil
+	}
+	keys := make([]int, 0, len(ctx.ClaudeToolStartedByKey))
+	for key, started := range ctx.ClaudeToolStartedByKey {
+		if !started || ctx.ClaudeToolDoneByKey[key] {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Ints(keys)
+	return keys
 }
 
 func openAI2ResponseID(ctx *transformer.StreamContext) string {
@@ -456,6 +529,257 @@ func currentClaudeUsage(ctx *transformer.StreamContext) map[string]interface{} {
 		"input_tokens":  ctx.InputTokens,
 		"output_tokens": ctx.OutputTokens,
 	}
+}
+
+func normalizeOpenAIRequestRoles(req *transformer.OpenAIRequest) {
+	if req == nil {
+		return
+	}
+	for i := range req.Messages {
+		switch strings.ToLower(strings.TrimSpace(req.Messages[i].Role)) {
+		case "developer":
+			req.Messages[i].Role = "system"
+		default:
+			req.Messages[i].Role = strings.ToLower(strings.TrimSpace(req.Messages[i].Role))
+		}
+	}
+}
+
+func extractOpenAI2DeveloperInstructions(input interface{}) (string, interface{}) {
+	switch value := input.(type) {
+	case []interface{}:
+		filtered := make([]interface{}, 0, len(value))
+		var instructions []string
+		for _, raw := range value {
+			item, ok := raw.(map[string]interface{})
+			if !ok {
+				filtered = append(filtered, raw)
+				continue
+			}
+			itemType := strings.ToLower(strings.TrimSpace(stringFromMap(item, "type")))
+			role := strings.ToLower(strings.TrimSpace(stringFromMap(item, "role")))
+			if itemType == "message" && role == "developer" {
+				if text := strings.TrimSpace(extractOpenAI2Text(item["content"])); text != "" {
+					instructions = append(instructions, text)
+				}
+				continue
+			}
+			filtered = append(filtered, raw)
+		}
+		return strings.Join(instructions, "\n"), filtered
+	case map[string]interface{}:
+		itemType := strings.ToLower(strings.TrimSpace(stringFromMap(value, "type")))
+		role := strings.ToLower(strings.TrimSpace(stringFromMap(value, "role")))
+		if itemType == "message" && role == "developer" {
+			return strings.TrimSpace(extractOpenAI2Text(value["content"])), []interface{}{}
+		}
+	}
+	return "", input
+}
+
+func joinInstructionParts(parts ...string) string {
+	cleaned := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if text := strings.TrimSpace(part); text != "" {
+			cleaned = append(cleaned, text)
+		}
+	}
+	return strings.Join(cleaned, "\n")
+}
+
+func mapClaudeStopReasonToOpenAIFinishReason(stopReason string) string {
+	switch strings.ToLower(strings.TrimSpace(stopReason)) {
+	case "tool_use":
+		return "tool_calls"
+	case "max_tokens":
+		return "length"
+	case "stop_sequence", "end_turn", "":
+		return "stop"
+	default:
+		return strings.ToLower(strings.TrimSpace(stopReason))
+	}
+}
+
+func mapOpenAIFinishReasonToClaudeStopReason(finishReason string) string {
+	switch strings.ToLower(strings.TrimSpace(finishReason)) {
+	case "tool_calls", "function_call":
+		return "tool_use"
+	case "length":
+		return "max_tokens"
+	case "content_filter":
+		return "content_filter"
+	default:
+		return "end_turn"
+	}
+}
+
+func openAI2StatusForClaudeStopReason(stopReason string) (string, map[string]interface{}) {
+	switch strings.ToLower(strings.TrimSpace(stopReason)) {
+	case "max_tokens":
+		return "incomplete", map[string]interface{}{"reason": "max_output_tokens"}
+	case "content_filter":
+		return "incomplete", map[string]interface{}{"reason": "content_filter"}
+	default:
+		return "completed", nil
+	}
+}
+
+func mapOpenAI2ResponseStopReason(status string, reason string, hasToolCall bool) string {
+	if hasToolCall {
+		return "tool_use"
+	}
+	if strings.ToLower(strings.TrimSpace(status)) == "incomplete" {
+		switch strings.ToLower(strings.TrimSpace(reason)) {
+		case "max_output_tokens", "max_tokens":
+			return "max_tokens"
+		case "content_filter":
+			return "content_filter"
+		}
+	}
+	return "end_turn"
+}
+
+func mapClaudeToolChoiceToOpenAIChat(toolChoice interface{}) interface{} {
+	if toolChoice == nil {
+		return nil
+	}
+	switch tc := toolChoice.(type) {
+	case string:
+		switch strings.ToLower(strings.TrimSpace(tc)) {
+		case "any":
+			return "required"
+		default:
+			return strings.ToLower(strings.TrimSpace(tc))
+		}
+	case map[string]interface{}:
+		choiceType := strings.ToLower(strings.TrimSpace(stringFromMap(tc, "type")))
+		switch choiceType {
+		case "tool":
+			name := strings.TrimSpace(stringFromMap(tc, "name"))
+			if name == "" {
+				return nil
+			}
+			return map[string]interface{}{"type": "function", "function": map[string]string{"name": name}}
+		case "any":
+			return "required"
+		case "auto", "none":
+			return choiceType
+		}
+	}
+	return nil
+}
+
+func mapOpenAIToolChoiceToClaude(toolChoice interface{}) interface{} {
+	if toolChoice == nil {
+		return nil
+	}
+	switch tc := toolChoice.(type) {
+	case string:
+		switch strings.ToLower(strings.TrimSpace(tc)) {
+		case "required":
+			return map[string]interface{}{"type": "any"}
+		case "none", "auto":
+			return map[string]interface{}{"type": strings.ToLower(strings.TrimSpace(tc))}
+		}
+	case map[string]interface{}:
+		choiceType := strings.ToLower(strings.TrimSpace(stringFromMap(tc, "type")))
+		switch choiceType {
+		case "function":
+			if fn, ok := tc["function"].(map[string]interface{}); ok {
+				if name := strings.TrimSpace(stringFromMap(fn, "name")); name != "" {
+					return map[string]interface{}{"type": "tool", "name": name}
+				}
+			}
+			if name := strings.TrimSpace(stringFromMap(tc, "name")); name != "" {
+				return map[string]interface{}{"type": "tool", "name": name}
+			}
+		case "tool":
+			if name := strings.TrimSpace(stringFromMap(tc, "name")); name != "" {
+				return map[string]interface{}{"type": "tool", "name": name}
+			}
+		case "none", "auto":
+			return map[string]interface{}{"type": choiceType}
+		case "required", "any":
+			return map[string]interface{}{"type": "any"}
+		}
+	}
+	return nil
+}
+
+func mapOpenAI2ToolChoiceToClaudeChoice(toolChoice interface{}) interface{} {
+	if toolChoice == nil {
+		return nil
+	}
+	switch tc := toolChoice.(type) {
+	case string:
+		switch strings.ToLower(strings.TrimSpace(tc)) {
+		case "required":
+			return map[string]interface{}{"type": "any"}
+		case "none", "auto":
+			return map[string]interface{}{"type": strings.ToLower(strings.TrimSpace(tc))}
+		}
+	case map[string]interface{}:
+		choiceType := strings.ToLower(strings.TrimSpace(stringFromMap(tc, "type")))
+		if choiceType == "function" || choiceType == "tool" {
+			if name := strings.TrimSpace(stringFromMap(tc, "name")); name != "" {
+				return map[string]interface{}{"type": "tool", "name": name}
+			}
+		}
+		if choiceType == "none" || choiceType == "auto" {
+			return map[string]interface{}{"type": choiceType}
+		}
+		if choiceType == "required" || choiceType == "any" {
+			return map[string]interface{}{"type": "any"}
+		}
+	}
+	return nil
+}
+
+func geminiToolConfigFromToolChoice(toolChoice interface{}) map[string]interface{} {
+	mode := "AUTO"
+	var allowed []string
+	if toolChoice != nil {
+		switch tc := toolChoice.(type) {
+		case string:
+			switch strings.ToLower(strings.TrimSpace(tc)) {
+			case "none":
+				mode = "NONE"
+			case "required", "any":
+				mode = "ANY"
+			case "auto":
+				mode = "AUTO"
+			}
+		case map[string]interface{}:
+			choiceType := strings.ToLower(strings.TrimSpace(stringFromMap(tc, "type")))
+			switch choiceType {
+			case "none":
+				mode = "NONE"
+			case "required", "any":
+				mode = "ANY"
+			case "auto":
+				mode = "AUTO"
+			case "function", "tool":
+				mode = "ANY"
+				if fn, ok := tc["function"].(map[string]interface{}); ok {
+					if name := strings.TrimSpace(stringFromMap(fn, "name")); name != "" {
+						allowed = append(allowed, name)
+					}
+				}
+				if name := strings.TrimSpace(stringFromMap(tc, "name")); name != "" {
+					allowed = append(allowed, name)
+				}
+			}
+		}
+	}
+	calling := map[string]interface{}{"mode": mode}
+	if len(allowed) > 0 {
+		names := make([]interface{}, 0, len(allowed))
+		for _, name := range allowed {
+			names = append(names, name)
+		}
+		calling["allowedFunctionNames"] = names
+	}
+	return map[string]interface{}{"functionCallingConfig": calling}
 }
 
 // extractSystemText extracts text from Claude system prompt

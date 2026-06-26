@@ -14,6 +14,7 @@ func OpenAIReqToGemini(openaiReq []byte, model string) ([]byte, error) {
 	if err := json.Unmarshal(openaiReq, &req); err != nil {
 		return nil, err
 	}
+	normalizeOpenAIRequestRoles(&req)
 
 	geminiReq := map[string]interface{}{}
 
@@ -108,12 +109,7 @@ func OpenAIReqToGemini(openaiReq []byte, model string) ([]byte, error) {
 		}
 		if len(funcDecls) > 0 {
 			geminiReq["tools"] = []map[string]interface{}{{"functionDeclarations": funcDecls}}
-			// Add toolConfig to enable function calling
-			geminiReq["toolConfig"] = map[string]interface{}{
-				"functionCallingConfig": map[string]interface{}{
-					"mode": "AUTO",
-				},
-			}
+			geminiReq["toolConfig"] = geminiToolConfigFromToolChoice(req.ToolChoice)
 		}
 	}
 
