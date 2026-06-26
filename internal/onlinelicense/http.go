@@ -173,7 +173,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	h.recordAudit("admin_login", "admin", 0, clientIP(r))
 	writeJSONSuccess(w, AdminSessionInfo{
 		Username:    account.Username,
-		Account:     *account,
+		Account:     publicAdminAccountFor(account, *account),
 		Permissions: account.Permissions,
 		ExpiresAt:   expiresAt,
 	})
@@ -199,7 +199,7 @@ func (h *HTTPHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	account := adminFromContext(r)
 	writeJSONSuccess(w, map[string]interface{}{
-		"account":     account,
+		"account":     publicAdminAccountFor(account, *account),
 		"permissions": account.Permissions,
 	})
 }
@@ -213,7 +213,7 @@ func (h *HTTPHandler) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			h.writeServiceError(w, err)
 			return
 		}
-		writeJSONSuccess(w, accounts)
+		writeJSONSuccess(w, publicAdminAccountsFor(account, accounts))
 	case http.MethodPost:
 		var req CreateAdminAccountRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -225,7 +225,7 @@ func (h *HTTPHandler) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			h.writeServiceError(w, err)
 			return
 		}
-		writeJSONSuccess(w, created)
+		writeJSONSuccess(w, publicAdminAccountFor(account, *created))
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -251,7 +251,29 @@ func (h *HTTPHandler) handleAccount(w http.ResponseWriter, r *http.Request) {
 		h.writeServiceError(w, err)
 		return
 	}
-	writeJSONSuccess(w, updated)
+	writeJSONSuccess(w, publicAdminAccountFor(adminFromContext(r), *updated))
+}
+
+func publicAdminAccountsFor(actor *AdminAccount, accounts []AdminAccount) []AdminAccount {
+	result := make([]AdminAccount, 0, len(accounts))
+	for _, account := range accounts {
+		result = append(result, publicAdminAccountFor(actor, account))
+	}
+	return result
+}
+
+func publicAdminAccountFor(actor *AdminAccount, account AdminAccount) AdminAccount {
+	if actor == nil || actor.Level == AdminLevelRoot {
+		return account
+	}
+	if account.ID == actor.ID {
+		account.Relationship = AdminRelationshipSelf
+	} else {
+		account.Relationship = AdminRelationshipDownline
+	}
+	account.Level = 0
+	account.ParentID = 0
+	return account
 }
 
 func decodeUpdateAdminAccountRequest(r *http.Request) (UpdateAdminAccountRequest, error) {

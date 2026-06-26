@@ -22,6 +22,9 @@ const (
 	AdminAccountStatusActive   = "active"
 	AdminAccountStatusDisabled = "disabled"
 
+	AdminRelationshipSelf     = "self"
+	AdminRelationshipDownline = "downline"
+
 	PermissionCardsView          = "cards:view"
 	PermissionCardsGenerate      = "cards:generate"
 	PermissionCardsDisable       = "cards:disable"
@@ -172,16 +175,17 @@ type DeviceRecord struct {
 }
 
 type AdminAccount struct {
-	ID          int64     `json:"id"`
-	Username    string    `json:"username"`
-	DisplayName string    `json:"displayName,omitempty"`
-	Level       int       `json:"level"`
-	ParentID    int64     `json:"parentId,omitempty"`
-	Status      string    `json:"status"`
-	Permissions []string  `json:"permissions"`
-	CreatedBy   int64     `json:"createdBy,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID           int64     `json:"id"`
+	Username     string    `json:"username"`
+	DisplayName  string    `json:"displayName,omitempty"`
+	Level        int       `json:"level"`
+	ParentID     int64     `json:"parentId,omitempty"`
+	Relationship string    `json:"relationship,omitempty"`
+	Status       string    `json:"status"`
+	Permissions  []string  `json:"permissions"`
+	CreatedBy    int64     `json:"createdBy,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 type CreateAdminAccountRequest struct {

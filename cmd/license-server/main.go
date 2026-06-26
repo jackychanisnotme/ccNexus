@@ -273,11 +273,11 @@ const adminHTML = `<!doctype html>
       <section class="admin-page" data-page="accounts">
         <div class="section-head"><h2>后台账号</h2><button class="secondary small-btn" onclick="refreshAccounts()">刷新账号</button></div>
         <div class="row"><div><label>用户名</label><input id="accountUsername" autocomplete="off"></div><div><label>密码</label><input id="accountPassword" type="password" autocomplete="new-password"></div></div>
-        <div class="row"><div><label>显示名</label><input id="accountDisplayName"></div><div><label>级别</label><select id="accountLevel"><option value="2">二级分销</option><option value="3">三级分销</option><option value="1">一级管理员</option></select></div></div>
+        <div class="row"><div><label>显示名</label><input id="accountDisplayName"></div><div><label id="accountLevelLabel">级别</label><select id="accountLevel"><option value="2">二级分销</option><option value="3">三级分销</option><option value="1">一级管理员</option></select></div></div>
         <label>父级账号</label><select id="accountParent"></select>
         <div class="permission-grid" id="accountPermissions"></div>
         <div class="actions"><button onclick="createAccount()">创建账号</button></div>
-        <div class="table-wrap"><table><thead><tr><th>ID</th><th>账号</th><th>级别</th><th>父级</th><th>状态</th><th>权限</th><th>操作</th></tr></thead><tbody id="accounts"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>ID</th><th>账号</th><th id="accountLevelHeader">级别</th><th id="accountParentHeader">父级</th><th>状态</th><th>权限</th><th>操作</th></tr></thead><tbody id="accounts"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table></div>
       </section>
       <section class="admin-page" data-page="devices">
         <h2>设备授权</h2>
@@ -338,11 +338,28 @@ const adminHTML = `<!doctype html>
     function statusCell(value){const names={active:'有效',disabled:'已禁用',expired:'已到期'};return '<span class="status-'+esc(value)+'">'+esc(names[value]||value)+'</span>'}
     function actionName(value){return ({admin_login:'登录',admin_logout:'退出',generate_card:'生成卡密',activate:'兑换卡密',refresh:'自动校验',disable_card:'禁用卡密',delete_card:'删除卡密',disable_activation:'禁用授权明细',set_device_expiry:'修改设备到期',set_device_remark:'修改设备备注',create_admin_account:'创建账号',update_admin_account:'修改账号'}[value] || value)}
     function planName(value){return ({monthly:'月卡',quarterly:'季卡',half_year:'半年卡',yearly:'年卡',custom:'自定义'}[value] || value)}
+    function isRootAccount(){return currentAccount && Number(currentAccount.level) === 1}
     function levelName(value){return ({1:'一级',2:'二级',3:'三级'}[Number(value)] || value)}
+    function relationName(account){if(isRootAccount())return levelName(account.level);return ({self:'当前账号',downline:'下级账号'}[account.relationship] || '范围内账号')}
+    function parentName(account){if(isRootAccount())return account.parentId || '-';return account.relationship === 'downline' ? '当前账号' : '-'}
     function toLocalInput(value){const date=new Date(value);date.setMinutes(date.getMinutes()-date.getTimezoneOffset());return date.toISOString().slice(0,19)}
     async function refreshMe(){
       const me = await api('/api/admin/me');
       currentAccount = me.account;
+      renderAccountLevelControls();
+    }
+    function renderAccountLevelControls(){
+      if (isRootAccount()) {
+        accountLevelLabel.textContent = '级别';
+        accountLevelHeader.textContent = '级别';
+        accountParentHeader.textContent = '父级';
+        accountLevel.innerHTML = '<option value="2">二级分销</option><option value="3">三级分销</option><option value="1">一级管理员</option>';
+      } else {
+        accountLevelLabel.textContent = '关系';
+        accountLevelHeader.textContent = '关系';
+        accountParentHeader.textContent = '上级关系';
+        accountLevel.innerHTML = '<option value="0">下级账号</option>';
+      }
     }
     function renderPermissionChoices(selected){
       const selectedSet = new Set(selected || []);
@@ -375,7 +392,7 @@ const adminHTML = `<!doctype html>
         return;
       }
       accountRows = await api('/api/admin/accounts');
-      accounts.innerHTML = accountRows.length ? accountRows.map(a => { const self=currentAccount&&a.id===currentAccount.id; const actions=can('accounts:manage')&&!self?'<button class="secondary small-btn" onclick="editAccountPermissions('+a.id+')">权限</button><button class="secondary small-btn" onclick="toggleAccountStatus('+a.id+',&quot;'+(a.status==='active'?'disabled':'active')+'&quot;)">'+(a.status==='active'?'禁用':'启用')+'</button>':'-'; return '<tr><td>'+a.id+'</td><td>'+esc(a.username)+'<br><span class="muted">'+esc(a.displayName||'')+'</span></td><td>'+esc(levelName(a.level))+'</td><td>'+esc(a.parentId||'-')+'</td><td>'+statusCell(a.status)+'</td><td class="mono">'+esc((a.permissions||[]).join(', '))+'</td><td><div class="actions">'+actions+'</div></td></tr>'; }).join('') : '<tr><td colspan="7" class="empty">暂无后台账号</td></tr>';
+      accounts.innerHTML = accountRows.length ? accountRows.map(a => { const self=currentAccount&&a.id===currentAccount.id; const actions=can('accounts:manage')&&!self?'<button class="secondary small-btn" onclick="editAccountPermissions('+a.id+')">权限</button><button class="secondary small-btn" onclick="toggleAccountStatus('+a.id+',&quot;'+(a.status==='active'?'disabled':'active')+'&quot;)">'+(a.status==='active'?'禁用':'启用')+'</button>':'-'; return '<tr><td>'+a.id+'</td><td>'+esc(a.username)+'<br><span class="muted">'+esc(a.displayName||'')+'</span></td><td>'+esc(relationName(a))+'</td><td>'+esc(parentName(a))+'</td><td>'+statusCell(a.status)+'</td><td class="mono">'+esc((a.permissions||[]).join(', '))+'</td><td><div class="actions">'+actions+'</div></td></tr>'; }).join('') : '<tr><td colspan="7" class="empty">暂无后台账号</td></tr>';
       refreshAccountSelectors();
       renderPermissionChoices(defaultPermissionsForLevel(Number(accountLevel.value)));
     }

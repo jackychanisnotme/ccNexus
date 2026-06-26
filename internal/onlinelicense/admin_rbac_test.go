@@ -180,6 +180,73 @@ func TestDevicesIncludeOwnerInformation(t *testing.T) {
 	}
 }
 
+func TestNonRootAdminResponsesHideAbsoluteLevels(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	rootCookie := loginAdmin(t, handler)
+	reseller := createAdminAccount(t, handler, rootCookie, CreateAdminAccountRequest{
+		Username: "reseller",
+		Password: "reseller-pass",
+		Level:    AdminLevelReseller,
+	})
+	distributor := createAdminAccount(t, handler, rootCookie, CreateAdminAccountRequest{
+		Username: "distributor",
+		Password: "distributor-pass",
+		Level:    AdminLevelDistributor,
+		ParentID: reseller.ID,
+	})
+
+	resellerCookie := loginAdminAs(t, handler, "reseller", "reseller-pass")
+	me := currentAdminAccount(t, handler, resellerCookie)
+	if me.Level != 0 || me.Relationship != AdminRelationshipSelf {
+		t.Fatalf("non-root /me account = %#v, want hidden level and self relationship", me)
+	}
+
+	accounts := listAdminAccounts(t, handler, resellerCookie)
+	if len(accounts) != 2 {
+		t.Fatalf("reseller accounts = %#v, want self and downline", accounts)
+	}
+	for _, account := range accounts {
+		if account.Level != 0 {
+			t.Fatalf("non-root account %s exposed absolute level %d", account.Username, account.Level)
+		}
+		switch account.ID {
+		case reseller.ID:
+			if account.Relationship != AdminRelationshipSelf {
+				t.Fatalf("reseller relationship = %q, want self", account.Relationship)
+			}
+		case distributor.ID:
+			if account.Relationship != AdminRelationshipDownline {
+				t.Fatalf("distributor relationship = %q, want downline", account.Relationship)
+			}
+		default:
+			t.Fatalf("unexpected account in reseller scope: %#v", account)
+		}
+	}
+}
+
+func TestRootAdminResponsesKeepAbsoluteLevels(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	rootCookie := loginAdmin(t, handler)
+	createAdminAccount(t, handler, rootCookie, CreateAdminAccountRequest{
+		Username: "reseller",
+		Password: "reseller-pass",
+		Level:    AdminLevelReseller,
+	})
+
+	root := currentAdminAccount(t, handler, rootCookie)
+	if root.Level != AdminLevelRoot {
+		t.Fatalf("root /me level = %d, want %d", root.Level, AdminLevelRoot)
+	}
+	accounts := listAdminAccounts(t, handler, rootCookie)
+	levels := map[string]int{}
+	for _, account := range accounts {
+		levels[account.Username] = account.Level
+	}
+	if levels["admin"] != AdminLevelRoot || levels["reseller"] != AdminLevelReseller {
+		t.Fatalf("root account levels = %#v, want absolute levels", levels)
+	}
+}
+
 func newRBACService(t *testing.T) (*SQLiteStore, *Service) {
 	t.Helper()
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "license.db"))
@@ -239,6 +306,24 @@ func currentAdminAccount(t *testing.T, handler http.Handler, cookie *http.Cookie
 		t.Fatalf("decode current admin: %v", err)
 	}
 	return decoded.Data.Account
+}
+
+func listAdminAccounts(t *testing.T, handler http.Handler, cookie *http.Cookie) []AdminAccount {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/accounts", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list accounts status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var decoded struct {
+		Data []AdminAccount `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode accounts: %v", err)
+	}
+	return decoded.Data
 }
 
 func loginAdminAs(t *testing.T, handler http.Handler, username, password string) *http.Cookie {
