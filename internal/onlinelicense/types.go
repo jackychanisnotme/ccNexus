@@ -200,6 +200,11 @@ type UpdateAdminAccountRequest struct {
 	ParentID    int64    `json:"parentId"`
 	Status      string   `json:"status"`
 	Permissions []string `json:"permissions"`
+
+	hasLevel       bool
+	hasParentID    bool
+	hasStatus      bool
+	hasPermissions bool
 }
 
 type AdminSessionInfo struct {

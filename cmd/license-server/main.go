@@ -217,11 +217,12 @@ const adminHTML = `<!doctype html>
     :root{color-scheme:light;--bg:#f4f6f8;--panel:#fff;--line:#d9dee7;--text:#172033;--muted:#657184;--accent:#1769aa;--danger:#b42318;--ok:#067647}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
     header{padding:16px 22px;border-bottom:1px solid var(--line);background:#fff;display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;z-index:2}
-    h1{margin:0;font-size:20px}main{padding:18px 22px 28px;max-width:1460px;margin:0 auto}.grid{display:grid;grid-template-columns:360px minmax(0,1fr);gap:18px;align-items:start}
+    h1{margin:0;font-size:20px}main{padding:18px 22px 28px;max-width:1460px;margin:0 auto}
     section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}h2{font-size:15px;margin:0 0 12px}.stack{display:grid;gap:18px}
     label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:10px 0 5px}input,select,textarea{width:100%;border:1px solid #c8d0dc;border-radius:6px;padding:9px;background:#fff;color:var(--text)}
     input:focus,select:focus,textarea:focus{outline:2px solid rgba(23,105,170,.22);border-color:var(--accent)}textarea{min-height:72px;resize:vertical}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.toolbar{display:flex;align-items:center;gap:8px}.top-note{color:var(--muted)}
+    .page-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.page-tabs button{background:#fff;color:var(--accent)}.page-tabs button.active{background:var(--accent);color:#fff}.admin-page[hidden]{display:none}
     button{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;padding:8px 12px;font-weight:700;cursor:pointer;white-space:nowrap}button:hover{filter:brightness(.96)}button:active{transform:translateY(1px)}
     button.secondary{background:#fff;color:var(--accent)}button.danger{border-color:var(--danger);background:var(--danger);color:#fff}.small-btn{padding:6px 9px;font-size:12px}
     table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid #e7ebf0;padding:8px;text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);background:#fafbfc;position:sticky;top:0}
@@ -230,7 +231,7 @@ const adminHTML = `<!doctype html>
     .device-detail td{padding:0;background:#f8fafc}.device-detail[hidden]{display:none}.detail-inner{padding:12px 16px}.detail-inner table{background:#fff}.detail-inner th{position:static}.detail-label{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px}
     dialog{width:min(460px,calc(100% - 32px));border:1px solid var(--line);border-radius:8px;padding:0;color:var(--text);box-shadow:0 18px 55px rgba(23,32,51,.18)}dialog::backdrop{background:rgba(23,32,51,.38)}.dialog-body{padding:18px}.dialog-body h2{font-size:16px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
     #generated{white-space:pre-wrap;word-break:break-all;background:#f8fafc;border:1px solid #e7ebf0;border-radius:6px;padding:10px;margin-top:12px;max-height:180px;overflow:auto}.message{min-height:20px;margin-top:10px;color:var(--danger)}.empty{text-align:center;color:var(--muted);padding:20px!important}
-    @media(max-width:980px){.grid{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}.toolbar{width:100%;justify-content:space-between}.row{grid-template-columns:1fr}}
+    @media(max-width:980px){header{align-items:flex-start;flex-direction:column}.toolbar{width:100%;justify-content:space-between}.row{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -244,8 +245,15 @@ const adminHTML = `<!doctype html>
       <button class="danger" onclick="logout()">退出账号</button>
     </div>
   </header>
-  <main class="grid">
-    <section>
+  <main>
+    <nav class="page-tabs" aria-label="后台模块">
+      <button type="button" data-page-target="generate" onclick="showPage('generate')">生成卡密</button>
+      <button type="button" data-page-target="cards" onclick="showPage('cards')">卡密</button>
+      <button type="button" data-page-target="accounts" onclick="showPage('accounts')">后台账号</button>
+      <button type="button" data-page-target="devices" onclick="showPage('devices')">设备授权</button>
+      <button type="button" data-page-target="history" onclick="showPage('history')">历史记录</button>
+    </nav>
+    <section class="admin-page" data-page="generate">
       <h2>生成卡密</h2>
       <label>套餐</label>
       <select id="plan"><option value="monthly">月卡 30天</option><option value="quarterly">季卡 90天</option><option value="half_year">半年 180天</option><option value="yearly">年卡 365天</option><option value="custom">自定义</option></select>
@@ -258,11 +266,11 @@ const adminHTML = `<!doctype html>
       <div id="message" class="message"></div>
     </section>
     <div class="stack">
-      <section>
+      <section class="admin-page" data-page="cards">
         <h2>卡密</h2>
         <div class="table-wrap"><table><thead><tr><th>ID</th><th>归属</th><th>状态</th><th>套餐</th><th>天数</th><th>设备</th><th>客户/备注</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="cards"><tr><td colspan="9" class="empty">加载中</td></tr></tbody></table></div>
       </section>
-      <section>
+      <section class="admin-page" data-page="accounts">
         <div class="section-head"><h2>后台账号</h2><button class="secondary small-btn" onclick="refreshAccounts()">刷新账号</button></div>
         <div class="row"><div><label>用户名</label><input id="accountUsername" autocomplete="off"></div><div><label>密码</label><input id="accountPassword" type="password" autocomplete="new-password"></div></div>
         <div class="row"><div><label>显示名</label><input id="accountDisplayName"></div><div><label>级别</label><select id="accountLevel"><option value="2">二级分销</option><option value="3">三级分销</option><option value="1">一级管理员</option></select></div></div>
@@ -271,11 +279,11 @@ const adminHTML = `<!doctype html>
         <div class="actions"><button onclick="createAccount()">创建账号</button></div>
         <div class="table-wrap"><table><thead><tr><th>ID</th><th>账号</th><th>级别</th><th>父级</th><th>状态</th><th>权限</th><th>操作</th></tr></thead><tbody id="accounts"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table></div>
       </section>
-      <section>
+      <section class="admin-page" data-page="devices">
         <h2>设备授权</h2>
-        <div class="table-wrap"><table><thead><tr><th>设备ID</th><th>备注</th><th>状态</th><th>当前到期</th><th>最近校验</th><th>平台/版本</th><th>IP</th><th>兑换次数</th><th>操作</th></tr></thead><tbody id="devices"><tr><td colspan="9" class="empty">加载中</td></tr></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>归属</th><th>设备ID</th><th>备注</th><th>状态</th><th>当前到期</th><th>最近校验</th><th>平台/版本</th><th>IP</th><th>兑换次数</th><th>操作</th></tr></thead><tbody id="devices"><tr><td colspan="10" class="empty">加载中</td></tr></tbody></table></div>
       </section>
-      <section>
+      <section class="admin-page" data-page="history">
         <div class="section-head"><h2>历史记录</h2><label class="inline-check"><input id="showRefresh" type="checkbox" onchange="renderHistory()">显示自动刷新</label></div>
         <div class="table-wrap"><table><thead><tr><th>ID</th><th>动作</th><th>对象</th><th>详情</th><th>时间</th></tr></thead><tbody id="history"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table></div>
       </section>
@@ -341,6 +349,14 @@ const adminHTML = `<!doctype html>
       accountPermissions.innerHTML = permissionCatalog.map(p => '<label><input type="checkbox" value="'+esc(p[0])+'" '+(selectedSet.has(p[0])?'checked':'')+'> '+esc(p[1])+'</label>').join('');
     }
     function accountLabel(account){return account ? account.username+' #'+account.id : '-'}
+    function ownerLabel(row){return esc(row.ownerUsername || row.ownerAccountId || '-')}
+    function showPage(page){
+      const allowed = new Set(['generate','cards','accounts','devices','history']);
+      if (!allowed.has(page)) page = 'cards';
+      document.querySelectorAll('[data-page]').forEach(section => { section.hidden = section.getAttribute('data-page') !== page; });
+      document.querySelectorAll('[data-page-target]').forEach(button => { button.classList.toggle('active', button.getAttribute('data-page-target') === page); });
+      if (location.hash !== '#'+page) history.replaceState(null, '', '#'+page);
+    }
     function refreshAccountSelectors(){
       const visible = accountRows.length ? accountRows : (currentAccount ? [currentAccount] : []);
       ownerAccount.innerHTML = visible.map(a => '<option value="'+a.id+'">'+esc(accountLabel(a))+'</option>').join('');
@@ -359,7 +375,7 @@ const adminHTML = `<!doctype html>
         return;
       }
       accountRows = await api('/api/admin/accounts');
-      accounts.innerHTML = accountRows.length ? accountRows.map(a => '<tr><td>'+a.id+'</td><td>'+esc(a.username)+'<br><span class="muted">'+esc(a.displayName||'')+'</span></td><td>'+esc(levelName(a.level))+'</td><td>'+esc(a.parentId||'-')+'</td><td>'+statusCell(a.status)+'</td><td class="mono">'+esc((a.permissions||[]).join(', '))+'</td><td><div class="actions">'+(can('accounts:manage')?'<button class="secondary small-btn" onclick="editAccountPermissions('+a.id+')">权限</button><button class="secondary small-btn" onclick="toggleAccountStatus('+a.id+',&quot;'+(a.status==='active'?'disabled':'active')+'&quot;)">'+(a.status==='active'?'禁用':'启用')+'</button>':'-')+'</div></td></tr>').join('') : '<tr><td colspan="7" class="empty">暂无后台账号</td></tr>';
+      accounts.innerHTML = accountRows.length ? accountRows.map(a => { const self=currentAccount&&a.id===currentAccount.id; const actions=can('accounts:manage')&&!self?'<button class="secondary small-btn" onclick="editAccountPermissions('+a.id+')">权限</button><button class="secondary small-btn" onclick="toggleAccountStatus('+a.id+',&quot;'+(a.status==='active'?'disabled':'active')+'&quot;)">'+(a.status==='active'?'禁用':'启用')+'</button>':'-'; return '<tr><td>'+a.id+'</td><td>'+esc(a.username)+'<br><span class="muted">'+esc(a.displayName||'')+'</span></td><td>'+esc(levelName(a.level))+'</td><td>'+esc(a.parentId||'-')+'</td><td>'+statusCell(a.status)+'</td><td class="mono">'+esc((a.permissions||[]).join(', '))+'</td><td><div class="actions">'+actions+'</div></td></tr>'; }).join('') : '<tr><td colspan="7" class="empty">暂无后台账号</td></tr>';
       refreshAccountSelectors();
       renderPermissionChoices(defaultPermissionsForLevel(Number(accountLevel.value)));
     }
@@ -399,7 +415,7 @@ const adminHTML = `<!doctype html>
     }
     async function refreshDevices(){
       const rows = await api('/api/admin/devices');
-      devices.innerHTML = rows.length ? rows.map((d,index) => '<tr><td class="mono">'+esc(d.deviceId)+'</td><td>'+esc(d.remark||'-')+'</td><td>'+statusCell(d.status)+'</td><td>'+dt(d.expiresAt)+'</td><td>'+dt(d.lastCheckedAt)+'</td><td>'+esc(d.platform)+'<br><span class="muted">'+esc(d.appVersion)+'</span></td><td class="mono">'+esc(d.ipAddress)+'</td><td>'+d.licenses.length+'</td><td><div class="actions"><button class="secondary small-btn" onclick="toggleDevice('+index+')">明细</button>'+(can('devices:remark')?'<button class="secondary small-btn" onclick="openRemark('+index+')">备注</button>':'')+(can('devices:expiry')?'<button class="small-btn" onclick="openExpiry('+index+')">修改到期</button>':'')+(d.status==='active'&&can('activations:disable')?'<button class="danger small-btn" onclick="disableActivation('+d.currentActivationId+')">禁用当前</button>':'')+'</div></td></tr><tr id="device-detail-'+index+'" class="device-detail" hidden><td colspan="9"><div class="detail-inner"><div class="detail-label">卡密兑换与失效明细</div><table><thead><tr><th>卡ID</th><th>状态</th><th>套餐</th><th>兑换时间</th><th>该次累计到期</th><th>客户/备注</th><th>操作</th></tr></thead><tbody>'+licenseRows(d)+'</tbody></table></div></td></tr>').join('') : '<tr><td colspan="9" class="empty">暂无授权设备</td></tr>';
+      devices.innerHTML = rows.length ? rows.map((d,index) => '<tr><td>'+ownerLabel(d)+'</td><td class="mono">'+esc(d.deviceId)+'</td><td>'+esc(d.remark||'-')+'</td><td>'+statusCell(d.status)+'</td><td>'+dt(d.expiresAt)+'</td><td>'+dt(d.lastCheckedAt)+'</td><td>'+esc(d.platform)+'<br><span class="muted">'+esc(d.appVersion)+'</span></td><td class="mono">'+esc(d.ipAddress)+'</td><td>'+d.licenses.length+'</td><td><div class="actions"><button class="secondary small-btn" onclick="toggleDevice('+index+')">明细</button>'+(can('devices:remark')?'<button class="secondary small-btn" onclick="openRemark('+index+')">备注</button>':'')+(can('devices:expiry')?'<button class="small-btn" onclick="openExpiry('+index+')">修改到期</button>':'')+(d.status==='active'&&can('activations:disable')?'<button class="danger small-btn" onclick="disableActivation('+d.currentActivationId+')">禁用当前</button>':'')+'</div></td></tr><tr id="device-detail-'+index+'" class="device-detail" hidden><td colspan="10"><div class="detail-inner"><div class="detail-label">卡密兑换与失效明细</div><table><thead><tr><th>卡ID</th><th>状态</th><th>套餐</th><th>兑换时间</th><th>该次累计到期</th><th>客户/备注</th><th>操作</th></tr></thead><tbody>'+licenseRows(d)+'</tbody></table></div></td></tr>').join('') : '<tr><td colspan="10" class="empty">暂无授权设备</td></tr>';
       window.deviceRows = rows;
     }
     async function refreshHistory(){
@@ -418,6 +434,7 @@ const adminHTML = `<!doctype html>
     async function refreshAll(){setError('');try{await refreshMe();await refreshAccounts();await Promise.all([refreshCards(),refreshDevices(),refreshHistory()]);}catch(err){setError(err);}}
     async function copyGenerated(){try{await navigator.clipboard.writeText(generated.textContent || '');}catch(err){setError(err);}}
     async function logout(){try{await api('/api/admin/logout',{method:'POST'});}finally{location.replace('/admin/login');}}
+    showPage((location.hash || '#cards').slice(1));
     refreshAll();
   </script>
 </body>

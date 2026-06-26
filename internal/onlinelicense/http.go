@@ -241,8 +241,8 @@ func (h *HTTPHandler) handleAccount(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var req UpdateAdminAccountRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeUpdateAdminAccountRequest(r)
+	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -252,6 +252,26 @@ func (h *HTTPHandler) handleAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONSuccess(w, updated)
+}
+
+func decodeUpdateAdminAccountRequest(r *http.Request) (UpdateAdminAccountRequest, error) {
+	var req UpdateAdminAccountRequest
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return req, err
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return req, err
+	}
+	if err := json.Unmarshal(encoded, &req); err != nil {
+		return req, err
+	}
+	_, req.hasLevel = raw["level"]
+	_, req.hasParentID = raw["parentId"]
+	_, req.hasStatus = raw["status"]
+	_, req.hasPermissions = raw["permissions"]
+	return req, nil
 }
 
 func (h *HTTPHandler) handleActivate(w http.ResponseWriter, r *http.Request) {

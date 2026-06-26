@@ -144,6 +144,42 @@ func TestDisabledAdminAccountCannotContinueUsingSession(t *testing.T) {
 	}
 }
 
+func TestAdminAccountCannotChangeOwnPrivileges(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	rootCookie := loginAdmin(t, handler)
+
+	self := currentAdminAccount(t, handler, rootCookie)
+	for name, body := range map[string]string{
+		"permissions":       `{"permissions":["cards:view"]}`,
+		"empty_permissions": `{"permissions":[]}`,
+		"status":            `{"status":"disabled"}`,
+		"level":             `{"level":2}`,
+		"parent":            `{"parentId":99}`,
+		"root_parent":       `{"parentId":0}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/admin/accounts/"+strconv.FormatInt(self.ID, 10), strings.NewReader(body))
+		req.AddCookie(rootCookie)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s self update status = %d body=%s, want 403", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestDevicesIncludeOwnerInformation(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	rootCookie := loginAdmin(t, handler)
+	account := currentAdminAccount(t, handler, rootCookie)
+	cardKey := generateHTTPCardForOwner(t, handler, rootCookie, account.ID, 1)
+	activateHTTPCard(t, handler, cardKey, "device-owner")
+
+	devices := listAdminDevices(t, handler, rootCookie)
+	if len(devices) != 1 || devices[0].OwnerAccountID != account.ID || devices[0].OwnerUsername != account.Username {
+		t.Fatalf("device owner = %#v, want account %#v", devices, account)
+	}
+}
+
 func newRBACService(t *testing.T) (*SQLiteStore, *Service) {
 	t.Helper()
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "license.db"))
@@ -183,6 +219,26 @@ func createAdminAccount(t *testing.T, handler http.Handler, cookie *http.Cookie,
 		t.Fatalf("decode account: %v", err)
 	}
 	return decoded.Data
+}
+
+func currentAdminAccount(t *testing.T, handler http.Handler, cookie *http.Cookie) AdminAccount {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("current admin status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var decoded struct {
+		Data struct {
+			Account AdminAccount `json:"account"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode current admin: %v", err)
+	}
+	return decoded.Data.Account
 }
 
 func loginAdminAs(t *testing.T, handler http.Handler, username, password string) *http.Cookie {

@@ -258,6 +258,9 @@ func (s *Service) UpdateAdminAccount(actor *AdminAccount, id int64, req UpdateAd
 			return nil, ErrForbidden
 		}
 	}
+	if actor.ID == id && selfPrivilegeUpdateRequested(req) {
+		return nil, ErrForbidden
+	}
 	if strings.TrimSpace(req.DisplayName) != "" {
 		account.DisplayName = strings.TrimSpace(req.DisplayName)
 	}
@@ -286,6 +289,13 @@ func (s *Service) UpdateAdminAccount(actor *AdminAccount, id int64, req UpdateAd
 	}
 	_ = s.store.AddAudit("update_admin_account", "admin_account", account.ID, fmt.Sprintf("username=%s status=%s level=%d parent=%d", account.Username, account.Status, account.Level, account.ParentID), account.UpdatedAt)
 	return account, nil
+}
+
+func selfPrivilegeUpdateRequested(req UpdateAdminAccountRequest) bool {
+	return req.hasLevel ||
+		req.hasParentID ||
+		req.hasStatus ||
+		req.hasPermissions
 }
 
 func (s *Service) GenerateCards(req GenerateCardsRequest) (*GenerateCardsResult, error) {
