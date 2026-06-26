@@ -359,7 +359,7 @@ const adminHTML = `<!doctype html>
         return;
       }
       accountRows = await api('/api/admin/accounts');
-      accounts.innerHTML = accountRows.length ? accountRows.map(a => '<tr><td>'+a.id+'</td><td>'+esc(a.username)+'<br><span class="muted">'+esc(a.displayName||'')+'</span></td><td>'+esc(levelName(a.level))+'</td><td>'+esc(a.parentId||'-')+'</td><td>'+statusCell(a.status)+'</td><td class="mono">'+esc((a.permissions||[]).join(', '))+'</td><td><div class="actions">'+(can('accounts:manage')?'<button class="secondary small-btn" onclick="editAccountPermissions('+a.id+')">权限</button><button class="secondary small-btn" onclick="toggleAccountStatus('+a.id+',\\''+(a.status==='active'?'disabled':'active')+'\\')">'+(a.status==='active'?'禁用':'启用')+'</button>':'-')+'</div></td></tr>').join('') : '<tr><td colspan="7" class="empty">暂无后台账号</td></tr>';
+      accounts.innerHTML = accountRows.length ? accountRows.map(a => '<tr><td>'+a.id+'</td><td>'+esc(a.username)+'<br><span class="muted">'+esc(a.displayName||'')+'</span></td><td>'+esc(levelName(a.level))+'</td><td>'+esc(a.parentId||'-')+'</td><td>'+statusCell(a.status)+'</td><td class="mono">'+esc((a.permissions||[]).join(', '))+'</td><td><div class="actions">'+(can('accounts:manage')?'<button class="secondary small-btn" onclick="editAccountPermissions('+a.id+')">权限</button><button class="secondary small-btn" onclick="toggleAccountStatus('+a.id+',&quot;'+(a.status==='active'?'disabled':'active')+'&quot;)">'+(a.status==='active'?'禁用':'启用')+'</button>':'-')+'</div></td></tr>').join('') : '<tr><td colspan="7" class="empty">暂无后台账号</td></tr>';
       refreshAccountSelectors();
       renderPermissionChoices(defaultPermissionsForLevel(Number(accountLevel.value)));
     }
