@@ -11,7 +11,7 @@ import { loadLogs, toggleLogPanel, changeLogLevel, copyLogs, clearLogs } from '.
 import { showDataSyncDialog } from './modules/webdav.js'
 import { initTips } from './modules/tips.js'
 import { initTerminal } from './modules/terminal.js'
-import { initSession } from './modules/session.js'
+import { initSession, showCodexVisibilityRepairModal } from './modules/session.js'
 import { showSettingsModal, closeSettingsModal, saveSettings, applyTheme, initTheme, showAutoThemeConfigModal, closeAutoThemeConfigModal, saveAutoThemeConfig, refreshLicenseStatus, activateLicenseCard, showStartupLicenseGate, activateStartupLicenseCard } from './modules/settings.js'
 import { checkUpdatesOnStartup, checkForUpdates, initUpdateSettings } from './modules/updater.js'
 import { initBroadcast } from './modules/broadcast.js'
@@ -266,6 +266,7 @@ window.showCloseActionDialog = showCloseActionDialog;
 window.quitApplication = quitApplication;
 window.minimizeToTray = minimizeToTray;
 window.showDataSyncDialog = showDataSyncDialog;
+window.showCodexVisibilityRepairModal = showCodexVisibilityRepairModal;
 window.showAgentModal = showAgentModal;
 window.closeAgentModal = closeAgentModal;
 window.runAgent = runAgent;

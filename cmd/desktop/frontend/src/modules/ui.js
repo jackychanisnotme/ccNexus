@@ -18,6 +18,9 @@ export function initUI() {
                 </div>
                 <div class="header-actions">
                     <div class="header-tool-buttons">
+                        <button class="btn btn-secondary header-action-btn codex-visibility-repair-header-btn" onclick="window.showCodexVisibilityRepairModal()">
+                            ↻ ${t('session.codexRepairButton')}
+                        </button>
                         <button class="btn btn-secondary header-action-btn" onclick="window.showAgentModal()">
                             ${t('agent.button')}
                         </button>

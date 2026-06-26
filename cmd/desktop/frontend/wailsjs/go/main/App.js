@@ -370,6 +370,10 @@ export function ReorderEndpoints(arg1) {
   return window['go']['main']['App']['ReorderEndpoints'](arg1);
 }
 
+export function RepairCodexSessionVisibility(arg1) {
+  return window['go']['main']['App']['RepairCodexSessionVisibility'](arg1);
+}
+
 export function RepairAgentConfigs(arg1) {
   return window['go']['main']['App']['RepairAgentConfigs'](arg1);
 }
