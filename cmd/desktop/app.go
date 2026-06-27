@@ -598,6 +598,14 @@ func (a *App) FetchCodexRateLimitsForCredential(index int, credentialID int64) s
 	return desktopSuccessJSON(result)
 }
 
+func (a *App) GetCodexAccountOverview(index int) string {
+	endpoint, err := a.getEndpointByIndex(index)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	return service.CodexAccountOverviewJSON(*endpoint, a.storage)
+}
+
 func (a *App) RefreshEndpointCredential(index int, credentialID int64) string {
 	if credentialID <= 0 {
 		return desktopErrorJSON(fmt.Errorf("credential id is required"))

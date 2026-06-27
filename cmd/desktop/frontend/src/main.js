@@ -16,7 +16,7 @@ import { showSettingsModal, closeSettingsModal, saveSettings, applyTheme, initTh
 import { checkUpdatesOnStartup, checkForUpdates, initUpdateSettings } from './modules/updater.js'
 import { initBroadcast } from './modules/broadcast.js'
 import { initFilterDropdowns, clearAllFilters } from './modules/filters.js'
-import { showAgentProviderModal, closeAgentProviderModal, selectAllAgentProviders, applyAgentProviderConfig, restoreAgentProviderBackup } from './modules/agentProvider.js'
+import { showAgentProviderModal, closeAgentProviderModal, selectAllAgentProviders, applyAgentProviderConfig, restoreAgentProviderBackup, openAgentProviderRestorePicker, closeAgentProviderRestorePicker, selectAllAgentProviderRestoreTargets, confirmAgentProviderRestore } from './modules/agentProvider.js'
 import { showAgentModal, closeAgentModal, runAgent, checkAgentConfigs, repairAgentConfigs, newAgentChat, selectAgentSession, deleteAgentChat, handleAgentComposerKeydown, handleAgentPromptInput } from './modules/agent.js'
 import { formatTokens } from './utils/format.js'
 import {
@@ -282,6 +282,10 @@ window.closeAgentProviderModal = closeAgentProviderModal;
 window.selectAllAgentProviders = selectAllAgentProviders;
 window.applyAgentProviderConfig = applyAgentProviderConfig;
 window.restoreAgentProviderBackup = restoreAgentProviderBackup;
+window.openAgentProviderRestorePicker = openAgentProviderRestorePicker;
+window.closeAgentProviderRestorePicker = closeAgentProviderRestorePicker;
+window.selectAllAgentProviderRestoreTargets = selectAllAgentProviderRestoreTargets;
+window.confirmAgentProviderRestore = confirmAgentProviderRestore;
 window.switchStatsPeriod = switchStatsPeriod;
 window.toggleEndpointPanel = toggleEndpointPanel;
 window.switchEndpointViewMode = switchEndpointViewMode;

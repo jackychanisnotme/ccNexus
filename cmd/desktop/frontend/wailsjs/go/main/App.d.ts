@@ -75,6 +75,8 @@ export function GetChangelog(arg1:string):Promise<string>;
 
 export function GetCodexCredentialAuthStatus(arg1:string):Promise<string>;
 
+export function GetCodexAccountOverview(arg1:number):Promise<string>;
+
 export function GetCodexProxyURL():Promise<string>;
 
 export function GetCodexSessionData(arg1:string):Promise<string>;

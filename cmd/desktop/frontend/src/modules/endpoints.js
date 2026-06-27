@@ -530,6 +530,7 @@ function ensureTokenPoolModal() {
                 <div class="token-pool-toolbar">
                     <div id="tokenPoolHint" class="token-pool-hint" style="display: none;"></div>
                     <div id="tokenPoolStats" class="token-pool-stats"></div>
+                    <div id="tokenPoolOverview" class="token-pool-overview" style="display: none;"></div>
                     <div class="token-pool-proxy-bar">
                         <label for="tokenPoolProxyUrl" class="token-pool-proxy-label">${t('settings.proxyUrl')}</label>
                         <input id="tokenPoolProxyUrl" class="form-input" type="text" placeholder="${t('settings.proxyUrlPlaceholder')}">
@@ -1279,6 +1280,96 @@ function renderTokenPoolStats(stats = {}) {
     return `<div class="token-pool-stats-line">${parts.join('<span class="token-pool-stat-sep">·</span>')}</div>`;
 }
 
+function renderCodexAccountOverview(overview = {}) {
+    const planCounts = overview.planCounts || {};
+    const planSummary = Object.entries(planCounts)
+        .filter(([, count]) => Number(count) > 0)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([plan, count]) => `${escapeHtml(plan)} x${Number(count) || 0}`)
+        .join(' · ') || '-';
+    const quotaSummary = [
+        tt('tokenPool.codexAccountOverviewPrimary', { value: `${overview.highestPrimaryUsedPercent || 0}%` }),
+        tt('tokenPool.codexAccountOverviewSecondary', { value: `${overview.highestSecondaryUsedPercent || 0}%` })
+    ].join(' · ');
+    const nextReset = overview.nextResetAt ? formatTokenPoolTime(overview.nextResetAt) : '-';
+    const latestQuota = overview.latestQuotaUpdatedAt ? formatTokenPoolTime(overview.latestQuotaUpdatedAt) : '-';
+    const problemClass = (overview.problemAccounts || 0) > 0 ? ' token-pool-overview-alert' : '';
+
+    return `
+        <div class="token-pool-overview-header">
+            <strong>${t('tokenPool.codexAccountOverviewTitle')}</strong>
+            <span>${tt('tokenPool.codexAccountOverviewUpdated', { time: latestQuota })}</span>
+        </div>
+        <div class="token-pool-overview-grid">
+            <div class="token-pool-overview-card">
+                <span>${t('tokenPool.codexAccountOverviewAccounts')}</span>
+                <strong>${overview.totalAccounts || 0}</strong>
+                <small>${tt('tokenPool.codexAccountOverviewAccountDetail', {
+                    active: overview.activeAccounts || 0,
+                    problem: overview.problemAccounts || 0
+                })}</small>
+            </div>
+            <div class="token-pool-overview-card${problemClass}">
+                <span>${t('tokenPool.codexAccountOverviewHealth')}</span>
+                <strong>${overview.problemAccounts || 0}</strong>
+                <small>${tt('tokenPool.codexAccountOverviewEnabledDetail', {
+                    enabled: overview.enabledAccounts || 0,
+                    disabled: overview.disabledAccounts || 0
+                })}</small>
+            </div>
+            <div class="token-pool-overview-card">
+                <span>${t('tokenPool.codexAccountOverviewQuota')}</span>
+                <strong>${escapeHtml(quotaSummary)}</strong>
+                <small>${tt('tokenPool.codexAccountOverviewReset', { time: nextReset })}</small>
+            </div>
+            <div class="token-pool-overview-card">
+                <span>${t('tokenPool.codexAccountOverviewUsage')}</span>
+                <strong>${formatTokens(overview.totalTokens || 0)}</strong>
+                <small>${tt('tokenPool.codexAccountOverviewUsageDetail', {
+                    requests: overview.requests || 0,
+                    errors: overview.errors || 0
+                })}</small>
+            </div>
+            <div class="token-pool-overview-card token-pool-overview-card-wide">
+                <span>${t('tokenPool.codexAccountOverviewPlans')}</span>
+                <strong>${planSummary}</strong>
+                <small>${tt('tokenPool.codexAccountOverviewSnapshots', {
+                    available: overview.quotaSnapshotAvailableCount || 0,
+                    problem: overview.quotaSnapshotProblemCount || 0,
+                    missing: overview.quotaSnapshotUnsupportedCount || 0
+                })}</small>
+            </div>
+        </div>
+    `;
+}
+
+async function loadCodexAccountOverview(index) {
+    const modal = ensureTokenPoolModal();
+    const overviewEl = modal.querySelector('#tokenPoolOverview');
+    if (!overviewEl) {
+        return;
+    }
+    if (getTokenPoolManagerMode(index) !== 'codex') {
+        overviewEl.style.display = 'none';
+        overviewEl.innerHTML = '';
+        return;
+    }
+
+    overviewEl.style.display = 'block';
+    overviewEl.innerHTML = `<div class="token-pool-overview-loading">${t('tokenPool.codexAccountOverviewLoading')}</div>`;
+    try {
+        const raw = await window.go.main.App.GetCodexAccountOverview(index);
+        const result = parseAppJSON(raw);
+        if (!result.success) {
+            throw new Error(result.error || t('tokenPool.codexAccountOverviewFailed'));
+        }
+        overviewEl.innerHTML = renderCodexAccountOverview(result.data || {});
+    } catch (error) {
+        const message = error?.message || String(error);
+        overviewEl.innerHTML = `<div class="token-pool-overview-error">${tt('tokenPool.codexAccountOverviewFailedWithError', { error: escapeHtml(message) })}</div>`;
+    }
+}
+
 function renderTokenPoolRows(credentials = [], options = {}) {
     const mode = options.mode || (options.showCodexActions === false ? 'api' : 'codex');
     const showCodexActions = mode === 'codex';
@@ -1551,6 +1642,7 @@ async function loadTokenPoolData(index) {
     const mode = getTokenPoolManagerMode(index);
     statsEl.innerHTML = renderTokenPoolStats(stats);
     bodyEl.innerHTML = renderTokenPoolRows(credentials, { mode });
+    await loadCodexAccountOverview(index);
     setTokenPoolHint(modal, '');
 
     bodyEl.querySelectorAll('.token-pool-toggle-action').forEach((button) => {

@@ -257,6 +257,57 @@ func TestAgentProviderInvalidJSONFailsWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestAgentProviderStatusReturnsAllBackupsInDescendingOrder(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, ".AINexus")
+	cfg := config.DefaultConfig()
+	svc := NewAgentProviderServiceWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: dataDir,
+	})
+
+	writeFile(t, filepath.Join(dataDir, "agent-provider-backups", "backup-older", "manifest.json"), `{
+  "id": "backup-older",
+  "createdAt": "2026-06-01T01:02:03Z",
+  "targetUrl": "http://127.0.0.1:3000",
+  "files": []
+}`)
+	writeFile(t, filepath.Join(dataDir, "agent-provider-backups", "backup-newer", "manifest.json"), `{
+  "id": "backup-newer",
+  "createdAt": "2026-06-02T01:02:03Z",
+  "targetUrl": "http://127.0.0.1:3001",
+  "files": []
+}`)
+
+	status := svc.Status()
+	if len(status.Backups) != 2 {
+		t.Fatalf("expected 2 backups, got %#v", status.Backups)
+	}
+	if status.Backups[0].ID != "backup-newer" || status.Backups[1].ID != "backup-older" {
+		t.Fatalf("backups not sorted descending: %#v", status.Backups)
+	}
+	if status.LatestBackup == nil || status.LatestBackup.ID != "backup-newer" {
+		t.Fatalf("latest backup not set from newest entry: %#v", status.LatestBackup)
+	}
+}
+
+func TestAgentProviderStatusHandlesEmptyBackupDirectory(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.DefaultConfig()
+	svc := NewAgentProviderServiceWithOptions(cfg, AgentProviderOptions{
+		HomeDir: home,
+		DataDir: filepath.Join(home, ".AINexus"),
+	})
+
+	status := svc.Status()
+	if len(status.Backups) != 0 {
+		t.Fatalf("expected no backups, got %#v", status.Backups)
+	}
+	if status.LatestBackup != nil {
+		t.Fatalf("expected no latest backup, got %#v", status.LatestBackup)
+	}
+}
+
 func TestNormalizeAgentTargetIDAliases(t *testing.T) {
 	tests := map[string]string{
 		"claude-code":  "claude",

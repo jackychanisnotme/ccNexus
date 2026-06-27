@@ -52,4 +52,16 @@ describe('Codex session visibility repair UI', () => {
         assert.match(sessionSource, /sessionIds:\s*codexVisibilityRepairSessionScope === 'selected' \? codexVisibilityRepairSelectedSessionIds/);
         assert.match(sessionSource, /codexRepairSelectAtLeastOne/);
     });
+
+    it('renders select-all and clear-all buttons in the picker toolbar', () => {
+        assert.match(sessionSource, /window\.selectAllCodexVisibilityPickerSessions\s*=\s*selectAllCodexVisibilityPickerSessions/);
+        assert.match(sessionSource, /window\.clearAllCodexVisibilityPickerSessions\s*=\s*clearAllCodexVisibilityPickerSessions/);
+        assert.match(sessionSource, /codexVisibilityRepairPickerVisibleSessions/);
+        assert.match(sessionSource, /codexRepairSelectAllSessions/);
+        assert.match(sessionSource, /codexRepairClearAllSelections/);
+        assert.match(zhSource, /codexRepairSelectAllSessions:\s*'全选全部会话'/);
+        assert.match(zhSource, /codexRepairClearAllSelections:\s*'取消全选'/);
+        assert.match(sessionSource, /selectAllCodexVisibilityPickerSessions\(\)/);
+        assert.match(sessionSource, /clearAllCodexVisibilityPickerSessions\(\)/);
+    });
 });

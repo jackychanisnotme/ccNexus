@@ -19,15 +19,33 @@ type CodexSessionMeta struct {
 	} `json:"payload"`
 }
 
-// getCodexSessionsDir returns ~/.codex/sessions path
-func getCodexSessionsDir() string {
+// getCodexHomeDir returns ~/.codex path
+func getCodexHomeDir() string {
 	var home string
 	if runtime.GOOS == "windows" {
 		home = os.Getenv("USERPROFILE")
 	} else {
 		home = os.Getenv("HOME")
 	}
-	return filepath.Join(home, ".codex", "sessions")
+	return filepath.Join(home, ".codex")
+}
+
+// getCodexSessionsDir returns ~/.codex/sessions path
+func getCodexSessionsDir() string {
+	return filepath.Join(getCodexHomeDir(), "sessions")
+}
+
+// getCodexArchivedSessionsDir returns ~/.codex/archived_sessions path
+func getCodexArchivedSessionsDir() string {
+	return filepath.Join(getCodexHomeDir(), "archived_sessions")
+}
+
+// getCodexSessionRoots returns Codex session roots in priority order.
+func getCodexSessionRoots() []string {
+	return []string{
+		getCodexSessionsDir(),
+		getCodexArchivedSessionsDir(),
+	}
 }
 
 // getCodexAliasFilePath returns the path to the Codex alias file
@@ -77,42 +95,48 @@ func GetAllCodexSessions() ([]SessionInfo, error) {
 }
 
 func scanCodexSessions(include func(meta *CodexSessionMeta) bool) ([]SessionInfo, error) {
-	sessionsDir := getCodexSessionsDir()
-
-	if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
-		return []SessionInfo{}, nil
-	}
-
 	aliases := loadCodexAliases()
 	var sessions []SessionInfo
+	seen := make(map[string]bool)
 
-	err := filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		if !strings.HasPrefix(info.Name(), "rollout-") || !strings.HasSuffix(info.Name(), ".jsonl") {
-			return nil
+	for _, sessionsDir := range getCodexSessionRoots() {
+		if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
+			continue
 		}
 
-		meta, summary, err := parseCodexSession(path)
-		if err != nil || !include(meta) {
-			return nil
-		}
+		err := filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			if !strings.HasPrefix(info.Name(), "rollout-") || !strings.HasSuffix(info.Name(), ".jsonl") {
+				return nil
+			}
 
-		sessionID := extractCodexSessionId(info.Name())
-		sessions = append(sessions, SessionInfo{
-			SessionID:  sessionID,
-			ModTime:    info.ModTime().Unix(),
-			Size:       info.Size(),
-			Summary:    summary,
-			Alias:      aliases[sessionID],
-			ProjectDir: meta.Payload.Cwd,
+			sessionID := extractCodexSessionId(info.Name())
+			if seen[sessionID] {
+				return nil
+			}
+
+			meta, summary, err := parseCodexSession(path)
+			if err != nil || !include(meta) {
+				return nil
+			}
+
+			seen[sessionID] = true
+			sessions = append(sessions, SessionInfo{
+				SessionID:  sessionID,
+				ModTime:    info.ModTime().Unix(),
+				Size:       info.Size(),
+				Summary:    summary,
+				Alias:      aliases[sessionID],
+				ProjectDir: meta.Payload.Cwd,
+			})
+
+			return nil
 		})
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	sort.Slice(sessions, func(i, j int) bool {
@@ -307,19 +331,30 @@ func RenameCodexSession(sessionID, alias string) error {
 
 // findCodexSessionFile finds session file by ID
 func findCodexSessionFile(sessionID string) string {
-	sessionsDir := getCodexSessionsDir()
 	var sessionFile string
 
-	filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	for _, sessionsDir := range getCodexSessionRoots() {
+		if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
+			continue
+		}
+
+		filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			if !strings.HasPrefix(info.Name(), "rollout-") || !strings.HasSuffix(info.Name(), ".jsonl") {
+				return nil
+			}
+			if strings.Contains(info.Name(), sessionID) {
+				sessionFile = path
+				return filepath.SkipAll
+			}
 			return nil
+		})
+		if sessionFile != "" {
+			break
 		}
-		if strings.Contains(info.Name(), sessionID) {
-			sessionFile = path
-			return filepath.SkipAll
-		}
-		return nil
-	})
+	}
 
 	return sessionFile
 }

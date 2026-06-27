@@ -26,12 +26,16 @@ function getSelectedTargets() {
         .map(input => input.value);
 }
 
-function renderTargetRows(status) {
+function getSelectedBackupId() {
+    return document.getElementById('agentProviderBackupSelect')?.value || currentStatus?.latestBackup?.id || '';
+}
+
+function renderTargetRows(status, checkedTargets = null) {
     const targets = Array.isArray(status?.targets) ? status.targets : [];
     const sorted = [...targets].sort((a, b) => TARGET_ORDER.indexOf(a.target) - TARGET_ORDER.indexOf(b.target));
     return sorted.map(target => `
         <label class="agent-provider-target ${target.detected ? 'detected' : 'missing'}">
-            <input type="checkbox" value="${escapeHtml(target.target)}" ${target.detected ? 'checked' : ''}>
+            <input type="checkbox" value="${escapeHtml(target.target)}" ${shouldCheckTarget(target, checkedTargets) ? 'checked' : ''}>
             <span class="agent-provider-main">
                 <strong>${escapeHtml(target.label)}</strong>
                 <small title="${escapeHtml(target.path)}">${escapeHtml(target.path)}</small>
@@ -41,6 +45,38 @@ function renderTargetRows(status) {
             </span>
         </label>
     `).join('');
+}
+
+function shouldCheckTarget(target, checkedTargets) {
+    if (checkedTargets instanceof Set) {
+        return checkedTargets.has(target.target);
+    }
+    if (Array.isArray(checkedTargets)) {
+        return checkedTargets.includes(target.target);
+    }
+    return !!target.detected;
+}
+
+function formatBackupLabel(backup) {
+    const id = backup?.id || '';
+    const createdAt = backup?.createdAt ? new Date(backup.createdAt).toLocaleString() : '';
+    return createdAt ? `${id} • ${createdAt}` : id;
+}
+
+function renderBackupSelect(backups) {
+    if (!backups.length) {
+        return `<code>${t('agentProvider.noBackup')}</code>`;
+    }
+    return `
+        <div class="agent-provider-backup-control">
+            <select id="agentProviderBackupSelect" class="agent-provider-backup-select">
+                ${backups.map((backup, index) => `
+                    <option value="${escapeHtml(backup.id)}" ${index === 0 ? 'selected' : ''}>${escapeHtml(formatBackupLabel(backup))}</option>
+                `).join('')}
+            </select>
+            <button class="btn btn-secondary btn-sm" onclick="window.openAgentProviderRestorePicker()">${t('agentProvider.selectBackup')}</button>
+        </div>
+    `;
 }
 
 function renderResults(results = []) {
@@ -65,7 +101,7 @@ function renderResults(results = []) {
 
 function renderModal(status) {
     currentStatus = status;
-    const latestBackup = status?.latestBackup;
+    const backups = Array.isArray(status?.backups) ? status.backups : [];
     return `
         <div id="agentProviderModal" class="modal active">
             <div class="modal-content agent-provider-modal">
@@ -90,14 +126,14 @@ function renderModal(status) {
                         ${renderTargetRows(status)}
                     </div>
                     <div class="agent-provider-backup">
-                        <span>${t('agentProvider.latestBackup')}</span>
-                        <code>${latestBackup ? escapeHtml(latestBackup.id) : t('agentProvider.noBackup')}</code>
+                        <span>${t('agentProvider.backupHistory')}</span>
+                        ${renderBackupSelect(backups)}
                     </div>
                     <div id="agentProviderResults"></div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" onclick="window.closeAgentProviderModal()">${t('common.close')}</button>
-                    <button class="btn btn-secondary" ${latestBackup ? '' : 'disabled'} onclick="window.restoreAgentProviderBackup()">${t('agentProvider.restore')}</button>
+                    <button class="btn btn-secondary" ${backups.length ? '' : 'disabled'} onclick="window.restoreAgentProviderBackup()">${t('agentProvider.restore')}</button>
                     <button class="btn btn-primary" onclick="window.applyAgentProviderConfig()">${t('agentProvider.apply')}</button>
                 </div>
             </div>
@@ -125,6 +161,7 @@ export async function showAgentProviderModal() {
 export function closeAgentProviderModal() {
     const host = document.getElementById('agentProviderModalHost');
     if (host) host.innerHTML = '';
+    closeAgentProviderRestorePicker();
 }
 
 export function selectAllAgentProviders(checked) {
@@ -152,17 +189,91 @@ export async function applyAgentProviderConfig() {
 }
 
 export async function restoreAgentProviderBackup() {
-    const backupID = currentStatus?.latestBackup?.id || '';
+    if (!getSelectedBackupId()) {
+        showNotification(t('agentProvider.noBackup'), 'warning');
+        return;
+    }
+    openAgentProviderRestorePicker();
+}
+
+export function openAgentProviderRestorePicker() {
+    const backupID = getSelectedBackupId();
     if (!backupID) {
         showNotification(t('agentProvider.noBackup'), 'warning');
         return;
     }
-    const targets = getSelectedTargets();
+    closeAgentProviderRestorePicker();
+    const host = document.getElementById('agentProviderModalHost');
+    if (!host) {
+        return;
+    }
+    const selectedTargets = new Set(getSelectedTargets());
+    const modal = document.createElement('div');
+    modal.id = 'agentProviderRestoreModal';
+    modal.className = 'modal active agent-provider-restore-modal';
+    modal.innerHTML = renderRestorePicker(currentStatus, backupID, selectedTargets);
+    host.appendChild(modal);
+}
+
+function renderRestorePicker(status, backupID, selectedTargets) {
+    return `
+        <div class="modal-content agent-provider-modal">
+            <div class="modal-header">
+                <h2>🔁 ${t('agentProvider.restoreTargets')}</h2>
+                <button class="modal-close" onclick="window.closeAgentProviderRestorePicker()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="agent-provider-summary">
+                    <span>${t('agentProvider.selectBackup')}</span>
+                    <code>${escapeHtml(formatBackupLabel((Array.isArray(status?.backups) ? status.backups : []).find(backup => backup.id === backupID) || { id: backupID }))}</code>
+                </div>
+                <div class="agent-provider-actions-row">
+                    <button class="btn btn-secondary btn-sm" onclick="window.selectAllAgentProviderRestoreTargets(true)">${t('agentProvider.selectAll')}</button>
+                    <button class="btn btn-secondary btn-sm" onclick="window.selectAllAgentProviderRestoreTargets(false)">${t('agentProvider.clearAll')}</button>
+                </div>
+                <div id="agentProviderRestoreTargets" class="agent-provider-restore-targets">
+                    ${renderTargetRows(status, selectedTargets)}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="window.closeAgentProviderRestorePicker()">${t('common.cancel')}</button>
+                <button class="btn btn-primary" onclick="window.confirmAgentProviderRestore()">${t('agentProvider.restore')}</button>
+            </div>
+        </div>
+    `;
+}
+
+export function closeAgentProviderRestorePicker() {
+    const modal = document.getElementById('agentProviderRestoreModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+export function selectAllAgentProviderRestoreTargets(checked) {
+    document.querySelectorAll('#agentProviderRestoreTargets input[type="checkbox"]').forEach(input => {
+        input.checked = !!checked;
+    });
+}
+
+export async function confirmAgentProviderRestore() {
+    const backupID = getSelectedBackupId();
+    if (!backupID) {
+        showNotification(t('agentProvider.noBackup'), 'warning');
+        return;
+    }
+    const targets = Array.from(document.querySelectorAll('#agentProviderRestoreTargets input[type="checkbox"]:checked'))
+        .map(input => input.value);
+    if (!targets.length) {
+        showNotification(t('agentProvider.noSelection'), 'warning');
+        return;
+    }
     try {
         const raw = await window.go.main.App.RestoreAgentProviderBackup(backupID, JSON.stringify({ targets }));
         const result = JSON.parse(raw);
         renderResults(result.results);
         showNotification(t('agentProvider.restoreComplete'), 'success');
+        closeAgentProviderRestorePicker();
         await refreshAgentProviderModal();
     } catch (error) {
         showNotification(tt('restoreFailed', { error: error.message }), 'error');
@@ -179,4 +290,5 @@ async function refreshAgentProviderModal() {
         const resultEl = document.getElementById('agentProviderResults');
         if (resultEl) resultEl.innerHTML = previousResults;
     }
+    closeAgentProviderRestorePicker();
 }

@@ -14,6 +14,7 @@ let codexVisibilityRepairRunning = false;
 let codexVisibilityRepairResult = null;
 let codexVisibilityRepairSelectedSessionIds = [];
 let codexVisibilityRepairPickerSessions = [];
+let codexVisibilityRepairPickerVisibleSessions = [];
 let codexVisibilityRepairPickerQuery = '';
 let codexVisibilityRepairPickerLoading = false;
 let codexVisibilityRepairPickerError = '';
@@ -37,6 +38,8 @@ export function initSession() {
     window.setCodexVisibilitySessionPickerQuery = setCodexVisibilitySessionPickerQuery;
     window.toggleCodexVisibilityPickerSession = toggleCodexVisibilityPickerSession;
     window.confirmCodexVisibilitySessionPicker = confirmCodexVisibilitySessionPicker;
+    window.selectAllCodexVisibilityPickerSessions = selectAllCodexVisibilityPickerSessions;
+    window.clearAllCodexVisibilityPickerSessions = clearAllCodexVisibilityPickerSessions;
 }
 
 // 获取选中的会话
@@ -266,6 +269,30 @@ function toggleCodexVisibilityPickerSession(sessionId) {
     renderCodexVisibilitySessionPicker();
 }
 
+function selectAllCodexVisibilityPickerSessions(filteredSessions) {
+    const targetSessions = Array.isArray(filteredSessions) ? filteredSessions : codexVisibilityRepairPickerVisibleSessions;
+    if (!Array.isArray(targetSessions) || targetSessions.length === 0) {
+        return;
+    }
+    const selected = new Set(codexVisibilityRepairSelectedSessionIds);
+    targetSessions.forEach(session => {
+        if (session?.sessionId) {
+            selected.add(session.sessionId);
+        }
+    });
+    codexVisibilityRepairSelectedSessionIds = Array.from(selected);
+    codexVisibilityRepairSessionScope = 'selected';
+    renderCodexVisibilitySessionPicker();
+    renderCodexVisibilityRepairModal();
+}
+
+function clearAllCodexVisibilityPickerSessions() {
+    codexVisibilityRepairSelectedSessionIds = [];
+    codexVisibilityRepairSessionScope = 'all';
+    renderCodexVisibilitySessionPicker();
+    renderCodexVisibilityRepairModal();
+}
+
 function confirmCodexVisibilitySessionPicker() {
     if (codexVisibilityRepairSelectedSessionIds.length === 0) {
         showNotification(t('session.codexRepairSelectAtLeastOne'), 'warning');
@@ -294,8 +321,10 @@ function renderCodexVisibilitySessionPicker() {
             .filter(Boolean)
             .some(value => String(value).toLowerCase().includes(query));
     });
+    codexVisibilityRepairPickerVisibleSessions = filteredSessions;
     const selected = new Set(codexVisibilityRepairSelectedSessionIds);
     const selectedCount = selected.size;
+    const allFilteredSelected = filteredSessions.length > 0 && filteredSessions.every(session => selected.has(session.sessionId));
     let bodyHTML = '';
 
     if (codexVisibilityRepairPickerLoading) {
@@ -341,6 +370,14 @@ function renderCodexVisibilitySessionPicker() {
                            value="${escapeHtml(codexVisibilityRepairPickerQuery)}"
                            placeholder="${t('session.codexRepairSearchSessions')}"
                            oninput="window.setCodexVisibilitySessionPickerQuery(this.value)" />
+                    <div class="codex-visibility-picker-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="window.selectAllCodexVisibilityPickerSessions()" ${filteredSessions.length === 0 || allFilteredSelected ? 'disabled' : ''}>
+                            ${t('session.codexRepairSelectAllSessions')}
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="window.clearAllCodexVisibilityPickerSessions()" ${selectedCount === 0 ? 'disabled' : ''}>
+                            ${t('session.codexRepairClearAllSelections')}
+                        </button>
+                    </div>
                     <div class="codex-visibility-picker-count">
                         ${t('session.codexRepairSelectedCount').replace('{count}', String(selectedCount))}
                     </div>

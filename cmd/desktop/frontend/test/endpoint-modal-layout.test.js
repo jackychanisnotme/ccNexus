@@ -100,6 +100,16 @@ describe('endpoint modal option layout', () => {
         assert.match(endpointsSource, /dataset\.tokenPoolMode/);
     });
 
+    it('renders a Codex account overview for Codex token pool endpoints', () => {
+        assert.match(endpointsSource, /GetCodexAccountOverview/);
+        assert.match(endpointsSource, /tokenPoolOverview/);
+        assert.match(endpointsSource, /renderCodexAccountOverview/);
+        assert.match(endpointsSource, /loadCodexAccountOverview/);
+        assert.match(endpointsSource, /codexAccountOverviewTitle/);
+        assert.match(zhSource, /codexAccountOverviewTitle:\s*'Codex 账号总览'/);
+        assert.match(enSource, /codexAccountOverviewTitle:\s*'Codex Account Overview'/);
+    });
+
     it('keeps the token pool table inside the modal width', () => {
         assert.doesNotMatch(cssSource, /\.token-pool-table\s*{[^}]*min-width:\s*980px;/s);
         assert.match(cssSource, /\.token-pool-table\s*{[^}]*table-layout:\s*fixed;/s);
@@ -180,6 +190,17 @@ describe('endpoint modal option layout', () => {
         assert.match(agentProviderSource, /RestoreAgentProviderBackup/);
         assert.match(agentProviderSource, /agentProviderTargets/);
         assert.match(cssSource, /\.agent-provider-modal/);
+    });
+
+    it('renders the agent provider backup history picker and restore target chooser', () => {
+        assert.match(agentProviderSource, /status\.backups/);
+        assert.match(agentProviderSource, /agentProvider\.backupHistory/);
+        assert.match(agentProviderSource, /agentProvider\.selectBackup/);
+        assert.match(agentProviderSource, /agentProvider\.restoreTargets/);
+        assert.match(agentProviderSource, /agentProviderBackupSelect/);
+        assert.match(agentProviderSource, /openAgentProviderRestorePicker/);
+        assert.match(cssSource, /\.agent-provider-backup-select/);
+        assert.match(cssSource, /\.agent-provider-restore-targets/);
     });
 
     it('localizes the agent header buttons in Simplified Chinese', () => {

@@ -150,6 +150,10 @@ export function GetCodexCredentialAuthStatus(arg1) {
   return window['go']['main']['App']['GetCodexCredentialAuthStatus'](arg1);
 }
 
+export function GetCodexAccountOverview(arg1) {
+  return window['go']['main']['App']['GetCodexAccountOverview'](arg1);
+}
+
 export function GetCodexProxyURL() {
   return window['go']['main']['App']['GetCodexProxyURL']();
 }

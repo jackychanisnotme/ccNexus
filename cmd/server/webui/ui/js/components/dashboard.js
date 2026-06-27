@@ -119,6 +119,7 @@ class Dashboard {
         if (!container) return;
         const targets = Array.isArray(status?.targets) ? status.targets : [];
         const detected = targets.filter(target => target.detected).length;
+        const latestBackup = status?.latestBackup?.id || t('agentProvider.noBackup');
         container.innerHTML = `
             <div>
                 <div class="network-label">${t('agentProvider.targetUrl')}</div>
@@ -130,7 +131,7 @@ class Dashboard {
             </div>
             <div>
                 <div class="network-label">${t('agentProvider.latestBackup')}</div>
-                <code class="network-code">${this.escapeHtml(status?.latestBackup?.id || t('agentProvider.noBackup'))}</code>
+                <code class="network-code">${this.escapeHtml(latestBackup)}</code>
             </div>
         `;
     }
@@ -144,12 +145,13 @@ class Dashboard {
             overlay.innerHTML = this.renderAgentProviderModal(status);
             document.body.appendChild(overlay);
             overlay.querySelectorAll('.modal-close').forEach(button => {
-                button.addEventListener('click', () => overlay.remove());
+                button.addEventListener('click', () => this.closeAgentProviderModal(overlay));
             });
             overlay.querySelector('#agent-provider-select-all')?.addEventListener('click', () => this.setAgentProviderChecks(true));
             overlay.querySelector('#agent-provider-clear')?.addEventListener('click', () => this.setAgentProviderChecks(false));
+            overlay.querySelector('#agent-provider-select-backup')?.addEventListener('click', () => this.openAgentProviderRestorePicker(overlay, status));
             overlay.querySelector('#agent-provider-apply')?.addEventListener('click', () => this.applyAgentProvider(overlay));
-            overlay.querySelector('#agent-provider-restore')?.addEventListener('click', () => this.restoreAgentProvider(overlay, status?.latestBackup?.id || ''));
+            overlay.querySelector('#agent-provider-restore')?.addEventListener('click', () => this.openAgentProviderRestorePicker(overlay, status));
         } catch (error) {
             notifications.error(`${t('agentProvider.loadFailed')}: ${error.message}`);
         }
@@ -157,6 +159,7 @@ class Dashboard {
 
     renderAgentProviderModal(status) {
         const targets = Array.isArray(status?.targets) ? status.targets : [];
+        const backups = Array.isArray(status?.backups) ? status.backups : [];
         const rows = targets.map(target => `
             <label class="agent-provider-row ${target.detected ? 'detected' : 'missing'}">
                 <input type="checkbox" value="${this.escapeHtml(target.target)}" ${target.detected ? 'checked' : ''}>
@@ -179,9 +182,9 @@ class Dashboard {
                             <div class="network-label">${t('agentProvider.targetUrl')}</div>
                             <code class="network-code">${this.escapeHtml(status?.targetUrl || '')}</code>
                         </div>
-                        <div>
-                            <div class="network-label">${t('agentProvider.latestBackup')}</div>
-                            <code class="network-code">${this.escapeHtml(status?.latestBackup?.id || t('agentProvider.noBackup'))}</code>
+                        <div class="agent-provider-backup-summary">
+                            <div class="network-label">${t('agentProvider.backupHistory')}</div>
+                            ${this.renderBackupPicker(backups)}
                         </div>
                     </div>
                     <div class="agent-provider-toolbar">
@@ -194,11 +197,37 @@ class Dashboard {
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary modal-close">${t('common.close')}</button>
-                    <button class="btn btn-secondary" id="agent-provider-restore" ${status?.latestBackup?.id ? '' : 'disabled'}>${t('agentProvider.restore')}</button>
+                    <button class="btn btn-secondary" id="agent-provider-restore" ${backups.length ? '' : 'disabled'}>${t('agentProvider.restore')}</button>
                     <button class="btn btn-primary" id="agent-provider-apply">${t('agentProvider.apply')}</button>
                 </div>
             </div>
         `;
+    }
+
+    closeAgentProviderModal(overlay) {
+        document.getElementById('agent-provider-restore-overlay')?.remove();
+        overlay.remove();
+    }
+
+    renderBackupPicker(backups) {
+        if (!backups.length) {
+            return `<code class="network-code">${t('agentProvider.noBackup')}</code>`;
+        }
+        return `
+            <div class="agent-provider-backup-control">
+                <select id="agent-provider-backup-select" class="form-select agent-provider-backup-select">
+                    ${backups.map((backup, index) => `
+                        <option value="${this.escapeHtml(backup.id)}" ${index === 0 ? 'selected' : ''}>${this.escapeHtml(this.formatBackupLabel(backup))}</option>
+                    `).join('')}
+                </select>
+                <button class="btn btn-secondary btn-sm" id="agent-provider-select-backup">${t('agentProvider.selectBackup')}</button>
+            </div>
+        `;
+    }
+
+    formatBackupLabel(backup) {
+        const createdAt = backup?.createdAt ? new Date(backup.createdAt).toLocaleString() : '';
+        return createdAt ? `${backup.id} • ${createdAt}` : backup?.id || '';
     }
 
     setAgentProviderChecks(checked) {
@@ -207,8 +236,59 @@ class Dashboard {
         });
     }
 
+    selectedAgentProviderBackupId(overlay) {
+        return overlay.querySelector('#agent-provider-backup-select')?.value || '';
+    }
+
     selectedAgentProviderTargets(overlay) {
         return Array.from(overlay.querySelectorAll('.agent-provider-row input[type="checkbox"]:checked')).map(input => input.value);
+    }
+
+    openAgentProviderRestorePicker(overlay, status) {
+        const existing = document.getElementById('agent-provider-restore-overlay');
+        if (existing) {
+            existing.remove();
+        }
+        const backupId = this.selectedAgentProviderBackupId(overlay);
+        if (!backupId) {
+            notifications.warning(t('agentProvider.noBackup'));
+            return;
+        }
+        const restoreOverlay = document.createElement('div');
+        restoreOverlay.className = 'modal-overlay';
+        restoreOverlay.id = 'agent-provider-restore-overlay';
+        restoreOverlay.innerHTML = `
+            <div class="modal agent-provider-web-modal">
+                <div class="modal-header">
+                    <h3 class="modal-title">${t('agentProvider.restoreTargets')}</h3>
+                    <button class="modal-close" id="agent-provider-restore-close">×</button>
+                </div>
+                <div class="modal-body">
+                    <div class="agent-provider-backup-summary">
+                        <div class="network-label">${t('agentProvider.selectBackup')}</div>
+                        <code class="network-code">${this.escapeHtml(this.formatBackupLabel((status?.backups || []).find(backup => backup.id === backupId) || { id: backupId }))}</code>
+                    </div>
+                    <div class="agent-provider-toolbar">
+                        <button class="btn btn-secondary" id="agent-provider-restore-select-all">${t('agentProvider.selectAll')}</button>
+                        <button class="btn btn-secondary" id="agent-provider-restore-clear">${t('agentProvider.clearAll')}</button>
+                    </div>
+                    <div class="agent-provider-restore-targets">
+                        ${this.renderAgentProviderTargets(status, this.selectedAgentProviderTargets(overlay), false)}
+                    </div>
+                    <div id="agent-provider-restore-results"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="agent-provider-restore-cancel">${t('common.cancel')}</button>
+                    <button class="btn btn-primary" id="agent-provider-restore-confirm">${t('agentProvider.restore')}</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(restoreOverlay);
+        restoreOverlay.querySelector('#agent-provider-restore-close')?.addEventListener('click', () => restoreOverlay.remove());
+        restoreOverlay.querySelector('#agent-provider-restore-cancel')?.addEventListener('click', () => restoreOverlay.remove());
+        restoreOverlay.querySelector('#agent-provider-restore-select-all')?.addEventListener('click', () => this.setRestoreTargets(true));
+        restoreOverlay.querySelector('#agent-provider-restore-clear')?.addEventListener('click', () => this.setRestoreTargets(false));
+        restoreOverlay.querySelector('#agent-provider-restore-confirm')?.addEventListener('click', () => this.restoreAgentProvider(restoreOverlay, backupId));
     }
 
     async applyAgentProvider(overlay) {
@@ -235,17 +315,73 @@ class Dashboard {
             notifications.warning(t('agentProvider.noBackup'));
             return;
         }
+        const targets = this.selectedRestoreTargets(overlay);
+        if (targets.length === 0) {
+            notifications.warning(t('agentProvider.noSelection'));
+            return;
+        }
         try {
             const result = await api.restoreAgentProviderBackup({
                 backupId,
-                targets: this.selectedAgentProviderTargets(overlay),
+                targets,
             });
-            this.renderAgentProviderResults(overlay, result.results);
+            this.renderAgentProviderResults(document.getElementById('agent-provider-modal'), result.results);
             notifications.success(t('agentProvider.restoreComplete'));
+            overlay.remove();
             this.updateAgentProviderSummary(await api.getAgentProviderStatus());
         } catch (error) {
             notifications.error(`${t('agentProvider.restoreFailed')}: ${error.message}`);
         }
+    }
+
+    renderAgentProviderTargets(status, checkedTargets = [], defaultToDetected = true) {
+        const targets = Array.isArray(status?.targets) ? status.targets : [];
+        return targets.map(target => `
+            <label class="agent-provider-row ${target.detected ? 'detected' : 'missing'}">
+                <input type="checkbox" value="${this.escapeHtml(target.target)}" ${this.shouldCheckTarget(target, checkedTargets, defaultToDetected) ? 'checked' : ''}>
+                <span>
+                    <strong>${this.escapeHtml(target.label)}</strong>
+                    <small title="${this.escapeHtml(target.path)}">${this.escapeHtml(target.path)}</small>
+                </span>
+                <em>${target.detected ? t('agentProvider.detected') : t('agentProvider.missing')}</em>
+            </label>
+        `).join('');
+    }
+
+    shouldCheckTarget(target, checkedTargets, defaultToDetected) {
+        if (Array.isArray(checkedTargets)) {
+            return checkedTargets.includes(target.target);
+        }
+        if (checkedTargets instanceof Set) {
+            return checkedTargets.has(target.target);
+        }
+        return defaultToDetected ? !!target.detected : false;
+    }
+
+    selectedRestoreTargets(overlay) {
+        return Array.from(overlay.querySelectorAll('.agent-provider-row input[type="checkbox"]:checked')).map(input => input.value);
+    }
+
+    setRestoreTargets(checked) {
+        document.querySelectorAll('#agent-provider-restore-overlay .agent-provider-row input[type="checkbox"]').forEach(input => {
+            input.checked = !!checked;
+        });
+    }
+
+    renderAgentProviderRestoreResults(overlay, results = []) {
+        const container = overlay.querySelector('#agent-provider-restore-results');
+        if (!container) return;
+        container.innerHTML = `
+            <div class="agent-provider-result-list">
+                ${results.map(result => `
+                    <div class="agent-provider-result ${this.escapeHtml(result.status)}">
+                        <strong>${this.escapeHtml(result.label || result.target || '-')}</strong>
+                        <span>${this.escapeHtml(t(`agentProvider.status.${result.status}`) || result.status)}</span>
+                        <small>${this.escapeHtml(result.message || '')}</small>
+                    </div>
+                `).join('')}
+            </div>
+        `;
     }
 
     renderAgentProviderResults(overlay, results = []) {

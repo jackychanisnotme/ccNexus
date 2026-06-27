@@ -117,6 +117,29 @@
     max-width: 760px;
 }
 
+.agent-provider-backup-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.agent-provider-backup-control,
+.agent-provider-restore-targets {
+    display: grid;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.agent-provider-backup-control {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+}
+
+.agent-provider-backup-select {
+    width: 100%;
+    min-width: 0;
+}
+
 .agent-provider-toolbar {
     display: flex;
     flex-wrap: wrap;
