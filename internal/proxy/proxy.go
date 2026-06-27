@@ -641,7 +641,10 @@ func shouldTolerateMissingOpenAIResponsesCompleted(r *http.Request, clientFormat
 		if strings.Contains(agent, "openai/python") {
 			return false
 		}
-		if strings.Contains(agent, "openai/js") || strings.Contains(agent, "openclaw") || strings.Contains(agent, "codex") {
+		if strings.Contains(agent, "codex") {
+			return false
+		}
+		if strings.Contains(agent, "openai/js") || strings.Contains(agent, "openclaw") {
 			return true
 		}
 	}
@@ -1935,6 +1938,13 @@ func (p *Proxy) selectCredential(endpointName string, providerType string) (*sto
 	}
 	if strings.TrimSpace(providerType) != "" {
 		return p.selectCredentialByProvider(endpointName, providerType)
+	}
+	mixedProviders, err := p.storage.HasMixedCredentialProviderTypes(endpointName)
+	if err != nil {
+		return nil, err
+	}
+	if mixedProviders {
+		return nil, fmt.Errorf("token_pool endpoint %q has mixed credential provider types; split credentials by provider or use a provider-specific token pool auth mode", endpointName)
 	}
 	return p.storage.GetUsableEndpointCredential(endpointName, time.Now().UTC())
 }

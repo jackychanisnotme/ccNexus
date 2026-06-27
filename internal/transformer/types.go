@@ -206,69 +206,73 @@ type StreamContext struct {
 	CurrentToolName string // Current tool call name being processed
 	ToolArguments   string // Accumulated tool arguments
 	// OpenAI Responses streaming accumulation
-	ResponseSequenceNumber       int
-	ResponseOutputItemIDByIndex  map[int]string
-	ResponseTextByIndex          map[int]string
-	ResponseToolCallIDByIndex    map[int]string
-	ResponseToolNameByIndex      map[int]string
-	ResponseToolArgumentsByIndex map[int]string
-	ResponseToolAddedByIndex     map[int]bool
-	ResponseReasoningByIndex     map[int]string
-	ClaudeToolBlockIndexByKey    map[int]int
-	ClaudeToolIDByKey            map[int]string
-	ClaudeToolNameByKey          map[int]string
-	ClaudeToolArgumentsByKey     map[int]string
-	ClaudeToolStartedByKey       map[int]bool
-	ClaudeToolDoneByKey          map[int]bool
+	ResponseSequenceNumber             int
+	ResponseOutputItemIDByIndex        map[int]string
+	ResponseTextByIndex                map[int]string
+	ResponseToolCallIDByIndex          map[int]string
+	ResponseToolNameByIndex            map[int]string
+	ResponseToolArgumentsByIndex       map[int]string
+	ResponseToolAddedByIndex           map[int]bool
+	ResponseToolChatIndexByOutputIndex map[int]int
+	ResponseReasoningByIndex           map[int]string
+	ClaudeToolBlockIndexByKey          map[int]int
+	ClaudeToolIDByKey                  map[int]string
+	ClaudeToolNameByKey                map[int]string
+	ClaudeToolArgumentsByKey           map[int]string
+	ClaudeToolStartedByKey             map[int]bool
+	ClaudeToolDoneByKey                map[int]bool
 	// <think> tag handling for streaming text
 	InThinkingTag       bool   // Track if we are inside a <think> tag
 	ThinkingBuffer      string // Buffer for trailing partial tag detection
 	PendingThinkingText string // Buffered thinking text until closing tag arrives
 	ReasoningText       string // Accumulated Responses reasoning text
+	UsageSent           bool   // Whether a streaming usage chunk has been emitted
 }
 
 // NewStreamContext creates a new stream context with default values
 func NewStreamContext() *StreamContext {
 	return &StreamContext{
-		MessageStartSent:             false,
-		ContentBlockStarted:          false,
-		ThinkingBlockStarted:         false,
-		ReasoningOutputStarted:       false,
-		ReasoningOutputDone:          false,
-		ToolBlockStarted:             false,
-		ToolBlockPending:             false,
-		MessageID:                    "",
-		ModelName:                    "",
-		InputTokens:                  0,
-		OutputTokens:                 0,
-		ContentIndex:                 0,
-		ThinkingIndex:                0,
-		ReasoningOutputIndex:         0,
-		ToolIndex:                    0,
-		LastToolIndex:                0,
-		FinishReasonSent:             false,
-		EnableThinking:               false,
-		CurrentToolCall:              nil,
-		ToolCallBuffer:               "",
-		ToolCallIDMap:                make(map[string]string),
-		ToolCallCounter:              0,
-		ResponseOutputItemIDByIndex:  make(map[int]string),
-		ResponseTextByIndex:          make(map[int]string),
-		ResponseToolCallIDByIndex:    make(map[int]string),
-		ResponseToolNameByIndex:      make(map[int]string),
-		ResponseToolArgumentsByIndex: make(map[int]string),
-		ResponseToolAddedByIndex:     make(map[int]bool),
-		ResponseReasoningByIndex:     make(map[int]string),
-		ClaudeToolBlockIndexByKey:    make(map[int]int),
-		ClaudeToolIDByKey:            make(map[int]string),
-		ClaudeToolNameByKey:          make(map[int]string),
-		ClaudeToolArgumentsByKey:     make(map[int]string),
-		ClaudeToolStartedByKey:       make(map[int]bool),
-		ClaudeToolDoneByKey:          make(map[int]bool),
-		InThinkingTag:                false,
-		ThinkingBuffer:               "",
-		PendingThinkingText:          "",
-		ReasoningText:                "",
+		MessageStartSent:                   false,
+		ContentBlockStarted:                false,
+		ThinkingBlockStarted:               false,
+		ReasoningOutputStarted:             false,
+		ReasoningOutputDone:                false,
+		ToolBlockStarted:                   false,
+		ToolBlockPending:                   false,
+		MessageID:                          "",
+		ModelName:                          "",
+		InputTokens:                        0,
+		OutputTokens:                       0,
+		ContentIndex:                       0,
+		ThinkingIndex:                      0,
+		ReasoningOutputIndex:               0,
+		ToolIndex:                          0,
+		LastToolIndex:                      0,
+		FinishReasonSent:                   false,
+		EnableThinking:                     false,
+		CurrentToolCall:                    nil,
+		ToolCallBuffer:                     "",
+		ToolCallIDMap:                      make(map[string]string),
+		ToolCallCounter:                    0,
+		ResponseOutputItemIDByIndex:        make(map[int]string),
+		ResponseTextByIndex:                make(map[int]string),
+		ResponseToolCallIDByIndex:          make(map[int]string),
+		ResponseToolNameByIndex:            make(map[int]string),
+		ResponseToolArgumentsByIndex:       make(map[int]string),
+		ResponseToolAddedByIndex:           make(map[int]bool),
+		ResponseToolChatIndexByOutputIndex: make(map[int]int),
+		ResponseReasoningByIndex:           make(map[int]string),
+		ClaudeToolBlockIndexByKey:          make(map[int]int),
+		ClaudeToolIDByKey:                  make(map[int]string),
+		ClaudeToolNameByKey:                make(map[int]string),
+		ClaudeToolArgumentsByKey:           make(map[int]string),
+		ClaudeToolStartedByKey:             make(map[int]bool),
+		ClaudeToolDoneByKey:                make(map[int]bool),
+		InThinkingTag:                      false,
+		ThinkingBuffer:                     "",
+		PendingThinkingText:                "",
+		ReasoningText:                      "",
+		UsageSent:                          false,
 	}
 }
 

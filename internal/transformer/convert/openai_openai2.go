@@ -682,8 +682,12 @@ func OpenAI2RespToOpenAI(openai2Resp []byte, model string) ([]byte, error) {
 				}
 			}
 		case "function_call":
+			callID := item.CallID
+			if callID == "" {
+				callID = item.ID
+			}
 			toolCalls = append(toolCalls, map[string]interface{}{
-				"id":   item.CallID,
+				"id":   callID,
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":      item.Name,
@@ -1064,8 +1068,9 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 			if evt.Item.Arguments != "" && ctx.ResponseToolArgumentsByIndex[evt.OutputIndex] == "" {
 				recordOpenAI2ToolArguments(ctx, evt.OutputIndex, evt.Item.Arguments)
 			}
+			chatIndex := openAI2ChatToolIndex(ctx, evt.OutputIndex)
 			return buildOpenAIChunk(ctx.MessageID, model, "", []map[string]interface{}{
-				{"index": evt.OutputIndex, "id": ctx.ResponseToolCallIDByIndex[evt.OutputIndex], "type": "function",
+				{"index": chatIndex, "id": ctx.ResponseToolCallIDByIndex[evt.OutputIndex], "type": "function",
 					"function": map[string]interface{}{
 						"name":      ctx.ResponseToolNameByIndex[evt.OutputIndex],
 						"arguments": ctx.ResponseToolArgumentsByIndex[evt.OutputIndex],

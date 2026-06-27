@@ -33,7 +33,7 @@ func (c *cancelAfterReadCloser) Close() error {
 	return nil
 }
 
-func TestResponsesStreamMissingCompletedBeforeDoneIsToleratedForCodexClient(t *testing.T) {
+func TestResponsesStreamMissingCompletedBeforeDoneCompletesCodexClient(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(strings.Join([]string{
@@ -62,17 +62,17 @@ func TestResponsesStreamMissingCompletedBeforeDoneIsToleratedForCodexClient(t *t
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "response.output_text.delta") || !strings.Contains(body, `"delta":"hello"`) {
-		t.Fatalf("expected streamed text delta to reach tolerant Codex client, got %q", body)
+		t.Fatalf("expected streamed text delta to reach Codex client, got %q", body)
 	}
-	if strings.Contains(body, "response.completed") {
-		t.Fatalf("did not expect synthetic response.completed for tolerant Codex client, got %q", body)
+	if !strings.Contains(body, "response.completed") {
+		t.Fatalf("expected synthetic response.completed for Codex client, got %q", body)
 	}
 	if strings.Contains(body, "event: error") || strings.Contains(body, "message_delta") {
-		t.Fatalf("did not expect error or Claude message_delta in tolerant Codex stream, got %q", body)
+		t.Fatalf("did not expect error or Claude message_delta in Codex stream, got %q", body)
 	}
 }
 
-func TestResponsesStreamMissingCompletedAtEOFIsToleratedForCodexClient(t *testing.T) {
+func TestResponsesStreamMissingCompletedAtEOFCompletesCodexClient(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(strings.Join([]string{
@@ -97,10 +97,13 @@ func TestResponsesStreamMissingCompletedAtEOFIsToleratedForCodexClient(t *testin
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "response.output_text.delta") || !strings.Contains(body, `"delta":"ok"`) {
-		t.Fatalf("expected streamed text delta to reach tolerant Codex client, got %q", body)
+		t.Fatalf("expected streamed text delta to reach Codex client, got %q", body)
 	}
-	if strings.Contains(body, "response.completed") || strings.Contains(body, "data: [DONE]") || strings.Contains(body, "event: error") {
-		t.Fatalf("did not expect synthetic completion, invented [DONE], or error for tolerant Codex client, got %q", body)
+	if !strings.Contains(body, "response.completed") {
+		t.Fatalf("expected synthetic response.completed for Codex client, got %q", body)
+	}
+	if strings.Contains(body, "data: [DONE]") || strings.Contains(body, "event: error") {
+		t.Fatalf("did not expect invented [DONE] or error for Codex client, got %q", body)
 	}
 }
 
@@ -247,7 +250,7 @@ func TestResponsesStreamMissingCompletedWithNoOutputDoesNotSucceed(t *testing.T)
 	}
 }
 
-func TestResponsesStreamMissingCompletedAfterOutputIsToleratedForCodexClient(t *testing.T) {
+func TestResponsesStreamMissingCompletedAfterOutputCompletesCodexClient(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
 
@@ -292,11 +295,14 @@ func TestResponsesStreamMissingCompletedAfterOutputIsToleratedForCodexClient(t *
 		t.Fatalf("expected Primary to be used once, got %d", primaryHits)
 	}
 	if fallbackHits != 0 {
-		t.Fatalf("expected tolerant Codex client not to fallback, got fallback hits=%d", fallbackHits)
+		t.Fatalf("expected Codex client not to fallback when synthetic completion is possible, got fallback hits=%d", fallbackHits)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "response.output_item.added") || !strings.Contains(body, "partial") {
 		t.Fatalf("expected original partial output to reach Codex client, got %q", body)
+	}
+	if !strings.Contains(body, "response.completed") {
+		t.Fatalf("expected synthetic response.completed for Codex client, got %q", body)
 	}
 	for _, notWant := range []string{
 		"event: error",
@@ -311,11 +317,11 @@ func TestResponsesStreamMissingCompletedAfterOutputIsToleratedForCodexClient(t *
 	_, cooled := p.endpointCooldowns["Primary"]
 	p.cooldownMu.RUnlock()
 	if cooled {
-		t.Fatal("expected missing completed tolerated for Codex not to cool Primary")
+		t.Fatal("expected synthesized completion for Codex not to cool Primary")
 	}
 	logs := joinedProxyLogs()
-	if !strings.Contains(logs, "Tolerating missing response.completed for tolerant client") {
-		t.Fatalf("expected tolerant missing completed log, got logs:\n%s", logs)
+	if strings.Contains(logs, "Tolerating missing response.completed for tolerant client") {
+		t.Fatalf("did not expect Codex missing response.completed to be tolerated without completion; logs:\n%s", logs)
 	}
 }
 
@@ -356,12 +362,12 @@ func TestResponsesStreamMissingCompletedWinsOverCanceledContextForCodexClient(t 
 	}
 	body := rec.Body.String()
 	if strings.Contains(body, "event: error") || strings.Contains(body, "fallback") {
-		t.Fatalf("did not expect error or fallback for tolerant Codex client, got %q", body)
+		t.Fatalf("did not expect error or fallback for Codex client, got %q", body)
+	}
+	if !strings.Contains(body, "response.completed") {
+		t.Fatalf("expected synthetic response.completed for Codex client, got %q", body)
 	}
 	logs := joinedProxyLogs()
-	if !strings.Contains(logs, "Tolerating missing response.completed for tolerant client") {
-		t.Fatalf("expected missing response.completed tolerance log, got logs:\n%s", logs)
-	}
 	if strings.Contains(logs, "Client canceled streaming response") {
 		t.Fatalf("expected missing response.completed not to be misclassified as client canceled, got logs:\n%s", logs)
 	}

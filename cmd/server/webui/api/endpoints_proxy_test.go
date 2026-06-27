@@ -349,6 +349,7 @@ func TestEndpointAPIProxyURLPersistsThroughCreateUpdateAndClone(t *testing.T) {
 		"authMode":    config.AuthModeAPIKey,
 		"enabled":     true,
 		"transformer": "openai",
+		"model":       "proxy-url-model",
 		"proxyUrl":    "http://127.0.0.1:7890",
 	})
 
@@ -363,6 +364,7 @@ func TestEndpointAPIProxyURLPersistsThroughCreateUpdateAndClone(t *testing.T) {
 		"authMode":    config.AuthModeAPIKey,
 		"enabled":     true,
 		"transformer": "openai",
+		"model":       "proxy-url-model",
 		"proxyUrl":    "http://127.0.0.1:7891",
 	})
 
@@ -461,6 +463,81 @@ func TestSwitchEndpointActuallyChangesCurrentEndpoint(t *testing.T) {
 	}
 	if got := proxyInstance.GetCurrentEndpointName(); got != "B" {
 		t.Fatalf("current endpoint = %q, want %q", got, "B")
+	}
+}
+
+func TestEndpointAPICreateRejectsInvalidTransformerConfig(t *testing.T) {
+	store := newAPITestStorage(t)
+	cfg := config.DefaultConfig()
+	cfg.BasicAuthEnabled = false
+	proxyInstance := proxy.New(cfg, nil, store, "test-device")
+	handler := NewHandler(cfg, proxyInstance, store)
+
+	rec := requestJSON(t, handler, http.MethodPost, "/api/endpoints", map[string]any{
+		"name":        "Broken",
+		"apiUrl":      "https://api.example.com",
+		"apiKey":      "key",
+		"authMode":    config.AuthModeAPIKey,
+		"enabled":     true,
+		"transformer": "openai2",
+		"model":       "",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing model, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	endpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get endpoints: %v", err)
+	}
+	if len(endpoints) != 0 {
+		t.Fatalf("invalid endpoint was saved: %#v", endpoints)
+	}
+
+	rec = requestJSON(t, handler, http.MethodPost, "/api/endpoints", map[string]any{
+		"name":        "Unknown",
+		"apiUrl":      "https://api.example.com",
+		"apiKey":      "key",
+		"authMode":    config.AuthModeAPIKey,
+		"enabled":     true,
+		"transformer": "unknown-transformer",
+		"model":       "model",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown transformer, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEndpointAPIUpdateRejectsInvalidTransformerConfigWithoutSaving(t *testing.T) {
+	store := newAPITestStorage(t)
+	cfg := config.DefaultConfig()
+	cfg.BasicAuthEnabled = false
+	proxyInstance := proxy.New(cfg, nil, store, "test-device")
+	handler := NewHandler(cfg, proxyInstance, store)
+
+	saveAPITestEndpoint(t, store, storage.Endpoint{
+		Name:        "Good",
+		APIUrl:      "https://api.example.com",
+		APIKey:      "key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "claude",
+	})
+
+	rec := requestJSON(t, handler, http.MethodPut, "/api/endpoints/Good", map[string]any{
+		"name":        "Good",
+		"apiUrl":      "https://api.example.com",
+		"apiKey":      "key",
+		"authMode":    config.AuthModeAPIKey,
+		"enabled":     true,
+		"transformer": "openai2",
+		"model":       "",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing model, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored := mustGetStoredEndpoint(t, store, "Good")
+	if stored.Transformer != "claude" || stored.Model != "" {
+		t.Fatalf("invalid update was saved: %#v", stored)
 	}
 }
 

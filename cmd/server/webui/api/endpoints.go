@@ -146,6 +146,9 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 						forceStream := ep.ForceStream
 						req.ForceStream = &forceStream
 					}
+					if strings.TrimSpace(req.Model) == "" {
+						req.Model = ep.Model
+					}
 					if strings.TrimSpace(req.ProxyURL) == "" {
 						req.ProxyURL = ep.ProxyURL
 					}
@@ -229,6 +232,11 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		SortOrder:   len(endpoints),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
+	}
+
+	if err := validateEndpointCandidate(h.config, endpoints, storageEndpointToConfig(endpoint), ""); err != nil {
+		WriteError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	if err := h.storage.SaveEndpoint(endpoint); err != nil {
@@ -359,6 +367,11 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	existing.Remark = req.Remark
 	existing.UpdatedAt = time.Now()
 
+	if err := validateEndpointCandidate(h.config, endpoints, storageEndpointToConfig(existing), oldName); err != nil {
+		WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	if oldName != existing.Name {
 		if err := h.storage.RenameEndpoint(oldName, existing); err != nil {
 			logger.Error("Failed to rename endpoint: %v", err)
@@ -384,6 +397,39 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 
 	existing.APIKey = maskAPIKey(existing.APIKey)
 	WriteSuccess(w, existing)
+}
+
+func validateEndpointCandidate(base *config.Config, storedEndpoints []storage.Endpoint, candidate config.Endpoint, replaceName string) error {
+	if base == nil {
+		base = config.DefaultConfig()
+	}
+	candidate.Name = strings.TrimSpace(candidate.Name)
+	candidate.APIUrl = normalizeAPIUrl(candidate.APIUrl)
+	candidate.ProxyURL = strings.TrimSpace(candidate.ProxyURL)
+	if candidate.Transformer == "" {
+		candidate.Transformer = providercompat.TransformerClaude
+	}
+	candidate.Transformer = providercompat.NormalizeTransformer(candidate.Transformer)
+	config.ApplyEndpointAuthModeRules(&candidate)
+
+	endpoints := make([]config.Endpoint, 0, len(storedEndpoints)+1)
+	replaced := false
+	for _, ep := range storedEndpoints {
+		if replaceName != "" && ep.Name == replaceName {
+			endpoints = append(endpoints, candidate)
+			replaced = true
+			continue
+		}
+		endpoints = append(endpoints, storageEndpointToConfig(&ep))
+	}
+	if !replaced {
+		endpoints = append(endpoints, candidate)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.ReplaceWith(base)
+	cfg.UpdateEndpoints(endpoints)
+	return cfg.Validate()
 }
 
 func classifyEndpointRenameError(err error) (int, string) {

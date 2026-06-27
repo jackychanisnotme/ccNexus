@@ -3,6 +3,7 @@ package convert
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/lich0821/ccNexus/internal/transformer"
@@ -260,7 +261,8 @@ func OpenAIStreamToGemini(event []byte, ctx *transformer.StreamContext) ([]byte,
 		return nil, nil
 	}
 
-	delta := chunk.Choices[0].Delta
+	choice := chunk.Choices[0]
+	delta := choice.Delta
 	if delta.Content != "" {
 		geminiChunk := map[string]interface{}{
 			"candidates": []map[string]interface{}{
@@ -269,6 +271,47 @@ func OpenAIStreamToGemini(event []byte, ctx *transformer.StreamContext) ([]byte,
 		}
 		d, _ := json.Marshal(geminiChunk)
 		return []byte(fmt.Sprintf("data: %s\n\n", d)), nil
+	}
+
+	for _, tc := range delta.ToolCalls {
+		toolIndex := 0
+		if tc.Index != nil {
+			toolIndex = *tc.Index
+		}
+		recordOpenAI2ToolCall(ctx, toolIndex, tc.ID, tc.Function.Name)
+		recordOpenAI2ToolArguments(ctx, toolIndex, tc.Function.Arguments)
+	}
+
+	if choice.FinishReason != nil && *choice.FinishReason == "tool_calls" {
+		ensureOpenAI2StreamState(ctx)
+		var indices []int
+		seen := map[int]bool{}
+		for idx := range ctx.ResponseToolCallIDByIndex {
+			seen[idx] = true
+		}
+		for idx := range ctx.ResponseToolNameByIndex {
+			seen[idx] = true
+		}
+		for idx := range seen {
+			indices = append(indices, idx)
+		}
+		sort.Ints(indices)
+
+		var result strings.Builder
+		for _, idx := range indices {
+			name := strings.TrimSpace(ctx.ResponseToolNameByIndex[idx])
+			if name == "" {
+				continue
+			}
+			args, err := parseJSONObject(ctx.ResponseToolArgumentsByIndex[idx])
+			if err != nil {
+				return nil, err
+			}
+			result.Write(buildGeminiFunctionCallChunk(name, args))
+		}
+		if result.Len() > 0 {
+			return []byte(result.String()), nil
+		}
 	}
 
 	return nil, nil

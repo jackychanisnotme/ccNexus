@@ -322,12 +322,33 @@ func ClaudeStreamToGemini(event []byte, ctx *transformer.StreamContext) ([]byte,
 	}
 
 	switch eventType {
+	case "content_block_start":
+		idx, _ := data["index"].(float64)
+		blockIdx := int(idx)
+		block, ok := data["content_block"].(map[string]interface{})
+		if !ok || block["type"] != "tool_use" {
+			return nil, nil
+		}
+		callID, _ := block["id"].(string)
+		name, _ := block["name"].(string)
+		recordClaudeToolCall(ctx, blockIdx, callID, name)
+		if input, ok := block["input"].(map[string]interface{}); ok && len(input) > 0 {
+			ensureClaudeToolState(ctx)
+			if ctx != nil && ctx.ClaudeToolArgumentsByKey[blockIdx] == "" {
+				if raw, err := json.Marshal(input); err == nil {
+					ctx.ClaudeToolArgumentsByKey[blockIdx] = string(raw)
+				}
+			}
+		}
+		return nil, nil
+
 	case "content_block_delta":
 		delta, ok := data["delta"].(map[string]interface{})
 		if !ok {
 			return nil, nil
 		}
-		if delta["type"] == "text_delta" {
+		switch delta["type"] {
+		case "text_delta":
 			text, _ := delta["text"].(string)
 			chunk := map[string]interface{}{
 				"candidates": []map[string]interface{}{
@@ -336,9 +357,45 @@ func ClaudeStreamToGemini(event []byte, ctx *transformer.StreamContext) ([]byte,
 			}
 			d, _ := json.Marshal(chunk)
 			return []byte(fmt.Sprintf("data: %s\n\n", d)), nil
+		case "input_json_delta":
+			if partial, ok := delta["partial_json"].(string); ok {
+				idx, _ := data["index"].(float64)
+				recordClaudeToolArguments(ctx, int(idx), partial)
+			}
 		}
+		return nil, nil
+
+	case "content_block_stop":
+		idx, _ := data["index"].(float64)
+		blockIdx := int(idx)
+		ensureClaudeToolState(ctx)
+		if ctx == nil {
+			return nil, nil
+		}
+		name := strings.TrimSpace(ctx.ClaudeToolNameByKey[blockIdx])
+		if name == "" {
+			return nil, nil
+		}
+		args, err := parseJSONObject(ctx.ClaudeToolArgumentsByKey[blockIdx])
+		if err != nil {
+			return nil, err
+		}
+		ctx.ClaudeToolDoneByKey[blockIdx] = true
+		return buildGeminiFunctionCallChunk(name, args), nil
+
+	case "message_delta":
+		if delta, ok := data["delta"].(map[string]interface{}); ok {
+			if stopReason, _ := delta["stop_reason"].(string); stopReason == "tool_use" {
+				ctx.FinishReasonSent = true
+				return []byte("data: [DONE]\n\n"), nil
+			}
+		}
+		return nil, nil
 
 	case "message_stop":
+		if ctx != nil && ctx.FinishReasonSent {
+			return nil, nil
+		}
 		return []byte("data: [DONE]\n\n"), nil
 	}
 

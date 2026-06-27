@@ -1043,6 +1043,60 @@ func TestMergeFromBackupPreservesEndpointProxyURL(t *testing.T) {
 	}
 }
 
+func TestDetectEndpointConflictsIncludesProxyURL(t *testing.T) {
+	localPath := filepath.Join(t.TempDir(), "local.db")
+	store, err := NewSQLiteStorage(localPath)
+	if err != nil {
+		t.Fatalf("open local storage: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SaveEndpoint(&Endpoint{
+		Name:        "Endpoint",
+		APIUrl:      "https://api.example.com",
+		APIKey:      "key",
+		AuthMode:    "api_key",
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "gpt-test",
+		ProxyURL:    "http://127.0.0.1:7890",
+	}); err != nil {
+		t.Fatalf("save local endpoint: %v", err)
+	}
+
+	remotePath := filepath.Join(t.TempDir(), "remote.db")
+	remote, err := NewSQLiteStorage(remotePath)
+	if err != nil {
+		t.Fatalf("open remote storage: %v", err)
+	}
+	if err := remote.SaveEndpoint(&Endpoint{
+		Name:        "Endpoint",
+		APIUrl:      "https://api.example.com",
+		APIKey:      "key",
+		AuthMode:    "api_key",
+		Enabled:     true,
+		Transformer: "openai",
+		Model:       "gpt-test",
+		ProxyURL:    "http://127.0.0.1:7891",
+	}); err != nil {
+		t.Fatalf("save remote endpoint: %v", err)
+	}
+	if err := remote.Close(); err != nil {
+		t.Fatalf("close remote: %v", err)
+	}
+
+	conflicts, err := store.DetectEndpointConflicts(remotePath)
+	if err != nil {
+		t.Fatalf("detect conflicts: %v", err)
+	}
+	if len(conflicts) != 1 {
+		t.Fatalf("expected one conflict, got %#v", conflicts)
+	}
+	if !containsString(conflicts[0].ConflictFields, "proxyUrl") {
+		t.Fatalf("expected proxyUrl conflict, got %#v", conflicts[0].ConflictFields)
+	}
+}
+
 func TestDeleteCredentialAndEndpointRemoveCredentialUsage(t *testing.T) {
 	store := newTestStorage(t)
 	defer store.Close()
@@ -1085,6 +1139,15 @@ func TestDeleteCredentialAndEndpointRemoveCredentialUsage(t *testing.T) {
 	if len(usage) != 0 {
 		t.Fatalf("usage after endpoint delete = %#v, want empty", usage)
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func hasStatsEndpointOption(options []StatsEndpointFilterOption, name string, deleted bool) bool {

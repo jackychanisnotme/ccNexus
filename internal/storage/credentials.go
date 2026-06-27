@@ -544,6 +544,34 @@ func (s *SQLiteStorage) HasCredentialProviderType(providerType string) (bool, er
 	return count > 0, nil
 }
 
+func (s *SQLiteStorage) HasMixedCredentialProviderTypes(endpointName string) (bool, error) {
+	endpointName = strings.TrimSpace(endpointName)
+	if endpointName == "" {
+		return false, nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(DISTINCT
+			CASE
+				WHEN LOWER(TRIM(COALESCE(provider_type, ''))) = ''
+					OR LOWER(TRIM(COALESCE(provider_type, ''))) = 'codex'
+				THEN 'codex'
+				ELSE LOWER(TRIM(COALESCE(provider_type, '')))
+			END
+		)
+		FROM endpoint_credentials
+		WHERE endpoint_name=? AND enabled=1
+	`, endpointName).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 1, nil
+}
+
 func (s *SQLiteStorage) MarkCredentialSuccess(id int64, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

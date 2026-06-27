@@ -110,6 +110,32 @@ func TestOpenAIReqToOpenAI2ConvertsToolConversation(t *testing.T) {
 	}
 }
 
+func TestOpenAI2RespToOpenAIUsesItemIDWhenCallIDMissing(t *testing.T) {
+	raw := `{
+		"id":"resp_1",
+		"status":"completed",
+		"output":[{"type":"function_call","id":"call_x","call_id":"","name":"lookup","arguments":"{}"}],
+		"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}
+	}`
+
+	out, err := OpenAI2RespToOpenAI([]byte(raw), "gpt-test")
+	if err != nil {
+		t.Fatalf("OpenAI2RespToOpenAI failed: %v", err)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	choices := resp["choices"].([]interface{})
+	message := choices[0].(map[string]interface{})["message"].(map[string]interface{})
+	toolCalls := message["tool_calls"].([]interface{})
+	toolCall := toolCalls[0].(map[string]interface{})
+	if toolCall["id"] != "call_x" {
+		t.Fatalf("expected tool call id fallback to item id, got %#v", toolCall["id"])
+	}
+}
+
 func TestNormalizeOpenAI2RequestForUpstreamConvertsToolRoleInput(t *testing.T) {
 	openai2Req := `{
 		"model":"gpt-5.5",

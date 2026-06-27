@@ -475,13 +475,23 @@ func ClaudeStreamToOpenAI(event []byte, ctx *transformer.StreamContext, model st
 					ctx.OutputTokens = int(out)
 				}
 				usage = currentOpenAIUsage(ctx)
+				if usage != nil {
+					ctx.UsageSent = true
+				}
 			}
 			return buildOpenAIChunkWithUsage(ctx.MessageID, model, "", nil, finish, usage)
 		}
 		return nil, nil
 
 	case "message_stop":
-		return []byte("data: [DONE]\n\n"), nil
+		var result []byte
+		if usage := currentOpenAIUsage(ctx); usage != nil && !ctx.UsageSent {
+			chunk, _ := buildOpenAIChunkWithUsage(ctx.MessageID, model, "", nil, "", usage)
+			result = append(result, chunk...)
+			ctx.UsageSent = true
+		}
+		result = append(result, []byte("data: [DONE]\n\n")...)
+		return result, nil
 	}
 
 	return nil, nil

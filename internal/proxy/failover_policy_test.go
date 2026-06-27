@@ -555,6 +555,54 @@ func TestTokenPoolUnauthorizedStillRetriesNextToken(t *testing.T) {
 	}
 }
 
+func TestGenericTokenPoolRejectsMixedProviders(t *testing.T) {
+	var upstreamHits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(validResponsesBody("resp-ok", "ok")))
+	}))
+	defer upstream.Close()
+
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+
+	codexProvider := storage.EndpointCredential{EndpointName: "Primary", ProviderType: storage.ProviderTypeCodex, AccessToken: "codex-token", Enabled: true}
+	genericProvider := storage.EndpointCredential{EndpointName: "Primary", ProviderType: "openai", AccessToken: "openai-token", Enabled: true}
+	if err := store.SaveEndpointCredential(&codexProvider); err != nil {
+		t.Fatalf("save codex provider credential: %v", err)
+	}
+	if err := store.SaveEndpointCredential(&genericProvider); err != nil {
+		t.Fatalf("save generic provider credential: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	endpoint := failoverPolicyTestEndpoint("Primary", upstream.URL)
+	endpoint.AuthMode = config.AuthModeTokenPool
+	endpoint.APIKey = ""
+	cfg.UpdateEndpoints([]config.Endpoint{endpoint})
+	p := New(cfg, &noopStatsStorage{}, store, "test-device")
+	p.httpClient = upstream.Client()
+	p.retrySleep = func(time.Duration) {}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerCCNexusRequestID, "req-token-pool-mixed-provider")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected mixed provider token pool to fail configuration, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("expected no upstream requests for mixed provider pool, got %d", upstreamHits)
+	}
+}
+
 func TestClaudeOAuthTokenPoolUsesOnlyClaudeOAuthCredentials(t *testing.T) {
 	var tokens []string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

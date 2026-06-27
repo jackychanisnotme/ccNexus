@@ -1400,6 +1400,12 @@ func (s *SQLiteStorage) getEndpointsFromDB(db *sql.DB, dbName string) ([]Endpoin
 		return nil, err
 	}
 
+	var proxyURLColumnCount int
+	columnCheck = fmt.Sprintf(`SELECT COUNT(*) FROM %s.pragma_table_info('endpoints') WHERE name='proxy_url'`, dbName)
+	if err := db.QueryRow(columnCheck).Scan(&proxyURLColumnCount); err != nil {
+		return nil, err
+	}
+
 	selectAuthMode := "'api_key'"
 	if authModeColumnCount > 0 {
 		selectAuthMode = "COALESCE(auth_mode, 'api_key')"
@@ -1415,7 +1421,12 @@ func (s *SQLiteStorage) getEndpointsFromDB(db *sql.DB, dbName string) ([]Endpoin
 		selectForceStream = "COALESCE(force_stream, FALSE)"
 	}
 
-	query := fmt.Sprintf(`SELECT id, name, api_url, api_key, %s as auth_mode, enabled, transformer, model, %s as thinking, %s as force_stream, remark, COALESCE(sort_order, 0) as sort_order, created_at, updated_at FROM %s.endpoints`, selectAuthMode, selectThinking, selectForceStream, dbName)
+	selectProxyURL := "''"
+	if proxyURLColumnCount > 0 {
+		selectProxyURL = "COALESCE(proxy_url, '')"
+	}
+
+	query := fmt.Sprintf(`SELECT id, name, api_url, api_key, %s as auth_mode, enabled, transformer, model, %s as thinking, %s as force_stream, %s as proxy_url, remark, COALESCE(sort_order, 0) as sort_order, created_at, updated_at FROM %s.endpoints`, selectAuthMode, selectThinking, selectForceStream, selectProxyURL, dbName)
 
 	rows, err := db.Query(query)
 	if err != nil {
@@ -1426,7 +1437,7 @@ func (s *SQLiteStorage) getEndpointsFromDB(db *sql.DB, dbName string) ([]Endpoin
 	var endpoints []Endpoint
 	for rows.Next() {
 		var ep Endpoint
-		if err := rows.Scan(&ep.ID, &ep.Name, &ep.APIUrl, &ep.APIKey, &ep.AuthMode, &ep.Enabled, &ep.Transformer, &ep.Model, &ep.Thinking, &ep.ForceStream, &ep.Remark, &ep.SortOrder, &ep.CreatedAt, &ep.UpdatedAt); err != nil {
+		if err := rows.Scan(&ep.ID, &ep.Name, &ep.APIUrl, &ep.APIKey, &ep.AuthMode, &ep.Enabled, &ep.Transformer, &ep.Model, &ep.Thinking, &ep.ForceStream, &ep.ProxyURL, &ep.Remark, &ep.SortOrder, &ep.CreatedAt, &ep.UpdatedAt); err != nil {
 			return nil, err
 		}
 		normalizeEndpointAuthMode(&ep)

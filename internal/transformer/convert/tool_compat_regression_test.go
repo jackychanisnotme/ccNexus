@@ -289,6 +289,28 @@ func TestOpenAI2StreamToOpenAIKeepsParallelToolCallsByOutputIndex(t *testing.T) 
 	}
 }
 
+func TestOpenAI2StreamToOpenAIMapsOutputIndexToContiguousToolIndex(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	events := []string{
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1"}}`,
+		`data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_lookup","name":"lookup"}}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"path\":\"in.txt\"}"}`,
+		`data: {"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","call_id":"call_lookup","name":"lookup"}}`,
+	}
+	var raw strings.Builder
+	for _, event := range events {
+		out, err := OpenAI2StreamToOpenAI([]byte(event), ctx, "gpt-5.5")
+		if err != nil {
+			t.Fatalf("OpenAI2StreamToOpenAI failed: %v", err)
+		}
+		raw.Write(out)
+	}
+	indexes := collectOpenAIChatToolIndexes(t, raw.String())
+	if got := indexes["call_lookup"]; got != 0 {
+		t.Fatalf("expected first Chat tool call index 0 despite Responses output_index 1, got %d from %s", got, raw.String())
+	}
+}
+
 func TestOpenAI2StreamToClaudeKeepsParallelToolCallsByOutputIndex(t *testing.T) {
 	ctx := transformer.NewStreamContext()
 	events := []string{
@@ -351,6 +373,51 @@ func TestOpenAI2StreamToGeminiKeepsParallelToolCallsByOutputIndex(t *testing.T) 
 	}
 }
 
+func TestOpenAIStreamToGeminiConvertsToolCallDelta(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	events := []string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-5.5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"path\":"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-5.5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"in.txt\"}"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-5.5","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+	}
+	var raw strings.Builder
+	for _, event := range events {
+		out, err := OpenAIStreamToGemini([]byte(event), ctx)
+		if err != nil {
+			t.Fatalf("OpenAIStreamToGemini failed: %v", err)
+		}
+		raw.Write(out)
+	}
+	calls := collectGeminiFunctionCalls(t, raw.String())
+	if calls["lookup"] != "in.txt" {
+		t.Fatalf("expected lookup functionCall path in.txt, got %#v from %s", calls, raw.String())
+	}
+}
+
+func TestClaudeStreamToGeminiConvertsToolUseDelta(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	events := []string{
+		`event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}`,
+		`event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"in.txt\"}"}}`,
+		`event: content_block_stop
+data: {"type":"content_block_stop","index":1}`,
+	}
+	var raw strings.Builder
+	for _, event := range events {
+		out, err := ClaudeStreamToGemini([]byte(event), ctx)
+		if err != nil {
+			t.Fatalf("ClaudeStreamToGemini failed: %v", err)
+		}
+		raw.Write(out)
+	}
+	calls := collectGeminiFunctionCalls(t, raw.String())
+	if calls["lookup"] != "in.txt" {
+		t.Fatalf("expected lookup functionCall path in.txt, got %#v from %s", calls, raw.String())
+	}
+}
+
 func TestOpenAI2RespToClaudeMapsIncompleteMaxOutputTokens(t *testing.T) {
 	raw := `{
 		"id":"resp_1",
@@ -391,6 +458,30 @@ data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":
 	}
 	if !strings.Contains(raw.String(), `"usage":{"completion_tokens":3,"prompt_tokens":7,"total_tokens":10}`) {
 		t.Fatalf("expected OpenAI usage chunk, got %s", raw.String())
+	}
+}
+
+func TestClaudeStreamToOpenAIEmitsUsageAtMessageStopWhenDeltaMissing(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	events := []string{
+		`event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":7}}}`,
+		`event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null}}`,
+		`event: message_stop
+data: {"type":"message_stop"}`,
+	}
+	var raw strings.Builder
+	ctx.OutputTokens = 3
+	for _, event := range events {
+		out, err := ClaudeStreamToOpenAI([]byte(event), ctx, "gpt-5.5")
+		if err != nil {
+			t.Fatalf("ClaudeStreamToOpenAI failed: %v", err)
+		}
+		raw.Write(out)
+	}
+	if !strings.Contains(raw.String(), `"usage":{"completion_tokens":3,"prompt_tokens":7,"total_tokens":10}`) {
+		t.Fatalf("expected final OpenAI usage chunk before done, got %s", raw.String())
 	}
 }
 
@@ -462,6 +553,36 @@ func collectOpenAIChatToolCalls(t *testing.T, raw string) map[string]streamedToo
 		}
 	}
 	return tools
+}
+
+func collectOpenAIChatToolIndexes(t *testing.T, raw string) map[string]int {
+	t.Helper()
+	indexes := map[string]int{}
+	for _, block := range strings.Split(raw, "\n\n") {
+		_, jsonData := parseSSE([]byte(block + "\n"))
+		if jsonData == "" {
+			continue
+		}
+		var chunk map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonData), &chunk); err != nil {
+			t.Fatalf("unmarshal OpenAI chunk failed: %v in %q", err, block)
+		}
+		choices, _ := chunk["choices"].([]interface{})
+		if len(choices) == 0 {
+			continue
+		}
+		delta, _ := choices[0].(map[string]interface{})["delta"].(map[string]interface{})
+		rawToolCalls, _ := delta["tool_calls"].([]interface{})
+		for _, rawToolCall := range rawToolCalls {
+			toolCall := rawToolCall.(map[string]interface{})
+			id, _ := toolCall["id"].(string)
+			index, _ := toolCall["index"].(float64)
+			if id != "" {
+				indexes[id] = int(index)
+			}
+		}
+	}
+	return indexes
 }
 
 func collectGeminiFunctionCalls(t *testing.T, raw string) map[string]string {

@@ -113,6 +113,9 @@ func ensureOpenAI2StreamState(ctx *transformer.StreamContext) {
 	if ctx.ResponseToolAddedByIndex == nil {
 		ctx.ResponseToolAddedByIndex = make(map[int]bool)
 	}
+	if ctx.ResponseToolChatIndexByOutputIndex == nil {
+		ctx.ResponseToolChatIndexByOutputIndex = make(map[int]int)
+	}
 	if ctx.ResponseReasoningByIndex == nil {
 		ctx.ResponseReasoningByIndex = make(map[int]string)
 	}
@@ -336,6 +339,19 @@ func recordOpenAI2ToolArguments(ctx *transformer.StreamContext, outputIndex int,
 	ctx.ResponseToolArgumentsByIndex[outputIndex] += delta
 }
 
+func openAI2ChatToolIndex(ctx *transformer.StreamContext, outputIndex int) int {
+	ensureOpenAI2StreamState(ctx)
+	if ctx == nil {
+		return outputIndex
+	}
+	if idx, ok := ctx.ResponseToolChatIndexByOutputIndex[outputIndex]; ok {
+		return idx
+	}
+	idx := len(ctx.ResponseToolChatIndexByOutputIndex)
+	ctx.ResponseToolChatIndexByOutputIndex[outputIndex] = idx
+	return idx
+}
+
 func openAI2ToolItem(ctx *transformer.StreamContext, outputIndex int, status string) map[string]interface{} {
 	ensureOpenAI2StreamState(ctx)
 	callID := ""
@@ -529,6 +545,34 @@ func currentClaudeUsage(ctx *transformer.StreamContext) map[string]interface{} {
 		"input_tokens":  ctx.InputTokens,
 		"output_tokens": ctx.OutputTokens,
 	}
+}
+
+func parseJSONObject(raw string) (map[string]interface{}, error) {
+	args := map[string]interface{}{}
+	if strings.TrimSpace(raw) == "" {
+		return args, nil
+	}
+	var decoded interface{}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return nil, err
+	}
+	object, ok := decoded.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("tool arguments must be a JSON object")
+	}
+	return object, nil
+}
+
+func buildGeminiFunctionCallChunk(name string, args map[string]interface{}) []byte {
+	chunk := map[string]interface{}{
+		"candidates": []map[string]interface{}{
+			{"content": map[string]interface{}{"role": "model", "parts": []map[string]interface{}{
+				{"functionCall": map[string]interface{}{"name": name, "args": args}},
+			}}},
+		},
+	}
+	d, _ := json.Marshal(chunk)
+	return []byte(fmt.Sprintf("data: %s\n\n", d))
 }
 
 func normalizeOpenAIRequestRoles(req *transformer.OpenAIRequest) {

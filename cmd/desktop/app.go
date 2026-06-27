@@ -1069,6 +1069,9 @@ func (a *App) ActivateEndpointCredential(index int, credentialID int64) error {
 	}
 	return a.updateDesktopCredential(endpointName, credentialID, func(cred *storage.EndpointCredential) error {
 		cred.Status = "active"
+		cred.FailureCount = 0
+		cred.CooldownUntil = nil
+		cred.LastError = ""
 		return nil
 	})
 }
