@@ -54,6 +54,10 @@ export function ClearLogs() {
   return window['go']['main']['App']['ClearLogs']();
 }
 
+export function ConsumeCodexResetCredit(arg1, arg2) {
+  return window['go']['main']['App']['ConsumeCodexResetCredit'](arg1, arg2);
+}
+
 export function DeleteArchive(arg1) {
   return window['go']['main']['App']['DeleteArchive'](arg1);
 }
@@ -152,6 +156,10 @@ export function GetCodexCredentialAuthStatus(arg1) {
 
 export function GetCodexAccountOverview(arg1) {
   return window['go']['main']['App']['GetCodexAccountOverview'](arg1);
+}
+
+export function GetCodexResetCredits(arg1, arg2) {
+  return window['go']['main']['App']['GetCodexResetCredits'](arg1, arg2);
 }
 
 export function GetCodexProxyURL() {

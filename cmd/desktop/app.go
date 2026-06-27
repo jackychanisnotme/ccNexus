@@ -598,6 +598,48 @@ func (a *App) FetchCodexRateLimitsForCredential(index int, credentialID int64) s
 	return desktopSuccessJSON(result)
 }
 
+func (a *App) GetCodexResetCredits(index int, credentialID int64) string {
+	if credentialID <= 0 {
+		return desktopErrorJSON(fmt.Errorf("invalid credential id"))
+	}
+	endpoint, err := a.getEndpointByIndex(index)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeCodexTokenPool {
+		return desktopErrorJSON(fmt.Errorf("Codex Token Pool endpoint required"))
+	}
+	if a.proxy == nil {
+		return desktopErrorJSON(fmt.Errorf("proxy unavailable"))
+	}
+	result, err := a.proxy.FetchCodexResetCredits(*endpoint, credentialID)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	return desktopSuccessJSON(result)
+}
+
+func (a *App) ConsumeCodexResetCredit(index int, credentialID int64) string {
+	if credentialID <= 0 {
+		return desktopErrorJSON(fmt.Errorf("invalid credential id"))
+	}
+	endpoint, err := a.getEndpointByIndex(index)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeCodexTokenPool {
+		return desktopErrorJSON(fmt.Errorf("Codex Token Pool endpoint required"))
+	}
+	if a.proxy == nil {
+		return desktopErrorJSON(fmt.Errorf("proxy unavailable"))
+	}
+	result, err := a.proxy.ConsumeCodexResetCredit(*endpoint, credentialID)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	return desktopSuccessJSON(result)
+}
+
 func (a *App) GetCodexAccountOverview(index int) string {
 	endpoint, err := a.getEndpointByIndex(index)
 	if err != nil {

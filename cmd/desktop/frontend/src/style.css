@@ -3094,6 +3094,121 @@ body {
     font-size: 13px;
 }
 
+.token-pool-reset-credit-modal-content {
+    max-width: min(560px, 92vw) !important;
+    width: min(560px, 92vw) !important;
+}
+
+.token-pool-reset-credit-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    color: var(--text-primary, #111827);
+}
+
+.token-pool-reset-credit-desc {
+    margin: 0;
+    color: var(--text-secondary, #6b7280);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.token-pool-reset-credit-account,
+.token-pool-reset-credit-expiry,
+.token-pool-reset-credit-warning {
+    padding: 9px 10px;
+    border-radius: 8px;
+    background: rgba(148, 163, 184, 0.14);
+    font-size: 12px;
+    word-break: break-all;
+}
+
+.token-pool-reset-credit-warning {
+    border: 1px solid rgba(239, 68, 68, 0.28);
+    background: rgba(239, 68, 68, 0.08);
+    color: #b91c1c;
+    font-weight: 700;
+}
+
+.token-pool-reset-credit-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.token-pool-reset-credit-details > strong {
+    font-size: 13px;
+}
+
+.token-pool-reset-credit-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+    padding: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 8px;
+    background: var(--modal-bg, #fff);
+    font-size: 12px;
+}
+
+.token-pool-reset-credit-row strong,
+.token-pool-reset-credit-row span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.token-pool-reset-credit-times {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 10px;
+    color: var(--text-secondary, #6b7280);
+    min-width: 0;
+}
+
+.token-pool-reset-credit-status {
+    align-self: start;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    background: #6b7280;
+}
+
+.token-pool-reset-credit-status.is-available {
+    background: #10b981;
+}
+
+.token-pool-reset-credit-status.is-redeemed {
+    background: #6366f1;
+}
+
+.token-pool-reset-credit-status.is-expired {
+    background: #ef4444;
+}
+
+.token-pool-reset-credit-empty {
+    padding: 12px;
+    border-radius: 8px;
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--text-secondary, #6b7280);
+    font-size: 13px;
+    text-align: center;
+}
+
+@media (max-width: 520px) {
+    .token-pool-reset-credit-row {
+        grid-template-columns: 1fr;
+    }
+
+    .token-pool-reset-credit-times {
+        flex-direction: column;
+        gap: 4px;
+    }
+}
+
 /* Modern Confirm Dialog - Windows Style */
 .confirm-dialog-content {
     background: white;

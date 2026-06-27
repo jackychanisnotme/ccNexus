@@ -27,6 +27,8 @@ export function CheckForUpdates():Promise<string>;
 
 export function ClearLogs():Promise<void>;
 
+export function ConsumeCodexResetCredit(arg1:number,arg2:number):Promise<string>;
+
 export function DeleteArchive(arg1:string):Promise<string>;
 
 export function DeleteBackups(arg1:string,arg2:Array<string>):Promise<void>;
@@ -76,6 +78,8 @@ export function GetChangelog(arg1:string):Promise<string>;
 export function GetCodexCredentialAuthStatus(arg1:string):Promise<string>;
 
 export function GetCodexAccountOverview(arg1:number):Promise<string>;
+
+export function GetCodexResetCredits(arg1:number,arg2:number):Promise<string>;
 
 export function GetCodexProxyURL():Promise<string>;
 

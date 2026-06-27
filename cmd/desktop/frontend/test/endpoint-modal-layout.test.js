@@ -110,6 +110,22 @@ describe('endpoint modal option layout', () => {
         assert.match(enSource, /codexAccountOverviewTitle:\s*'Codex Account Overview'/);
     });
 
+    it('adds manual Codex reset credit controls for Codex token pool credentials only', () => {
+        assert.match(endpointsSource, /GetCodexResetCredits/);
+        assert.match(endpointsSource, /ConsumeCodexResetCredit/);
+        assert.match(endpointsSource, /token-pool-reset-credit/);
+        assert.match(endpointsSource, /showCodexResetCreditDialog/);
+        assert.match(endpointsSource, /confirmCodexResetCreditConsume/);
+        assert.match(endpointsSource, /const refreshRaw = await window\.go\.main\.App\.FetchCodexRateLimitsForCredential\(tokenPoolCurrentIndex,\s*credentialID\)/);
+        assert.match(endpointsSource, /const refreshResult = parseAppJSON\(refreshRaw\)/);
+        assert.match(endpointsSource, /showCodexActions \? `<button type="button" class="token-pool-reset-credit"/);
+        assert.match(endpointsSource, /resetCreditConfirmAction/);
+        assert.match(endpointsSource, /availableCount\s*<=\s*0/);
+        assert.match(cssSource, /\.token-pool-reset-credit-modal-content/);
+        assert.match(zhSource, /resetCreditAction:\s*'重置额度'/);
+        assert.match(enSource, /resetCreditAction:\s*'Reset usage'/);
+    });
+
     it('keeps the token pool table inside the modal width', () => {
         assert.doesNotMatch(cssSource, /\.token-pool-table\s*{[^}]*min-width:\s*980px;/s);
         assert.match(cssSource, /\.token-pool-table\s*{[^}]*table-layout:\s*fixed;/s);

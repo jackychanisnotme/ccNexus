@@ -70,3 +70,31 @@ func TestActivateEndpointCredentialClearsCooldownState(t *testing.T) {
 		t.Fatalf("activation did not clear cooldown state: %#v", updated)
 	}
 }
+
+func TestCodexResetCreditBindingsReturnJSONErrors(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:     "OpenAI",
+		APIUrl:   "https://api.openai.com",
+		AuthMode: config.AuthModeAPIKey,
+		Enabled:  true,
+	}})
+	app := NewApp(nil)
+	app.config = cfg
+
+	for name, raw := range map[string]string{
+		"get":     app.GetCodexResetCredits(0, 1),
+		"consume": app.ConsumeCodexResetCredit(0, 1),
+	} {
+		var result map[string]any
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			t.Fatalf("%s invalid json: %v raw=%s", name, err, raw)
+		}
+		if result["success"] != false {
+			t.Fatalf("%s expected failure, got %#v", name, result)
+		}
+		if result["error"] == "" {
+			t.Fatalf("%s expected error message, got %#v", name, result)
+		}
+	}
+}

@@ -911,6 +911,151 @@ function showTokenPoolUsageDialog(label, usage) {
     modal.classList.add('active');
 }
 
+function formatTokenPoolUnixTime(value) {
+    const num = Number(value || 0);
+    if (!Number.isFinite(num) || num <= 0) {
+        return t('tokenPool.resetCreditTimeUnknown');
+    }
+    return formatTokenPoolTime(new Date(num * 1000).toISOString());
+}
+
+function resetCreditStatusLabel(credit = {}) {
+    const status = String(credit.status || credit.rawStatus || '').trim().toLowerCase();
+    if (status === 'available' || status === '') {
+        return t('tokenPool.resetCreditStatusAvailable');
+    }
+    if (['redeemed', 'used', 'consumed'].includes(status)) {
+        return t('tokenPool.resetCreditStatusRedeemed');
+    }
+    if (status === 'expired') {
+        return t('tokenPool.resetCreditStatusExpired');
+    }
+    return `${t('tokenPool.resetCreditStatusUnknown')} (${escapeHtml(status)})`;
+}
+
+function resetCreditStatusClass(credit = {}) {
+    const status = String(credit.status || credit.rawStatus || '').trim().toLowerCase();
+    if (status === 'available' || status === '') {
+        return 'is-available';
+    }
+    if (['redeemed', 'used', 'consumed'].includes(status)) {
+        return 'is-redeemed';
+    }
+    if (status === 'expired') {
+        return 'is-expired';
+    }
+    return 'is-unknown';
+}
+
+function ensureCodexResetCreditModal() {
+    let modal = getLocalizedModal('codexResetCreditModal');
+    if (modal) {
+        return modal;
+    }
+
+    modal = document.createElement('div');
+    modal.id = 'codexResetCreditModal';
+    modal.className = 'modal';
+    modal.dataset.language = getLanguage();
+    modal.style.zIndex = '1002';
+    modal.innerHTML = `
+        <div class="modal-content token-pool-reset-credit-modal-content">
+            <div class="modal-header">
+                <h2>${t('tokenPool.resetCreditDialogTitle')}</h2>
+            </div>
+            <div class="modal-body">
+                <div id="resetCreditBody" class="token-pool-reset-credit-body"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="resetCreditCancelAction">${t('tokenPool.cancel')}</button>
+                <button class="btn btn-primary" id="resetCreditConfirmAction">${t('tokenPool.resetCreditDialogAction')}</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+}
+
+function showCodexResetCreditDialog(label, snapshot = {}) {
+    return new Promise((resolve) => {
+        const modal = ensureCodexResetCreditModal();
+        const body = modal.querySelector('#resetCreditBody');
+        const confirmButton = modal.querySelector('#resetCreditConfirmAction');
+        const cancelButton = modal.querySelector('#resetCreditCancelAction');
+        const availableCount = Number(snapshot.availableCount || 0);
+        const credits = Array.isArray(snapshot.credits) ? snapshot.credits : [];
+        const nextExpiry = snapshot.nextExpiresAt ? formatTokenPoolUnixTime(snapshot.nextExpiresAt) : '';
+        const detailRows = credits.length
+            ? credits.map((credit, index) => `
+                <div class="token-pool-reset-credit-row">
+                    <div>
+                        <strong>${escapeHtml(credit.id || `#${index + 1}`)}</strong>
+                        <span>${escapeHtml(credit.resetType || 'rate_limit')}</span>
+                    </div>
+                    <div class="token-pool-reset-credit-times">
+                        <span>${t('tokenPool.resetCreditGrantedAt')}: ${escapeHtml(formatTokenPoolUnixTime(credit.grantedAt))}</span>
+                        <span>${t('tokenPool.resetCreditExpiresAt')}: ${escapeHtml(formatTokenPoolUnixTime(credit.expiresAt))}</span>
+                    </div>
+                    <span class="token-pool-reset-credit-status ${resetCreditStatusClass(credit)}">${resetCreditStatusLabel(credit)}</span>
+                </div>
+            `).join('')
+            : `<div class="token-pool-reset-credit-empty">${t('tokenPool.resetCreditNoRecords')}</div>`;
+
+        body.innerHTML = `
+            <p class="token-pool-reset-credit-desc">${tt('tokenPool.resetCreditDialogDesc', { count: availableCount })}</p>
+            <div class="token-pool-reset-credit-account">${escapeHtml(label || '')}</div>
+            ${nextExpiry ? `<div class="token-pool-reset-credit-expiry">${tt('tokenPool.resetCreditNextExpiry', { time: nextExpiry })}</div>` : ''}
+            ${availableCount <= 0 ? `<div class="token-pool-reset-credit-warning">${t('tokenPool.resetCreditNoCredits')}</div>` : ''}
+            <div class="token-pool-reset-credit-details">
+                <strong>${t('tokenPool.resetCreditDetailsTitle')}</strong>
+                ${detailRows}
+            </div>
+        `;
+        confirmButton.disabled = availableCount <= 0;
+
+        const closeModal = (confirmed) => {
+            modal.classList.remove('active');
+            confirmButton.onclick = null;
+            cancelButton.onclick = null;
+            modal.onclick = null;
+            resolve(confirmed);
+        };
+        confirmButton.onclick = () => closeModal(true);
+        cancelButton.onclick = () => closeModal(false);
+        modal.onclick = (event) => {
+            if (event.target === modal) {
+                closeModal(false);
+            }
+        };
+        modal.classList.add('active');
+    });
+}
+
+async function confirmCodexResetCreditConsume(credentialID, label) {
+    const modal = ensureTokenPoolModal();
+    setTokenPoolHint(modal, tt('tokenPool.resetCreditConsuming', { label }));
+    const raw = await window.go.main.App.ConsumeCodexResetCredit(tokenPoolCurrentIndex, credentialID);
+    const result = parseAppJSON(raw);
+    if (!result.success) {
+        throw new Error(result.error || t('tokenPool.resetCreditFailedFallback'));
+    }
+    try {
+        const refreshRaw = await window.go.main.App.FetchCodexRateLimitsForCredential(tokenPoolCurrentIndex, credentialID);
+        const refreshResult = parseAppJSON(refreshRaw);
+        if (!refreshResult.success) {
+            throw new Error(refreshResult.error || t('tokenPool.rateLimitRefreshFailedFallback'));
+        }
+    } catch (error) {
+        throw new Error(tt('tokenPool.resetCreditRefreshAfterConsumeFailed', {
+            error: error?.message || String(error)
+        }));
+    }
+    await loadTokenPoolData(tokenPoolCurrentIndex);
+    const message = tt('tokenPool.resetCreditConsumed', { label });
+    showNotification(message, 'success');
+    setTokenPoolHint(modal, message);
+}
+
 function ensureTokenPoolAuthModal() {
     let modal = getLocalizedModal('tokenPoolAuthModal');
     if (modal) {
@@ -1413,6 +1558,7 @@ function renderTokenPoolRows(credentials = [], options = {}) {
                         <div class="token-pool-more-menu">
                             <button type="button" class="token-pool-activate" data-id="${cred.id}">${t('tokenPool.activate')}</button>
                             ${showCodexActions ? `<button type="button" class="token-pool-rate-refresh" data-id="${cred.id}">${t('tokenPool.refreshLimitsAction')}</button>` : ''}
+                            ${showCodexActions ? `<button type="button" class="token-pool-reset-credit" data-id="${cred.id}">${t('tokenPool.resetCreditAction')}</button>` : ''}
                             ${showCodexActions ? `<button type="button" class="token-pool-refresh-token" data-id="${cred.id}">${t('tokenPool.refreshToken')}</button>` : ''}
                             <button type="button" class="token-pool-usage" data-id="${cred.id}">${t('tokenPool.usage')}</button>
                             <button type="button" class="token-pool-update" data-id="${cred.id}">${t('tokenPool.updateToken')}</button>
@@ -1782,6 +1928,41 @@ async function loadTokenPoolData(index) {
             } catch (error) {
                 const message = error?.message || String(error);
                 const localized = tt('tokenPool.rateLimitsRefreshFailed', { error: message });
+                showNotification(localized, 'error');
+                setTokenPoolHint(modal, localized);
+            } finally {
+                closeAllTokenPoolActionMenus();
+            }
+        });
+    });
+
+    bodyEl.querySelectorAll('.token-pool-reset-credit').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const credentialID = Number(button.dataset.id);
+            if (!Number.isFinite(credentialID) || credentialID <= 0) {
+                showNotification(t('tokenPool.invalidCredentialId'), 'error');
+                return;
+            }
+            const row = tokenPoolOpenActionMenu?.wrap.closest('tr') || button.closest('tr');
+            const accountText = row?.querySelector('td code')?.textContent?.trim() || '';
+            const label = accountText ? `${accountText} (#${credentialID})` : `#${credentialID}`;
+            const modal = ensureTokenPoolModal();
+            try {
+                setTokenPoolHint(modal, tt('tokenPool.resetCreditLoading', { label }));
+                const raw = await window.go.main.App.GetCodexResetCredits(tokenPoolCurrentIndex, credentialID);
+                const result = parseAppJSON(raw);
+                if (!result.success) {
+                    throw new Error(result.error || t('tokenPool.resetCreditLoadFailedFallback'));
+                }
+                const confirmed = await showCodexResetCreditDialog(label, result.data || {});
+                if (!confirmed) {
+                    setTokenPoolHint(modal, '');
+                    return;
+                }
+                await confirmCodexResetCreditConsume(credentialID, label);
+            } catch (error) {
+                const message = error?.message || String(error);
+                const localized = tt('tokenPool.resetCreditFailed', { error: message });
                 showNotification(localized, 'error');
                 setTokenPoolHint(modal, localized);
             } finally {
