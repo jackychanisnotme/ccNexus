@@ -158,6 +158,10 @@ export function GetCodexSessionData(arg1) {
   return window['go']['main']['App']['GetCodexSessionData'](arg1);
 }
 
+export function GetAllCodexSessions() {
+  return window['go']['main']['App']['GetAllCodexSessions']();
+}
+
 export function GetCodexSessions(arg1) {
   return window['go']['main']['App']['GetCodexSessions'](arg1);
 }

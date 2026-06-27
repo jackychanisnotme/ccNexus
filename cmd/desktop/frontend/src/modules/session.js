@@ -1,4 +1,4 @@
-import { GetSessions, DeleteSession, RenameSession, GetSessionData, GetCodexSessions, GetCodexSessionData, DeleteCodexSession, RenameCodexSession, RepairCodexSessionVisibility } from '../../wailsjs/go/main/App';
+import { GetSessions, DeleteSession, RenameSession, GetSessionData, GetCodexSessions, GetAllCodexSessions, GetCodexSessionData, DeleteCodexSession, RenameCodexSession, RepairCodexSessionVisibility } from '../../wailsjs/go/main/App';
 import { t } from '../i18n/index.js';
 import { showNotification } from './modal.js';
 import { parseMarkdown } from '../utils/markdown.js';
@@ -12,6 +12,11 @@ let codexVisibilityRepairMode = 'quick';
 let codexVisibilityRepairSessionScope = 'all';
 let codexVisibilityRepairRunning = false;
 let codexVisibilityRepairResult = null;
+let codexVisibilityRepairSelectedSessionIds = [];
+let codexVisibilityRepairPickerSessions = [];
+let codexVisibilityRepairPickerQuery = '';
+let codexVisibilityRepairPickerLoading = false;
+let codexVisibilityRepairPickerError = '';
 
 export function initSession() {
     window.showSessionModal = showSessionModal;
@@ -27,6 +32,11 @@ export function initSession() {
     window.setCodexVisibilityRepairMode = setCodexVisibilityRepairMode;
     window.setCodexVisibilityRepairSessionScope = setCodexVisibilityRepairSessionScope;
     window.startCodexVisibilityRepair = startCodexVisibilityRepair;
+    window.openCodexVisibilitySessionPicker = openCodexVisibilitySessionPicker;
+    window.closeCodexVisibilitySessionPicker = closeCodexVisibilitySessionPicker;
+    window.setCodexVisibilitySessionPickerQuery = setCodexVisibilitySessionPickerQuery;
+    window.toggleCodexVisibilityPickerSession = toggleCodexVisibilityPickerSession;
+    window.confirmCodexVisibilitySessionPicker = confirmCodexVisibilitySessionPicker;
 }
 
 // 获取选中的会话
@@ -50,27 +60,21 @@ export function clearAllSelectedSessions() {
     }
 }
 
-function getCurrentCodexVisibilitySelectedSession() {
-    if (tempSelectedSession?.sessionId) {
-        return tempSelectedSession;
-    }
-    if (currentProjectDir && selectedSessions[currentProjectDir]?.sessionId) {
-        return selectedSessions[currentProjectDir];
-    }
-    const selected = Object.values(selectedSessions).filter(item => item?.sessionId);
-    return selected.length === 1 ? selected[0] : null;
-}
-
 export function showCodexVisibilityRepairModal() {
     codexVisibilityRepairMode = 'quick';
-    codexVisibilityRepairSessionScope = getCurrentCodexVisibilitySelectedSession() ? 'selected' : 'all';
+    codexVisibilityRepairSessionScope = 'all';
     codexVisibilityRepairRunning = false;
     codexVisibilityRepairResult = null;
+    codexVisibilityRepairSelectedSessionIds = [];
+    codexVisibilityRepairPickerSessions = [];
+    codexVisibilityRepairPickerQuery = '';
+    codexVisibilityRepairPickerError = '';
     renderCodexVisibilityRepairModal();
 }
 
 function closeCodexVisibilityRepairModal() {
     if (codexVisibilityRepairRunning) return;
+    closeCodexVisibilitySessionPicker();
     const modal = document.getElementById('codexVisibilityRepairModal');
     if (modal) {
         modal.classList.remove('active');
@@ -86,18 +90,11 @@ function setCodexVisibilityRepairMode(mode) {
 
 function setCodexVisibilityRepairSessionScope(scope) {
     if (codexVisibilityRepairRunning) return;
-    if (scope === 'selected' && !getCurrentCodexVisibilitySelectedSession()) {
-        return;
-    }
-    codexVisibilityRepairSessionScope = scope === 'selected' ? 'selected' : 'all';
+    codexVisibilityRepairSessionScope = scope === 'selected' && codexVisibilityRepairSelectedSessionIds.length > 0 ? 'selected' : 'all';
     renderCodexVisibilityRepairModal();
 }
 
 function renderCodexVisibilityRepairModal() {
-    const selected = getCurrentCodexVisibilitySelectedSession();
-    if (!selected && codexVisibilityRepairSessionScope === 'selected') {
-        codexVisibilityRepairSessionScope = 'all';
-    }
     let modal = document.getElementById('codexVisibilityRepairModal');
     if (!modal) {
         modal = document.createElement('div');
@@ -107,10 +104,10 @@ function renderCodexVisibilityRepairModal() {
         document.body.appendChild(modal);
     }
 
-    const selectedLabel = selected?.info?.alias || selected?.info?.summary || selected?.sessionId || '';
-    const selectedDesc = selected
-        ? t('session.codexRepairSelectedDesc').replace('{name}', escapeHtml(selectedLabel))
-        : t('session.codexRepairSelectedUnavailable');
+    const selectedCount = codexVisibilityRepairSelectedSessionIds.length;
+    const selectedDesc = selectedCount > 0
+        ? t('session.codexRepairSelectedCount').replace('{count}', String(selectedCount))
+        : t('session.codexRepairChooseSessionsDesc');
     const result = codexVisibilityRepairResult;
     const resultHTML = result ? `
         <div class="codex-visibility-repair-result ${result.success ? 'success' : 'failed'}">
@@ -155,8 +152,8 @@ function renderCodexVisibilityRepairModal() {
                             <strong>${t('session.codexRepairAllSessions')}</strong>
                             <span>${t('session.codexRepairAllSessionsDesc')}</span>
                         </button>
-                        <button class="codex-visibility-repair-card ${codexVisibilityRepairSessionScope === 'selected' ? 'selected' : ''}" onclick="window.setCodexVisibilityRepairSessionScope('selected')" ${(!selected || codexVisibilityRepairRunning) ? 'disabled' : ''}>
-                            <strong>${t('session.codexRepairSelectedSession')}</strong>
+                        <button class="codex-visibility-repair-card ${codexVisibilityRepairSessionScope === 'selected' ? 'selected' : ''}" onclick="window.openCodexVisibilitySessionPicker()" ${codexVisibilityRepairRunning ? 'disabled' : ''}>
+                            <strong>${t('session.codexRepairChooseSessions')}</strong>
                             <span>${selectedDesc}</span>
                         </button>
                     </div>
@@ -178,11 +175,15 @@ function renderCodexVisibilityRepairModal() {
 
 async function startCodexVisibilityRepair() {
     if (codexVisibilityRepairRunning) return;
-    const selected = getCurrentCodexVisibilitySelectedSession();
+    if (codexVisibilityRepairSessionScope === 'selected' && codexVisibilityRepairSelectedSessionIds.length === 0) {
+        showNotification(t('session.codexRepairSelectAtLeastOne'), 'warning');
+        await openCodexVisibilitySessionPicker();
+        return;
+    }
     const request = {
         mode: codexVisibilityRepairMode,
         sessionScope: codexVisibilityRepairSessionScope,
-        sessionIds: codexVisibilityRepairSessionScope === 'selected' && selected ? [selected.sessionId] : []
+        sessionIds: codexVisibilityRepairSessionScope === 'selected' ? codexVisibilityRepairSelectedSessionIds : []
     };
     codexVisibilityRepairRunning = true;
     codexVisibilityRepairResult = null;
@@ -215,6 +216,149 @@ async function startCodexVisibilityRepair() {
         codexVisibilityRepairRunning = false;
         renderCodexVisibilityRepairModal();
     }
+}
+
+async function openCodexVisibilitySessionPicker() {
+    if (codexVisibilityRepairRunning) return;
+    codexVisibilityRepairPickerQuery = '';
+    codexVisibilityRepairPickerError = '';
+    codexVisibilityRepairPickerLoading = true;
+    renderCodexVisibilitySessionPicker();
+    try {
+        const raw = await GetAllCodexSessions();
+        const response = JSON.parse(raw);
+        if (!response.success) {
+            throw new Error(response.message || t('session.codexRepairLoadSessionsFailed'));
+        }
+        codexVisibilityRepairPickerSessions = response.sessions || [];
+    } catch (err) {
+        console.error('Failed to load Codex sessions for repair:', err);
+        codexVisibilityRepairPickerError = err?.message || t('session.codexRepairLoadSessionsFailed');
+        codexVisibilityRepairPickerSessions = [];
+    } finally {
+        codexVisibilityRepairPickerLoading = false;
+        renderCodexVisibilitySessionPicker();
+    }
+}
+
+function closeCodexVisibilitySessionPicker() {
+    const modal = document.getElementById('codexVisibilitySessionPickerModal');
+    if (modal) {
+        modal.classList.remove('active');
+        setTimeout(() => modal.remove(), 160);
+    }
+}
+
+function setCodexVisibilitySessionPickerQuery(value) {
+    codexVisibilityRepairPickerQuery = value || '';
+    renderCodexVisibilitySessionPicker();
+}
+
+function toggleCodexVisibilityPickerSession(sessionId) {
+    if (!sessionId) return;
+    const selected = new Set(codexVisibilityRepairSelectedSessionIds);
+    if (selected.has(sessionId)) {
+        selected.delete(sessionId);
+    } else {
+        selected.add(sessionId);
+    }
+    codexVisibilityRepairSelectedSessionIds = Array.from(selected);
+    renderCodexVisibilitySessionPicker();
+}
+
+function confirmCodexVisibilitySessionPicker() {
+    if (codexVisibilityRepairSelectedSessionIds.length === 0) {
+        showNotification(t('session.codexRepairSelectAtLeastOne'), 'warning');
+        return;
+    }
+    codexVisibilityRepairSessionScope = 'selected';
+    closeCodexVisibilitySessionPicker();
+    renderCodexVisibilityRepairModal();
+}
+
+function renderCodexVisibilitySessionPicker() {
+    let modal = document.getElementById('codexVisibilitySessionPickerModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'codexVisibilitySessionPickerModal';
+        modal.className = 'modal active';
+        modal.style.zIndex = '1003';
+        modal.style.background = 'transparent';
+        document.body.appendChild(modal);
+    }
+
+    const query = codexVisibilityRepairPickerQuery.trim().toLowerCase();
+    const filteredSessions = codexVisibilityRepairPickerSessions.filter(session => {
+        if (!query) return true;
+        return [session.alias, session.summary, session.sessionId, session.projectDir]
+            .filter(Boolean)
+            .some(value => String(value).toLowerCase().includes(query));
+    });
+    const selected = new Set(codexVisibilityRepairSelectedSessionIds);
+    const selectedCount = selected.size;
+    let bodyHTML = '';
+
+    if (codexVisibilityRepairPickerLoading) {
+        bodyHTML = `<div class="codex-visibility-picker-empty">${t('session.loading')}</div>`;
+    } else if (codexVisibilityRepairPickerError) {
+        bodyHTML = `<div class="codex-visibility-picker-empty">${escapeHtml(codexVisibilityRepairPickerError)}</div>`;
+    } else if (filteredSessions.length === 0) {
+        bodyHTML = `<div class="codex-visibility-picker-empty">${t('session.codexRepairNoSessions')}</div>`;
+    } else {
+        bodyHTML = filteredSessions.map(session => {
+            const title = escapeHtml(session.alias || session.summary || session.sessionId || t('session.noSummary'));
+            const summary = escapeHtml(session.summary || t('session.noSummary'));
+            const projectDir = escapeHtml(session.projectDir || t('session.codexRepairUnknownProject'));
+            const time = formatTime(session.modTime || 0);
+            const size = formatSize(session.size || 0);
+            const checked = selected.has(session.sessionId);
+            return `
+                <label class="codex-visibility-picker-item ${checked ? 'selected' : ''}">
+                    <input type="checkbox" ${checked ? 'checked' : ''} onchange="window.toggleCodexVisibilityPickerSession('${escapeJsString(session.sessionId)}')" />
+                    <span class="codex-visibility-picker-main">
+                        <strong>${title}</strong>
+                        <span>${summary}</span>
+                        <code title="${projectDir}">${projectDir}</code>
+                    </span>
+                    <span class="codex-visibility-picker-meta">
+                        <span>${time}</span>
+                        <span>${size}</span>
+                    </span>
+                </label>
+            `;
+        }).join('');
+    }
+
+    modal.innerHTML = `
+        <div class="modal-content codex-visibility-picker-modal">
+            <div class="modal-header">
+                <h2>${t('session.codexRepairPickerTitle')}</h2>
+                <button class="modal-close" onclick="window.closeCodexVisibilitySessionPicker()">&times;</button>
+            </div>
+            <div class="modal-body codex-visibility-picker-body">
+                <div class="codex-visibility-picker-toolbar">
+                    <input class="form-input codex-visibility-picker-search"
+                           value="${escapeHtml(codexVisibilityRepairPickerQuery)}"
+                           placeholder="${t('session.codexRepairSearchSessions')}"
+                           oninput="window.setCodexVisibilitySessionPickerQuery(this.value)" />
+                    <div class="codex-visibility-picker-count">
+                        ${t('session.codexRepairSelectedCount').replace('{count}', String(selectedCount))}
+                    </div>
+                </div>
+                <div class="codex-visibility-picker-list">
+                    ${bodyHTML}
+                </div>
+            </div>
+            <div class="modal-footer codex-visibility-repair-footer">
+                <button class="btn btn-secondary" onclick="window.closeCodexVisibilitySessionPicker()">
+                    ${t('common.cancel')}
+                </button>
+                <button class="btn btn-primary" onclick="window.confirmCodexVisibilitySessionPicker()" ${selectedCount === 0 ? 'disabled' : ''}>
+                    ${t('common.ok')}
+                </button>
+            </div>
+        </div>
+    `;
 }
 
 export async function showSessionModal(projectDir) {
@@ -266,7 +410,11 @@ async function loadSessions() {
 // HTML 转义函数
 function escapeHtml(str) {
     if (!str) return '';
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function escapeJsString(str) {
+    return String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r');
 }
 
 function renderSessionList() {

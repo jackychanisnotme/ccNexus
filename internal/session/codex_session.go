@@ -64,6 +64,19 @@ func saveCodexAliases(aliases map[string]string) error {
 
 // GetCodexSessionsForProject returns Codex sessions for a project directory
 func GetCodexSessionsForProject(projectDir string) ([]SessionInfo, error) {
+	return scanCodexSessions(func(meta *CodexSessionMeta) bool {
+		return pathsEqual(meta.Payload.Cwd, projectDir)
+	})
+}
+
+// GetAllCodexSessions returns Codex sessions across every project directory.
+func GetAllCodexSessions() ([]SessionInfo, error) {
+	return scanCodexSessions(func(meta *CodexSessionMeta) bool {
+		return true
+	})
+}
+
+func scanCodexSessions(include func(meta *CodexSessionMeta) bool) ([]SessionInfo, error) {
 	sessionsDir := getCodexSessionsDir()
 
 	if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
@@ -73,43 +86,35 @@ func GetCodexSessionsForProject(projectDir string) ([]SessionInfo, error) {
 	aliases := loadCodexAliases()
 	var sessions []SessionInfo
 
-	// Recursively scan sessions directory
-	filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
-
-		// Match rollout-*.jsonl files
 		if !strings.HasPrefix(info.Name(), "rollout-") || !strings.HasSuffix(info.Name(), ".jsonl") {
 			return nil
 		}
 
-		// Parse session metadata and summary
 		meta, summary, err := parseCodexSession(path)
-		if err != nil {
+		if err != nil || !include(meta) {
 			return nil
 		}
 
-		// Check if cwd matches project directory
-		if !pathsEqual(meta.Payload.Cwd, projectDir) {
-			return nil
-		}
-
-		// Extract sessionId from filename
-		sessionId := extractCodexSessionId(info.Name())
-
+		sessionID := extractCodexSessionId(info.Name())
 		sessions = append(sessions, SessionInfo{
-			SessionID: sessionId,
-			ModTime:   info.ModTime().Unix(),
-			Size:      info.Size(),
-			Summary:   summary,
-			Alias:     aliases[sessionId],
+			SessionID:  sessionID,
+			ModTime:    info.ModTime().Unix(),
+			Size:       info.Size(),
+			Summary:    summary,
+			Alias:      aliases[sessionID],
+			ProjectDir: meta.Payload.Cwd,
 		})
 
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	// Sort by modification time (newest first)
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].ModTime > sessions[j].ModTime
 	})

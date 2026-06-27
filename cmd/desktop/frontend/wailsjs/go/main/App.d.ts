@@ -79,6 +79,8 @@ export function GetCodexProxyURL():Promise<string>;
 
 export function GetCodexSessionData(arg1:string):Promise<string>;
 
+export function GetAllCodexSessions():Promise<string>;
+
 export function GetCodexSessions(arg1:string):Promise<string>;
 
 export function GetConfig():Promise<string>;

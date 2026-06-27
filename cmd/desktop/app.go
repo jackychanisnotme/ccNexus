@@ -1513,6 +1513,10 @@ func (a *App) GetCodexSessions(projectDir string) string {
 	return a.terminal.GetCodexSessions(projectDir)
 }
 
+func (a *App) GetAllCodexSessions() string {
+	return a.terminal.GetAllCodexSessions()
+}
+
 func (a *App) GetCodexSessionData(sessionID string) string {
 	return a.terminal.GetCodexSessionData(sessionID)
 }

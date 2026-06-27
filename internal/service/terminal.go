@@ -241,6 +241,28 @@ func (t *TerminalService) GetCodexSessions(projectDir string) string {
 	return string(data)
 }
 
+// GetAllCodexSessions returns Codex sessions across every project directory.
+func (t *TerminalService) GetAllCodexSessions() string {
+	sessions, err := session.GetAllCodexSessions()
+	if err != nil {
+		logger.Error("Failed to get all Codex sessions: %v", err)
+		result := map[string]interface{}{
+			"success":  false,
+			"message":  err.Error(),
+			"sessions": []interface{}{},
+		}
+		data, _ := json.Marshal(result)
+		return string(data)
+	}
+
+	result := map[string]interface{}{
+		"success":  true,
+		"sessions": sessions,
+	}
+	data, _ := json.Marshal(result)
+	return string(data)
+}
+
 // GetCodexSessionData returns Codex session messages
 func (t *TerminalService) GetCodexSessionData(sessionID string) string {
 	messages, err := session.GetCodexSessionData(sessionID)

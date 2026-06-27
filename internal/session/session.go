@@ -13,11 +13,12 @@ import (
 
 // SessionInfo represents a session's information
 type SessionInfo struct {
-	SessionID string `json:"sessionId"`
-	Summary   string `json:"summary"`
-	ModTime   int64  `json:"modTime"`
-	Size      int64  `json:"size"`
-	Alias     string `json:"alias,omitempty"`
+	SessionID  string `json:"sessionId"`
+	Summary    string `json:"summary"`
+	ModTime    int64  `json:"modTime"`
+	Size       int64  `json:"size"`
+	Alias      string `json:"alias,omitempty"`
+	ProjectDir string `json:"projectDir,omitempty"`
 }
 
 // getClaudeProjectsDir returns the Claude projects directory
@@ -290,7 +291,7 @@ func FormatSize(size int64) string {
 	switch {
 	case size >= MB:
 		return strings.TrimSuffix(strings.TrimSuffix(
-			strings.Replace(string(rune(size/MB))+"."+ string(rune((size%MB)*10/MB)), ".", "", 1),
+			strings.Replace(string(rune(size/MB))+"."+string(rune((size%MB)*10/MB)), ".", "", 1),
 			"0"), ".") + " MB"
 	case size >= KB:
 		return strings.TrimSuffix(strings.TrimSuffix(

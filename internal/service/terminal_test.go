@@ -66,6 +66,33 @@ func TestTerminalServiceRepairCodexSessionVisibilityRejectsInvalidJSON(t *testin
 	}
 }
 
+func TestTerminalServiceGetAllCodexSessionsJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeFile(t, filepath.Join(home, ".codex", "sessions", "2026", "06", "27", "rollout-2026-06-27T10-00-00-thread-1.jsonl"), `{"type":"session_meta","payload":{"cwd":"/tmp/project-a"}}`+"\n")
+
+	svc := NewTerminalService(nil, nil)
+	raw := svc.GetAllCodexSessions()
+	var response struct {
+		Success  bool `json:"success"`
+		Sessions []struct {
+			SessionID  string `json:"sessionId"`
+			ProjectDir string `json:"projectDir"`
+		} `json:"sessions"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(raw), &response); err != nil {
+		t.Fatalf("decode response: %v\n%s", err, raw)
+	}
+	if !response.Success {
+		t.Fatalf("get sessions failed: %s", response.Message)
+	}
+	if len(response.Sessions) != 1 || response.Sessions[0].SessionID != "thread-1" || response.Sessions[0].ProjectDir != "/tmp/project-a" {
+		t.Fatalf("unexpected response: %#v", response.Sessions)
+	}
+}
+
 func terminalCreateVisibilityDB(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
