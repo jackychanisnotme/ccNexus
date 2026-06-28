@@ -1,6 +1,6 @@
 import { t } from '../i18n/index.js';
 import { escapeHtml } from '../utils/format.js';
-import { addEndpoint, updateEndpoint, removeEndpoint, testEndpoint, testEndpointLight, updatePort, getNetworkStatus, updateListenMode } from './config.js';
+import { addEndpoint, updateEndpoint, removeEndpoint, testEndpoint, testEndpointLight, updatePort, getNetworkStatus, updateListenMode, getLANDiscoveryStatus, refreshLANDiscovery as refreshLANDiscoveryConfig, addDiscoveredLANEndpoint as addDiscoveredLANEndpointConfig } from './config.js';
 import { setTestState, clearTestState, saveEndpointTestStatus, openTokenPoolModal } from './endpoints.js';
 
 let currentEditIndex = -1;
@@ -823,6 +823,97 @@ function renderNetworkConnections(status) {
     `;
 }
 
+function updateLANDiscoveryBadge(status) {
+    const badge = document.getElementById('lanDiscoveryBadge');
+    if (!badge) {
+        return;
+    }
+    const unadded = Number(status?.unadded || 0);
+    badge.classList.toggle('hidden', unadded <= 0);
+    badge.textContent = '!';
+}
+
+function renderLANDiscoveryList(status) {
+    const panel = document.getElementById('lanDiscoveryPanel');
+    const list = document.getElementById('lanDiscoveryList');
+    if (!panel || !list) {
+        updateLANDiscoveryBadge(status);
+        return;
+    }
+    const candidates = Array.isArray(status?.candidates) ? status.candidates : [];
+    window.__lanDiscoveryCandidates = candidates;
+    updateLANDiscoveryBadge(status);
+    panel.style.display = candidates.length > 0 ? 'block' : 'none';
+    if (candidates.length === 0) {
+        list.innerHTML = `<div class="network-empty">${t('modal.lanDiscoveryEmpty')}</div>`;
+        return;
+    }
+    list.innerHTML = candidates.map((candidate, index) => {
+        const disabled = candidate.added || candidate.requiresPairing || candidate?.pairing?.enabled;
+        const buttonLabel = candidate.added
+            ? t('modal.lanDiscoveryAdded')
+            : (candidate.requiresPairing || candidate?.pairing?.enabled)
+                ? t('modal.lanDiscoveryPairingReserved')
+                : t('modal.lanDiscoveryAdd');
+        return `
+            <div class="lan-discovery-row">
+                <div class="lan-discovery-main">
+                    <strong>${escapeHtml(candidate.name || candidate.host || 'AINexus')}</strong>
+                    <code>${escapeHtml(candidate.baseUrl || '')}</code>
+                </div>
+                <button class="btn btn-primary lan-discovery-add-btn" ${disabled ? 'disabled' : ''} onclick="window.addDiscoveredLANEndpoint(${index})">
+                    ${buttonLabel}
+                </button>
+            </div>
+        `;
+    }).join('');
+}
+
+export function updateLANDiscoveryStatus(status) {
+    renderLANDiscoveryList(status);
+}
+
+export async function refreshLANDiscovery() {
+    try {
+        const status = await refreshLANDiscoveryConfig();
+        renderLANDiscoveryList(status);
+        return status;
+    } catch (error) {
+        showNotification(t('modal.lanDiscoveryRefreshFailed').replace('{error}', error), 'error');
+        return null;
+    }
+}
+
+export async function loadLANDiscoveryStatus() {
+    try {
+        const status = await getLANDiscoveryStatus();
+        renderLANDiscoveryList(status);
+        return status;
+    } catch (error) {
+        console.error('Failed to load LAN discovery:', error);
+        return null;
+    }
+}
+
+export async function addDiscoveredLANEndpoint(index) {
+    const candidates = Array.isArray(window.__lanDiscoveryCandidates) ? window.__lanDiscoveryCandidates : [];
+    const candidate = candidates[index];
+    if (!candidate) {
+        showNotification(t('modal.lanDiscoveryAddFailed').replace('{error}', 'candidate not found'), 'error');
+        return;
+    }
+    try {
+        await addDiscoveredLANEndpointConfig(candidate);
+        await refreshLANDiscovery();
+        if (typeof window.loadConfig === 'function') {
+            await window.loadConfig();
+        }
+        showNotification(t('modal.lanDiscoveryAddSuccess'), 'success');
+    } catch (error) {
+        showNotification(t('modal.lanDiscoveryAddFailed').replace('{error}', error), 'error');
+    }
+}
+
 export function updateNetworkStatus(status) {
     const portInput = document.getElementById('portInput');
     const listenModeInput = document.getElementById('listenModeInput');
@@ -861,6 +952,7 @@ export async function showEditPortModal() {
                 }
             };
         }
+        await refreshLANDiscovery();
     } catch (error) {
         showNotification(t('modal.portUpdateFailed').replace('{error}', error), 'error');
     }

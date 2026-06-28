@@ -9,6 +9,7 @@ const frontendRoot = resolve(__dirname, '..');
 
 const uiSource = readFileSync(resolve(frontendRoot, 'src/modules/ui.js'), 'utf8');
 const modalSource = readFileSync(resolve(frontendRoot, 'src/modules/modal.js'), 'utf8');
+const configSource = readFileSync(resolve(frontendRoot, 'src/modules/config.js'), 'utf8');
 const endpointsSource = readFileSync(resolve(frontendRoot, 'src/modules/endpoints.js'), 'utf8');
 const agentProviderSource = readFileSync(resolve(frontendRoot, 'src/modules/agentProvider.js'), 'utf8');
 const cssSource = readFileSync(resolve(frontendRoot, 'src/style.css'), 'utf8');
@@ -196,6 +197,20 @@ describe('endpoint modal option layout', () => {
         const toolbarSource = uiSource.slice(toolbarStart, toolbarEnd);
         assert.doesNotMatch(toolbarSource, /showAgentModal/);
         assert.doesNotMatch(toolbarSource, /showAgentProviderModal/);
+    });
+
+    it('adds LAN discovery cue and one-click add controls to the port modal', () => {
+        assert.match(uiSource, /id="lanDiscoveryBadge"/);
+        assert.match(uiSource, /id="lanDiscoveryPanel"/);
+        assert.match(uiSource, /id="lanDiscoveryList"/);
+        assert.match(modalSource, /refreshLANDiscovery\(/);
+        assert.match(modalSource, /renderLANDiscoveryList\(/);
+        assert.match(modalSource, /addDiscoveredLANEndpoint\(/);
+        assert.match(configSource, /AddDiscoveredLANEndpoint/);
+        assert.match(cssSource, /\.port-discovery-badge/);
+        assert.match(cssSource, /\.lan-discovery-panel/);
+        assert.match(zhSource, /lanDiscoveryTitle:\s*'发现局域网 AINexus'/);
+        assert.match(enSource, /lanDiscoveryTitle:\s*'Discovered LAN AINexus'/);
     });
 
     it('adds an Agent Provider home button and modal controls', () => {

@@ -18,6 +18,7 @@ import (
 	"github.com/lich0821/ccNexus/internal/claudeoauth"
 	"github.com/lich0821/ccNexus/internal/codexauth"
 	"github.com/lich0821/ccNexus/internal/config"
+	"github.com/lich0821/ccNexus/internal/landiscovery"
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/onlinelicense"
 	"github.com/lich0821/ccNexus/internal/proxy"
@@ -74,6 +75,9 @@ type App struct {
 	proxyStarted bool
 
 	licenseRefreshMu sync.Mutex
+	lanDiscoveryMu   sync.Mutex
+	lanDiscoveryAt   time.Time
+	lanDiscoveryErr  string
 
 	// Services
 	stats         *service.StatsService
@@ -88,6 +92,7 @@ type App struct {
 	agentProvider *service.AgentProviderService
 	agent         *service.AgentService
 	license       *onlinelicense.ClientService
+	lanDiscovery  *landiscovery.Scanner
 }
 
 // NewApp creates a new App application struct
@@ -155,6 +160,7 @@ func (a *App) startup(ctx context.Context) {
 
 	statsAdapter := storage.NewStatsStorageAdapter(sqliteStorage)
 	a.proxy = proxy.New(cfg, statsAdapter, sqliteStorage, deviceID)
+	a.lanDiscovery = landiscovery.NewScanner()
 
 	a.proxy.SetOnEndpointSuccess(func(endpointName string) {
 		runtime.EventsEmit(ctx, "endpoint:success", endpointName)
@@ -208,6 +214,7 @@ func (a *App) startup(ctx context.Context) {
 		go a.refreshLicenseFromServer("startup")
 		go a.runLicenseRefreshLoop(ctx)
 	}
+	go a.runLANDiscoveryLoop(ctx)
 	a.startProxyIfLicensed()
 	time.Sleep(300 * time.Millisecond)
 	runtime.WindowShow(ctx)
@@ -246,6 +253,92 @@ func (a *App) runLicenseRefreshLoop(ctx context.Context) {
 			_, _ = a.refreshLicenseFromServer("scheduled")
 		}
 	}
+}
+
+func (a *App) runLANDiscoveryLoop(ctx context.Context) {
+	if a == nil {
+		return
+	}
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			a.scanLANDiscovery(ctx)
+			timer.Reset(90 * time.Second)
+		}
+	}
+}
+
+func (a *App) scanLANDiscovery(ctx context.Context) []landiscovery.Candidate {
+	if a == nil || a.config == nil || a.lanDiscovery == nil {
+		return nil
+	}
+	scanCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+
+	ports := []int{a.config.GetPort()}
+	if a.config.GetPort() != 3000 {
+		ports = append(ports, 3000)
+	}
+	var candidates []landiscovery.Candidate
+	for _, port := range ports {
+		candidates = a.lanDiscovery.Scan(scanCtx, port, a.config.GetEndpoints())
+	}
+	candidates = a.lanDiscovery.Snapshot(a.config.GetEndpoints())
+	a.lanDiscoveryMu.Lock()
+	a.lanDiscoveryAt = time.Now()
+	a.lanDiscoveryErr = ""
+	a.lanDiscoveryMu.Unlock()
+
+	a.emitLANDiscoveryUpdated(candidates)
+	return candidates
+}
+
+func (a *App) emitLANDiscoveryUpdated(candidates []landiscovery.Candidate) {
+	a.ctxMutex.RLock()
+	ctx := a.ctx
+	a.ctxMutex.RUnlock()
+	if ctx == nil {
+		return
+	}
+	runtime.EventsEmit(ctx, "lan-discovery:updated", map[string]interface{}{
+		"candidates": candidates,
+		"unadded":    countUnaddedLANDiscovery(candidates),
+	})
+}
+
+func countUnaddedLANDiscovery(candidates []landiscovery.Candidate) int {
+	count := 0
+	for _, candidate := range candidates {
+		if !candidate.Added && !candidate.RequiresPairing {
+			count++
+		}
+	}
+	return count
+}
+
+func uniqueLANEndpointName(endpoints []config.Endpoint, base string) string {
+	cleanBase := strings.TrimSpace(base)
+	if cleanBase == "" {
+		cleanBase = "局域网 AINexus"
+	}
+	used := make(map[string]bool, len(endpoints))
+	for _, endpoint := range endpoints {
+		used[strings.TrimSpace(endpoint.Name)] = true
+	}
+	if !used[cleanBase] {
+		return cleanBase
+	}
+	for i := 2; i < 1000; i++ {
+		name := fmt.Sprintf("%s (%d)", cleanBase, i)
+		if !used[name] {
+			return name
+		}
+	}
+	return fmt.Sprintf("%s (%d)", cleanBase, time.Now().Unix())
 }
 
 func (a *App) refreshLicenseFromServer(reason string) (*onlinelicense.Status, error) {
@@ -1182,6 +1275,76 @@ func (a *App) UpdateConfig(configJSON string) error {
 	return a.settings.UpdateConfig(configJSON, a.proxy)
 }
 func (a *App) UpdatePort(port int) error { return a.settings.UpdatePort(port, a.proxy) }
+func (a *App) GetLANDiscoveryStatus() string {
+	if a.lanDiscovery == nil || a.config == nil {
+		return desktopSuccessJSON(map[string]interface{}{"candidates": []landiscovery.Candidate{}, "unadded": 0})
+	}
+	candidates := a.lanDiscovery.Snapshot(a.config.GetEndpoints())
+	a.lanDiscoveryMu.Lock()
+	lastScan := ""
+	if !a.lanDiscoveryAt.IsZero() {
+		lastScan = a.lanDiscoveryAt.UTC().Format(time.RFC3339)
+	}
+	lastErr := a.lanDiscoveryErr
+	a.lanDiscoveryMu.Unlock()
+	return desktopSuccessJSON(map[string]interface{}{
+		"candidates": candidates,
+		"unadded":    countUnaddedLANDiscovery(candidates),
+		"lastScan":   lastScan,
+		"error":      lastErr,
+	})
+}
+func (a *App) RefreshLANDiscovery() string {
+	if a.lanDiscovery == nil {
+		a.lanDiscovery = landiscovery.NewScanner()
+	}
+	a.ctxMutex.RLock()
+	ctx := a.ctx
+	a.ctxMutex.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	candidates := a.scanLANDiscovery(ctx)
+	return desktopSuccessJSON(map[string]interface{}{
+		"candidates": candidates,
+		"unadded":    countUnaddedLANDiscovery(candidates),
+	})
+}
+func (a *App) AddDiscoveredLANEndpoint(candidateJSON string) string {
+	if a == nil || a.config == nil || a.endpoint == nil {
+		return desktopErrorJSON(fmt.Errorf("endpoint service unavailable"))
+	}
+	candidate, err := landiscovery.ParseCandidateJSON(candidateJSON)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	if candidate.RequiresPairing || candidate.Pairing.Enabled {
+		return desktopErrorJSON(fmt.Errorf("LAN endpoint pairing is reserved but not enabled in this version"))
+	}
+
+	newEndpoint := landiscovery.EndpointForCandidate(candidate)
+	newEndpoint.Name = uniqueLANEndpointName(a.config.GetEndpoints(), newEndpoint.Name)
+	for _, endpoint := range a.config.GetEndpoints() {
+		if strings.EqualFold(strings.TrimRight(endpoint.APIUrl, "/"), strings.TrimRight(newEndpoint.APIUrl, "/")) {
+			return desktopSuccessJSON(map[string]interface{}{
+				"endpoint": endpoint,
+				"added":    false,
+			})
+		}
+	}
+	if err := a.endpoint.AddEndpoint(newEndpoint.Name, newEndpoint.APIUrl, newEndpoint.APIKey, newEndpoint.AuthMode, newEndpoint.Transformer, newEndpoint.Model, newEndpoint.Thinking, newEndpoint.ProxyURL, newEndpoint.ForceStream, newEndpoint.Remark); err != nil {
+		return desktopErrorJSON(err)
+	}
+	candidates := []landiscovery.Candidate{}
+	if a.lanDiscovery != nil {
+		candidates = a.lanDiscovery.Snapshot(a.config.GetEndpoints())
+	}
+	a.emitLANDiscoveryUpdated(candidates)
+	return desktopSuccessJSON(map[string]interface{}{
+		"endpoint": newEndpoint,
+		"added":    true,
+	})
+}
 func (a *App) GetNetworkStatus() string {
 	if a.proxy == nil {
 		data, _ := json.Marshal(proxy.BuildNetworkStatus(a.config, proxy.InboundConnectionsSnapshot{}))

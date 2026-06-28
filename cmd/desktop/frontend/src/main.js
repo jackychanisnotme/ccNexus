@@ -37,6 +37,10 @@ import {
     savePort,
     closePortModal,
     updateNetworkStatus,
+    updateLANDiscoveryStatus,
+    loadLANDiscoveryStatus,
+    refreshLANDiscovery,
+    addDiscoveredLANEndpoint,
     showWelcomeModal,
     closeWelcomeModal,
     showChangelogModal,
@@ -180,6 +184,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         window.runtime.EventsOn('network:updated', (data) => {
             updateNetworkStatus(data);
         });
+        window.runtime.EventsOn('lan-discovery:updated', (data) => {
+            updateLANDiscoveryStatus(data);
+        });
     }
 
     // Fallback: If event-based updates fail, uncomment the following to restore polling
@@ -207,6 +214,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     // Initialize broadcast banner
     initBroadcast();
+    loadLANDiscoveryStatus();
 
 
     // Initialize update settings
@@ -246,6 +254,8 @@ window.toggleModelDropdown = toggleModelDropdown;
 window.showEditPortModal = showEditPortModal;
 window.savePort = savePort;
 window.closePortModal = closePortModal;
+window.refreshLANDiscovery = refreshLANDiscovery;
+window.addDiscoveredLANEndpoint = addDiscoveredLANEndpoint;
 window.showWelcomeModal = showWelcomeModal;
 window.closeWelcomeModal = closeWelcomeModal;
 window.showChangelogModal = showChangelogModal;

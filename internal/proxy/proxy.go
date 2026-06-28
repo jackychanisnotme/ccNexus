@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lich0821/ccNexus/internal/config"
+	"github.com/lich0821/ccNexus/internal/landiscovery"
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/storage"
 	"github.com/lich0821/ccNexus/internal/transformer/convert"
@@ -287,6 +288,7 @@ func (p *Proxy) RebindListener() error {
 }
 
 func (p *Proxy) registerRoutes(mux *http.ServeMux) {
+	mux.HandleFunc(landiscovery.DiscoveryPath, p.handleDiscovery)
 	mux.HandleFunc("/", p.handleProxy)
 	mux.HandleFunc("/v1/messages/count_tokens", p.handleCountTokens)
 	mux.HandleFunc("/v1/models", p.handleModels)

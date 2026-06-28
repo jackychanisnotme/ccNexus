@@ -49,6 +49,29 @@ export async function updateListenMode(mode) {
     await window.go.main.App.UpdateListenMode(mode);
 }
 
+function parseDesktopResult(raw) {
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (result && result.success === false) {
+        throw new Error(result.error || 'Operation failed');
+    }
+    return result?.data ?? result;
+}
+
+export async function getLANDiscoveryStatus() {
+    const raw = await window.go.main.App.GetLANDiscoveryStatus();
+    return parseDesktopResult(raw);
+}
+
+export async function refreshLANDiscovery() {
+    const raw = await window.go.main.App.RefreshLANDiscovery();
+    return parseDesktopResult(raw);
+}
+
+export async function addDiscoveredLANEndpoint(candidate) {
+    const raw = await window.go.main.App.AddDiscoveredLANEndpoint(JSON.stringify(candidate));
+    return parseDesktopResult(raw);
+}
+
 export async function addEndpoint(name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, remark) {
     await window.go.main.App.AddEndpoint(name, url, key, authMode, transformer, model, thinking ?? '', proxyUrl || '', !!forceStream, remark || '');
 }

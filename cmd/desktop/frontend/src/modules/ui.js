@@ -31,6 +31,7 @@ export function initUI() {
                     <div class="port-display" onclick="window.showEditPortModal()" title="${t('header.port')}">
                         <span style="color: #666; font-size: 15px; position: relative; top: -0.3px;">${t('header.port')}: </span>
                         <span class="port-number" id="proxyPort">3000</span>
+                        <span class="port-discovery-badge hidden" id="lanDiscoveryBadge" title="${t('modal.lanDiscoveryBadge')}">!</span>
                     </div>
                     <div style="display: flex; gap: 10px;">
                         <button class="header-link" onclick="window.showSettingsModal()" title="${t('settings.title')}">
@@ -639,6 +640,10 @@ export function initUI() {
                         ${t('modal.lanRiskWarning')}
                     </div>
                     <div id="networkStatusPanel" class="network-status-panel"></div>
+                    <div id="lanDiscoveryPanel" class="lan-discovery-panel" style="display: none;">
+                        <div class="network-section-title">${t('modal.lanDiscoveryTitle')}</div>
+                        <div id="lanDiscoveryList"></div>
+                    </div>
                     <div class="network-connections-panel">
                         <div class="network-section-title">${t('modal.activeConnections')}</div>
                         <div id="networkConnectionsPanel"></div>

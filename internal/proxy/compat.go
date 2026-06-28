@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lich0821/ccNexus/internal/config"
+	"github.com/lich0821/ccNexus/internal/landiscovery"
 	"github.com/lich0821/ccNexus/internal/logger"
 )
 
@@ -46,6 +48,19 @@ func (p *Proxy) handleVersion(w http.ResponseWriter, r *http.Request) {
 	writeProxyJSON(w, map[string]interface{}{
 		"version": "AINexus",
 	})
+}
+
+func (p *Proxy) handleDiscovery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if p == nil || p.config == nil || p.config.GetListenMode() != config.ListenModeLAN {
+		http.NotFound(w, r)
+		return
+	}
+
+	writeProxyJSON(w, landiscovery.BuildAnnouncement(p.config, "", ""))
 }
 
 func (p *Proxy) handleProps(w http.ResponseWriter, r *http.Request) {

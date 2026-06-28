@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/lich0821/ccNexus/internal/config"
+	"github.com/lich0821/ccNexus/internal/proxy"
+	"github.com/lich0821/ccNexus/internal/service"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
@@ -96,5 +98,56 @@ func TestCodexResetCreditBindingsReturnJSONErrors(t *testing.T) {
 		if result["error"] == "" {
 			t.Fatalf("%s expected error message, got %#v", name, result)
 		}
+	}
+}
+
+func TestAddDiscoveredLANEndpointCreatesEnabledCompatibleEndpoint(t *testing.T) {
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "Existing",
+		APIUrl:      "https://api.example.com",
+		APIKey:      "key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai2",
+		Model:       "gpt-test",
+	}})
+	app := NewApp(nil)
+	app.config = cfg
+	app.storage = store
+	app.proxy = proxy.New(cfg, nil, store, "device-a")
+	app.endpoint = service.NewEndpointService(cfg, app.proxy, store)
+
+	raw := app.AddDiscoveredLANEndpoint(`{"id":"node-1","name":"Office Mac","baseUrl":"http://192.168.1.20:3000","host":"192.168.1.20","port":3000}`)
+	var result map[string]any
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatalf("invalid json: %v raw=%s", err, raw)
+	}
+	if result["success"] != true {
+		t.Fatalf("expected success, got %#v", result)
+	}
+
+	endpoints := cfg.GetEndpoints()
+	if len(endpoints) != 2 {
+		t.Fatalf("endpoint count = %d, want 2", len(endpoints))
+	}
+	added := endpoints[1]
+	if added.Name != "局域网 AINexus - Office Mac" ||
+		added.APIUrl != "http://192.168.1.20:3000" ||
+		added.APIKey != "ainexus-lan-unpaired" ||
+		added.AuthMode != config.AuthModeAPIKey ||
+		added.Transformer != "claude" ||
+		added.Model != "" ||
+		!added.Enabled {
+		t.Fatalf("unexpected LAN endpoint: %#v", added)
+	}
+	if added.Remark != "AINexus LAN discovery; pairing reserved but disabled" {
+		t.Fatalf("unexpected remark: %q", added.Remark)
 	}
 }

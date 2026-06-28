@@ -1292,7 +1292,8 @@ body {
 }
 
 #portModal .network-status-panel,
-#portModal .network-connections-panel {
+#portModal .network-connections-panel,
+#portModal .lan-discovery-panel {
     margin-top: 14px;
     padding: 12px;
     border: 1px solid var(--border-color, #e5e7eb);
@@ -1377,8 +1378,49 @@ body {
     color: var(--text-secondary, #6b7280);
 }
 
+#portModal .lan-discovery-panel {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.08);
+}
+
+#portModal .lan-discovery-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--bg-primary, #fff);
+}
+
+#portModal .lan-discovery-row + .lan-discovery-row {
+    margin-top: 8px;
+}
+
+#portModal .lan-discovery-main {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+#portModal .lan-discovery-main strong {
+    color: var(--text-primary, #111827);
+    font-size: 13px;
+}
+
+#portModal .lan-discovery-main code {
+    color: var(--text-secondary, #6b7280);
+    font-size: 12px;
+    word-break: break-all;
+}
+
+#portModal .lan-discovery-add-btn {
+    white-space: nowrap;
+}
+
 @media (max-width: 640px) {
-    #portModal .network-connection-row {
+    #portModal .network-connection-row,
+    #portModal .lan-discovery-row {
         grid-template-columns: 1fr;
     }
 }
@@ -2158,6 +2200,7 @@ body {
     display: inline-flex;
     align-items: baseline;
     gap: 8px;
+    position: relative;
 }
 
 .port-display:hover {
@@ -2171,6 +2214,28 @@ body {
     font-weight: bold;
     font-size: 18px;
     font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+}
+
+.port-discovery-badge {
+    position: absolute;
+    top: -7px;
+    right: -7px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #f59e0b;
+    color: #111827;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);
+}
+
+.port-discovery-badge.hidden {
+    display: none;
 }
 
 /* Endpoint Toggle Button */
