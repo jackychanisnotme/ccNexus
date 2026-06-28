@@ -741,6 +741,13 @@ func (a *App) GetCodexAccountOverview(index int) string {
 	return service.CodexAccountOverviewJSON(*endpoint, a.storage)
 }
 
+func (a *App) GetCodexTokenPoolHomeSummaries() string {
+	if a.config == nil {
+		return desktopErrorJSON(fmt.Errorf("config unavailable"))
+	}
+	return service.CodexTokenPoolHomeSummariesJSON(a.config.Endpoints, a.storage)
+}
+
 func (a *App) RefreshEndpointCredential(index int, credentialID int64) string {
 	if credentialID <= 0 {
 		return desktopErrorJSON(fmt.Errorf("credential id is required"))

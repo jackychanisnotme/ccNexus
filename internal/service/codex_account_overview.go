@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,6 +32,37 @@ type CodexAccountOverview struct {
 	QuotaSnapshotAvailableCount   int            `json:"quotaSnapshotAvailableCount"`
 	QuotaSnapshotProblemCount     int            `json:"quotaSnapshotProblemCount"`
 	QuotaSnapshotUnsupportedCount int            `json:"quotaSnapshotUnsupportedCount"`
+}
+
+type CodexTokenPoolHomeAccount struct {
+	ID                   int64      `json:"id"`
+	Label                string     `json:"label"`
+	AccountID            string     `json:"accountId,omitempty"`
+	Email                string     `json:"email,omitempty"`
+	Enabled              bool       `json:"enabled"`
+	Status               string     `json:"status"`
+	RateLimitStatus      string     `json:"rateLimitStatus,omitempty"`
+	PrimaryUsedPercent   int        `json:"primaryUsedPercent"`
+	SecondaryUsedPercent int        `json:"secondaryUsedPercent"`
+	ResetAt              *time.Time `json:"resetAt,omitempty"`
+	LastUsedAt           *time.Time `json:"lastUsedAt,omitempty"`
+	HasError             bool       `json:"hasError"`
+	ErrorText            string     `json:"errorText,omitempty"`
+}
+
+type CodexTokenPoolHomeSummary struct {
+	EndpointName                string                      `json:"endpointName"`
+	EndpointIndex               int                         `json:"endpointIndex"`
+	TotalAccounts               int                         `json:"totalAccounts"`
+	EnabledAccounts             int                         `json:"enabledAccounts"`
+	DisabledAccounts            int                         `json:"disabledAccounts"`
+	ActiveAccounts              int                         `json:"activeAccounts"`
+	ProblemAccounts             int                         `json:"problemAccounts"`
+	HighestPrimaryUsedPercent   int                         `json:"highestPrimaryUsedPercent"`
+	HighestSecondaryUsedPercent int                         `json:"highestSecondaryUsedPercent"`
+	NextResetAt                 *time.Time                  `json:"nextResetAt,omitempty"`
+	LatestQuotaUpdatedAt        *time.Time                  `json:"latestQuotaUpdatedAt,omitempty"`
+	Accounts                    []CodexTokenPoolHomeAccount `json:"accounts"`
 }
 
 type codexAccountOverviewStore interface {
@@ -103,6 +135,92 @@ func CodexAccountOverviewJSON(endpoint config.Endpoint, store codexAccountOvervi
 	return string(data)
 }
 
+func BuildCodexTokenPoolHomeSummaries(endpoints []config.Endpoint, store codexAccountOverviewStore) ([]CodexTokenPoolHomeSummary, error) {
+	if store == nil {
+		return nil, fmt.Errorf("storage unavailable")
+	}
+	summaries := make([]CodexTokenPoolHomeSummary, 0)
+	for index, endpoint := range endpoints {
+		if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeCodexTokenPool {
+			continue
+		}
+		summary, err := buildCodexTokenPoolHomeSummary(endpoint, index, store)
+		if err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, *summary)
+	}
+	return summaries, nil
+}
+
+func CodexTokenPoolHomeSummariesJSON(endpoints []config.Endpoint, store codexAccountOverviewStore) string {
+	summaries, err := BuildCodexTokenPoolHomeSummaries(endpoints, store)
+	if err != nil {
+		data, _ := json.Marshal(map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return string(data)
+	}
+	data, _ := json.Marshal(map[string]any{
+		"success": true,
+		"data":    summaries,
+	})
+	return string(data)
+}
+
+func buildCodexTokenPoolHomeSummary(endpoint config.Endpoint, index int, store codexAccountOverviewStore) (*CodexTokenPoolHomeSummary, error) {
+	overview, err := BuildCodexAccountOverview(endpoint, store)
+	if err != nil {
+		return nil, err
+	}
+	credentials, err := store.GetEndpointCredentials(endpoint.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get credentials: %w", err)
+	}
+	rateLimits, err := store.GetCredentialRateLimitsByEndpoint(endpoint.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get credential rate limits: %w", err)
+	}
+
+	summary := &CodexTokenPoolHomeSummary{
+		EndpointName:                endpoint.Name,
+		EndpointIndex:               index,
+		TotalAccounts:               overview.TotalAccounts,
+		EnabledAccounts:             overview.EnabledAccounts,
+		DisabledAccounts:            overview.DisabledAccounts,
+		ActiveAccounts:              overview.ActiveAccounts,
+		ProblemAccounts:             overview.ProblemAccounts,
+		HighestPrimaryUsedPercent:   overview.HighestPrimaryUsedPercent,
+		HighestSecondaryUsedPercent: overview.HighestSecondaryUsedPercent,
+		NextResetAt:                 overview.NextResetAt,
+		LatestQuotaUpdatedAt:        overview.LatestQuotaUpdatedAt,
+		Accounts:                    make([]CodexTokenPoolHomeAccount, 0, len(credentials)),
+	}
+
+	for _, credential := range credentials {
+		summary.Accounts = append(summary.Accounts, buildCodexTokenPoolHomeAccount(credential, rateLimits[credential.ID]))
+	}
+	sort.SliceStable(summary.Accounts, func(i, j int) bool {
+		left := summary.Accounts[i]
+		right := summary.Accounts[j]
+		if left.LastUsedAt != nil && right.LastUsedAt == nil {
+			return true
+		}
+		if left.LastUsedAt == nil && right.LastUsedAt != nil {
+			return false
+		}
+		if left.LastUsedAt != nil && right.LastUsedAt != nil && !left.LastUsedAt.Equal(*right.LastUsedAt) {
+			return left.LastUsedAt.After(*right.LastUsedAt)
+		}
+		if left.HasError != right.HasError {
+			return left.HasError
+		}
+		return left.Label < right.Label
+	})
+	return summary, nil
+}
+
 func codexOverviewCredentialHealthy(credential storage.EndpointCredential, rateLimits *storage.CredentialRateLimits) bool {
 	if !credential.Enabled {
 		return false
@@ -121,6 +239,127 @@ func codexOverviewCredentialHealthy(credential storage.EndpointCredential, rateL
 		rateStatus = strings.TrimSpace(strings.ToLower(rateLimits.Status))
 	}
 	return rateStatus == "" || rateStatus == "ok"
+}
+
+func buildCodexTokenPoolHomeAccount(credential storage.EndpointCredential, rateLimits *storage.CredentialRateLimits) CodexTokenPoolHomeAccount {
+	accountID := maskCodexHomeAccountID(credential.AccountID)
+	email := maskCodexHomeEmail(credential.Email)
+	label := email
+	if label == "" || label == "-" {
+		label = accountID
+	}
+	if label == "" || label == "-" {
+		label = fmt.Sprintf("#%d", credential.ID)
+	}
+	account := CodexTokenPoolHomeAccount{
+		ID:         credential.ID,
+		Label:      label,
+		AccountID:  accountID,
+		Email:      email,
+		Enabled:    credential.Enabled,
+		Status:     strings.TrimSpace(credential.Status),
+		LastUsedAt: cloneTimePtr(credential.LastUsedAt),
+	}
+	if account.Status == "" {
+		account.Status = "active"
+	}
+	if strings.TrimSpace(credential.LastError) != "" {
+		account.HasError = true
+		account.ErrorText = "credential_error"
+	}
+	if rateLimits != nil {
+		account.RateLimitStatus = strings.TrimSpace(rateLimits.Status)
+		if account.RateLimitStatus != "" && account.RateLimitStatus != "ok" {
+			account.HasError = true
+			if account.ErrorText == "" {
+				account.ErrorText = account.RateLimitStatus
+			}
+		}
+		if rateLimits.Data != nil && rateLimits.Data.Snapshot != nil {
+			snapshot := rateLimits.Data.Snapshot
+			account.PrimaryUsedPercent = roundCodexHomePercent(snapshot.Primary)
+			account.SecondaryUsedPercent = roundCodexHomePercent(snapshot.Secondary)
+			account.ResetAt = earliestCodexHomeReset(snapshot.Primary, snapshot.Secondary)
+		}
+	}
+	if account.ErrorText == "" && account.HasError {
+		account.ErrorText = account.RateLimitStatus
+	}
+	return account
+}
+
+func maskCodexHomeAccountID(accountID string) string {
+	raw := strings.TrimSpace(accountID)
+	if raw == "" {
+		return "-"
+	}
+	if len(raw) <= 8 {
+		return raw[:1] + "*"
+	}
+	return raw[:8] + "*"
+}
+
+func maskCodexHomeEmail(email string) string {
+	raw := strings.TrimSpace(email)
+	if raw == "" || !strings.Contains(raw, "@") {
+		if raw == "" {
+			return "-"
+		}
+		return maskCodexHomeAccountID(raw)
+	}
+	parts := strings.SplitN(raw, "@", 2)
+	local := parts[0]
+	domain := parts[1]
+	if local == "" || domain == "" {
+		return maskCodexHomeAccountID(raw)
+	}
+	localMasked := local[:1] + "*"
+	if len(local) > 2 {
+		localMasked = local[:1] + "*" + local[len(local)-2:]
+	}
+	domainParts := strings.Split(domain, ".")
+	firstLabel := domainParts[0]
+	tld := ""
+	if len(domainParts) > 1 {
+		tld = domainParts[len(domainParts)-1]
+	}
+	domainMasked := "*"
+	if firstLabel != "" {
+		domainMasked = firstLabel[:1] + "*"
+	}
+	if tld != "" {
+		domainMasked += tld
+	}
+	return localMasked + "@" + domainMasked
+}
+
+func roundCodexHomePercent(window *storage.CodexRateLimitWindow) int {
+	if window == nil {
+		return 0
+	}
+	return int(math.Round(window.UsedPercent))
+}
+
+func earliestCodexHomeReset(windows ...*storage.CodexRateLimitWindow) *time.Time {
+	var result *time.Time
+	for _, window := range windows {
+		if window == nil || window.ResetsAt == nil || *window.ResetsAt <= 0 {
+			continue
+		}
+		resetAt := time.Unix(*window.ResetsAt, 0).UTC()
+		if result == nil || resetAt.Before(*result) {
+			result = &resetAt
+		}
+	}
+	return result
+}
+
+func cloneTimePtr(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := value.UTC()
+	return &cloned
 }
 
 func (o *CodexAccountOverview) addRateLimit(rateLimits *storage.CredentialRateLimits) {

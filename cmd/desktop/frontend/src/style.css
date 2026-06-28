@@ -2511,6 +2511,129 @@ body {
     background: #dc2626;
 }
 
+.endpoint-pool-home {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 8px 10px;
+    min-height: 78px;
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.28));
+    border-radius: 8px;
+    background: var(--bg-secondary, rgba(148, 163, 184, 0.08));
+    color: var(--text-primary, #333);
+    overflow: hidden;
+}
+
+.endpoint-pool-home-head,
+.endpoint-pool-home-meta,
+.endpoint-pool-home-accounts {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.endpoint-pool-home-head,
+.endpoint-pool-home-accounts {
+    flex-wrap: wrap;
+}
+
+.endpoint-pool-home-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-secondary, #6b7280);
+    white-space: nowrap;
+}
+
+.endpoint-pool-home-badge,
+.endpoint-pool-home-account {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    padding: 3px 7px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+    background: rgba(59, 130, 246, 0.11);
+    color: var(--text-primary, #1f2937);
+}
+
+.endpoint-pool-home-badge-warn,
+.endpoint-pool-home-account-error {
+    background: rgba(245, 158, 11, 0.16);
+    color: #92400e;
+}
+
+.endpoint-pool-home-badge-stale {
+    background: rgba(107, 114, 128, 0.14);
+    color: var(--text-secondary, #6b7280);
+}
+
+.endpoint-pool-home-meta {
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-secondary, #6b7280);
+}
+
+.endpoint-pool-home-account strong,
+.endpoint-pool-home-account span,
+.endpoint-pool-home-account small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.endpoint-pool-home-account strong {
+    max-width: 140px;
+}
+
+.endpoint-pool-home-empty,
+.endpoint-pool-home-stale strong {
+    font-size: 12px;
+    color: var(--text-secondary, #6b7280);
+}
+
+.compact-pool-home-slot {
+    min-width: 0;
+}
+
+.compact-pool-home {
+    display: inline-flex;
+    align-items: center;
+    max-width: 170px;
+    padding: 3px 7px;
+    border-radius: 6px;
+    background: rgba(59, 130, 246, 0.11);
+    color: var(--text-primary, #1f2937);
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.compact-pool-home-warn {
+    background: rgba(245, 158, 11, 0.16);
+    color: #92400e;
+}
+
+.compact-pool-home-stale {
+    background: rgba(107, 114, 128, 0.14);
+    color: var(--text-secondary, #6b7280);
+}
+
+@media (max-width: 700px) {
+    .endpoint-pool-home {
+        min-height: 92px;
+    }
+
+    .endpoint-pool-home-account strong {
+        max-width: 110px;
+    }
+}
+
 /* Disabled badge */
 .disabled-badge {
     background: #999;
