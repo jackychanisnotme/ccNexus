@@ -3,6 +3,7 @@ package onlinelicense
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -85,6 +86,46 @@ func (s *SQLiteStore) init() error {
 		updated_at DATETIME NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS license_device_remote_state (
+		device_id TEXT PRIMARY KEY,
+		supported INTEGER NOT NULL DEFAULT 0,
+		enabled INTEGER NOT NULL DEFAULT 0,
+		client_version TEXT,
+		capabilities_json TEXT NOT NULL DEFAULT '[]',
+		device_public_key TEXT,
+		last_heartbeat_at DATETIME,
+		last_activation_id INTEGER NOT NULL DEFAULT 0,
+		owner_account_id INTEGER NOT NULL DEFAULT 0,
+		owner_username TEXT,
+		last_snapshot_status TEXT,
+		last_snapshot_at DATETIME,
+		last_command_status TEXT,
+		last_command_updated_at DATETIME,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS license_remote_snapshots (
+		device_id TEXT PRIMARY KEY,
+		snapshot_json TEXT NOT NULL DEFAULT '{}',
+		updated_at DATETIME NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS license_remote_commands (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		device_id TEXT NOT NULL,
+		command_type TEXT NOT NULL,
+		status TEXT NOT NULL,
+		actor_account_id INTEGER NOT NULL DEFAULT 0,
+		actor_username TEXT,
+		owner_account_id INTEGER NOT NULL DEFAULT 0,
+		envelope_json TEXT NOT NULL DEFAULT '{}',
+		result TEXT,
+		error TEXT,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL
+	);
+
 	CREATE TABLE IF NOT EXISTS admin_accounts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		username TEXT UNIQUE NOT NULL,
@@ -106,6 +147,7 @@ func (s *SQLiteStore) init() error {
 	CREATE INDEX IF NOT EXISTS idx_license_activations_expires ON license_activations(expires_at);
 	CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON admin_audit_logs(created_at);
 	CREATE INDEX IF NOT EXISTS idx_admin_accounts_parent ON admin_accounts(parent_id);
+	CREATE INDEX IF NOT EXISTS idx_license_remote_commands_device ON license_remote_commands(device_id, status, created_at);
 
 	UPDATE license_activations
 	SET expires_at = disabled_at, updated_at = CURRENT_TIMESTAMP
@@ -133,6 +175,309 @@ func (s *SQLiteStore) init() error {
 		return err
 	}
 	return nil
+}
+
+func (s *SQLiteStore) UpsertRemoteDeviceState(state *RemoteDeviceState, now time.Time) error {
+	if state == nil {
+		return fmt.Errorf("remote state is required")
+	}
+	deviceID := strings.TrimSpace(state.DeviceID)
+	if deviceID == "" {
+		return fmt.Errorf("device id is required")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	capabilities, err := json.Marshal(state.Capabilities)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO license_device_remote_state (
+			device_id, supported, enabled, client_version, capabilities_json, device_public_key,
+			last_heartbeat_at, last_activation_id, owner_account_id, owner_username,
+			last_snapshot_status, last_snapshot_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(device_id) DO UPDATE SET
+			supported=excluded.supported,
+			enabled=excluded.enabled,
+			client_version=excluded.client_version,
+			capabilities_json=excluded.capabilities_json,
+			device_public_key=excluded.device_public_key,
+			last_heartbeat_at=excluded.last_heartbeat_at,
+			last_activation_id=excluded.last_activation_id,
+			owner_account_id=excluded.owner_account_id,
+			owner_username=excluded.owner_username,
+			last_snapshot_status=excluded.last_snapshot_status,
+			last_snapshot_at=COALESCE(excluded.last_snapshot_at, license_device_remote_state.last_snapshot_at),
+			updated_at=excluded.updated_at
+	`, deviceID, boolInt(state.Supported), boolInt(state.Enabled), strings.TrimSpace(state.ClientVersion), string(capabilities),
+		strings.TrimSpace(state.DevicePublicKey), formatTime(state.LastHeartbeatAt), state.LastActivationID,
+		state.OwnerAccountID, strings.TrimSpace(state.OwnerUsername), strings.TrimSpace(state.LastSnapshotStatus),
+		nullableFormattedTime(state.LastSnapshotAt), formatTime(now))
+	return err
+}
+
+func (s *SQLiteStore) UpsertRemoteSnapshot(deviceID string, snapshot RemoteSnapshot, now time.Time) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return fmt.Errorf("device id is required")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	snapshot.UpdatedAt = now.UTC()
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.Exec(`
+		INSERT INTO license_remote_snapshots (device_id, snapshot_json, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(device_id) DO UPDATE SET snapshot_json=excluded.snapshot_json, updated_at=excluded.updated_at
+	`, deviceID, string(data), formatTime(now)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		UPDATE license_device_remote_state
+		SET last_snapshot_status='ok', last_snapshot_at=?, updated_at=?
+		WHERE device_id=?
+	`, formatTime(now), formatTime(now), deviceID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func (s *SQLiteStore) GetRemoteDevice(deviceID string) (*RemoteDeviceState, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return nil, sql.ErrNoRows
+	}
+	row := s.db.QueryRow(`
+		SELECT device_id, supported, enabled, COALESCE(client_version,''), COALESCE(capabilities_json,'[]'),
+			COALESCE(device_public_key,''), last_heartbeat_at, last_activation_id, owner_account_id,
+			COALESCE(owner_username,''), COALESCE(last_snapshot_status,''), last_snapshot_at,
+			COALESCE(last_command_status,''), last_command_updated_at
+		FROM license_device_remote_state
+		WHERE device_id=?
+	`, deviceID)
+	state, err := scanRemoteDeviceState(row)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, _ := s.GetRemoteSnapshot(deviceID)
+	if snapshot != nil {
+		state.Snapshot = *snapshot
+	}
+	return state, nil
+}
+
+func (s *SQLiteStore) GetRemoteSnapshot(deviceID string) (*RemoteSnapshot, error) {
+	row := s.db.QueryRow(`SELECT snapshot_json, updated_at FROM license_remote_snapshots WHERE device_id=?`, strings.TrimSpace(deviceID))
+	var raw string
+	var updatedAt sql.NullTime
+	if err := row.Scan(&raw, &updatedAt); err != nil {
+		return nil, err
+	}
+	var snapshot RemoteSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return nil, err
+	}
+	if updatedAt.Valid {
+		snapshot.UpdatedAt = updatedAt.Time.UTC()
+	}
+	return &snapshot, nil
+}
+
+func (s *SQLiteStore) CreateRemoteCommand(command *RemoteCommandRecord, ownerAccountID int64) error {
+	if command == nil {
+		return fmt.Errorf("remote command is required")
+	}
+	now := command.CreatedAt
+	if now.IsZero() {
+		now = time.Now()
+	}
+	command.CreatedAt = now.UTC()
+	command.UpdatedAt = now.UTC()
+	if command.Status == "" {
+		command.Status = "queued"
+	}
+	envelope, err := json.Marshal(command.Envelope)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.Exec(`
+		INSERT INTO license_remote_commands (
+			device_id, command_type, status, actor_account_id, actor_username, owner_account_id,
+			envelope_json, result, error, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, strings.TrimSpace(command.DeviceID), strings.TrimSpace(command.CommandType), command.Status, command.ActorID,
+		strings.TrimSpace(command.ActorName), ownerAccountID, string(envelope), command.Result, command.Error,
+		formatTime(command.CreatedAt), formatTime(command.UpdatedAt))
+	if err != nil {
+		return err
+	}
+	command.ID, err = result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		UPDATE license_device_remote_state
+		SET last_command_status=?, last_command_updated_at=?, updated_at=?
+		WHERE device_id=?
+	`, command.Status, formatTime(command.UpdatedAt), formatTime(command.UpdatedAt), strings.TrimSpace(command.DeviceID))
+	return err
+}
+
+func (s *SQLiteStore) ListRemoteCommands(deviceID string, limit int) ([]RemoteCommandRecord, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(`
+		SELECT id, device_id, command_type, status, actor_account_id, COALESCE(actor_username,''),
+			envelope_json, COALESCE(result,''), COALESCE(error,''), created_at, updated_at
+		FROM license_remote_commands
+		WHERE device_id=?
+		ORDER BY id DESC
+		LIMIT ?
+	`, strings.TrimSpace(deviceID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]RemoteCommandRecord, 0)
+	for rows.Next() {
+		command, err := scanRemoteCommand(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *command)
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) ListQueuedRemoteCommands(deviceID string, limit int) ([]RemoteCommandRecord, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.db.Query(`
+		SELECT id, device_id, command_type, status, actor_account_id, COALESCE(actor_username,''),
+			envelope_json, COALESCE(result,''), COALESCE(error,''), created_at, updated_at
+		FROM license_remote_commands
+		WHERE device_id=? AND status='queued'
+		ORDER BY id ASC
+		LIMIT ?
+	`, strings.TrimSpace(deviceID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]RemoteCommandRecord, 0)
+	for rows.Next() {
+		command, err := scanRemoteCommand(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *command)
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) UpdateRemoteCommandResult(deviceID string, commandID int64, status, resultText, errorText string, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	res, err := s.db.Exec(`
+		UPDATE license_remote_commands
+		SET status=?, result=?, error=?, updated_at=?
+		WHERE id=? AND device_id=?
+	`, strings.TrimSpace(status), strings.TrimSpace(resultText), strings.TrimSpace(errorText), formatTime(now), commandID, strings.TrimSpace(deviceID))
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	_, err = s.db.Exec(`
+		UPDATE license_device_remote_state
+		SET last_command_status=?, last_command_updated_at=?, updated_at=?
+		WHERE device_id=?
+	`, strings.TrimSpace(status), formatTime(now), formatTime(now), strings.TrimSpace(deviceID))
+	return err
+}
+
+func scanRemoteDeviceState(scanner interface {
+	Scan(dest ...interface{}) error
+}) (*RemoteDeviceState, error) {
+	var state RemoteDeviceState
+	var supported, enabled int
+	var capabilitiesJSON string
+	var lastHeartbeat, lastSnapshot, lastCommand sql.NullTime
+	if err := scanner.Scan(&state.DeviceID, &supported, &enabled, &state.ClientVersion, &capabilitiesJSON,
+		&state.DevicePublicKey, &lastHeartbeat, &state.LastActivationID, &state.OwnerAccountID,
+		&state.OwnerUsername, &state.LastSnapshotStatus, &lastSnapshot, &state.LastCommandStatus, &lastCommand); err != nil {
+		return nil, err
+	}
+	state.Supported = supported != 0
+	state.Enabled = enabled != 0
+	_ = json.Unmarshal([]byte(capabilitiesJSON), &state.Capabilities)
+	if lastHeartbeat.Valid {
+		state.LastHeartbeatAt = lastHeartbeat.Time.UTC()
+	}
+	if lastSnapshot.Valid {
+		state.LastSnapshotAt = lastSnapshot.Time.UTC()
+	}
+	if lastCommand.Valid {
+		state.LastCommandUpdatedAt = lastCommand.Time.UTC()
+	}
+	return &state, nil
+}
+
+func scanRemoteCommand(scanner interface {
+	Scan(dest ...interface{}) error
+}) (*RemoteCommandRecord, error) {
+	var command RemoteCommandRecord
+	var rawEnvelope string
+	if err := scanner.Scan(&command.ID, &command.DeviceID, &command.CommandType, &command.Status, &command.ActorID,
+		&command.ActorName, &rawEnvelope, &command.Result, &command.Error, &command.CreatedAt, &command.UpdatedAt); err != nil {
+		return nil, err
+	}
+	_ = json.Unmarshal([]byte(rawEnvelope), &command.Envelope)
+	command.CreatedAt = command.CreatedAt.UTC()
+	command.UpdatedAt = command.UpdatedAt.UTC()
+	return &command, nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func nullableFormattedTime(value time.Time) interface{} {
+	if value.IsZero() {
+		return nil
+	}
+	return formatTime(value)
 }
 
 func (s *SQLiteStore) ensureColumn(table, name, definition string) error {

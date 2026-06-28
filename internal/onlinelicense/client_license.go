@@ -2,7 +2,10 @@ package onlinelicense
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,7 +16,8 @@ import (
 )
 
 const (
-	clientStateConfigKey = "online_license_state"
+	clientStateConfigKey     = "online_license_state"
+	clientRemoteKeyConfigKey = "online_license_remote_x25519_private_key"
 )
 
 var AppPublicKey string
@@ -31,6 +35,8 @@ type ClientService struct {
 	client    *http.Client
 	version   string
 	now       func() time.Time
+	remote    RemoteExecutor
+	remoteKey *ecdh.PrivateKey
 }
 
 type ClientOptions struct {
@@ -39,6 +45,11 @@ type ClientOptions struct {
 	Version   string
 	Now       func() time.Time
 	Client    *http.Client
+}
+
+type RemoteExecutor interface {
+	Snapshot() (RemoteSnapshot, error)
+	ExecuteRemoteCommand(command RemoteCommandPayload) (*RemoteSnapshot, string, error)
 }
 
 type ClientState struct {
@@ -80,6 +91,13 @@ func NewClientService(store ConfigStore, deviceID string, opts ClientOptions) *C
 		version:   strings.TrimSpace(opts.Version),
 		now:       now,
 	}
+}
+
+func (s *ClientService) SetRemoteExecutor(executor RemoteExecutor) {
+	if s == nil {
+		return
+	}
+	s.remote = executor
 }
 
 func NewConfiguredClientService(store ConfigStore, deviceID, version string) (*ClientService, error) {
@@ -140,6 +158,7 @@ func (s *ClientService) Activate(cardKey string, now time.Time) (*ActivationResu
 		DeviceID:   s.deviceID,
 		Platform:   runtime.GOOS,
 		AppVersion: s.version,
+		Remote:     s.remoteCapabilityReport(),
 	}, &result); err != nil {
 		return nil, err
 	}
@@ -173,6 +192,7 @@ func (s *ClientService) Refresh(now time.Time) (*ActivationResult, error) {
 		DeviceID:   s.deviceID,
 		Platform:   runtime.GOOS,
 		AppVersion: s.version,
+		Remote:     s.remoteCapabilityReport(),
 	}, &result); err != nil {
 		if disabled, ok := s.disabledResultFromState(state, err, now); ok {
 			if err := s.saveResult(disabled, now); err != nil {
@@ -205,6 +225,127 @@ func (s *ClientService) MaybeRefresh(now time.Time) {
 		return
 	}
 	_, _ = s.Refresh(now)
+}
+
+func (s *ClientService) PollRemoteOnce() error {
+	if s == nil || s.remote == nil {
+		return nil
+	}
+	state, err := s.loadState()
+	if err != nil || state.Ticket == "" {
+		return err
+	}
+	var response RemotePollResponse
+	if err := s.postJSON("/api/license/remote/poll", RemotePollRequest{
+		Ticket:   state.Ticket,
+		DeviceID: s.deviceID,
+	}, &response); err != nil {
+		return err
+	}
+	if len(response.Commands) == 0 {
+		snapshot, err := s.remote.Snapshot()
+		if err != nil {
+			return err
+		}
+		return s.submitRemoteResult(RemoteResultRequest{
+			Ticket:   state.Ticket,
+			DeviceID: s.deviceID,
+			Status:   "snapshot",
+			Snapshot: &snapshot,
+		})
+	}
+	key, err := s.ensureRemoteKey()
+	if err != nil {
+		return err
+	}
+	for _, command := range response.Commands {
+		plain, err := DecryptRemoteEnvelope(key, command.Envelope)
+		status := "failed"
+		message := ""
+		var snapshot *RemoteSnapshot
+		if err == nil {
+			var payload RemoteCommandPayload
+			if decodeErr := json.Unmarshal(plain, &payload); decodeErr != nil {
+				err = decodeErr
+			} else {
+				snapshot, message, err = s.remote.ExecuteRemoteCommand(payload)
+				if err == nil {
+					status = "applied"
+				}
+			}
+		}
+		errorText := ""
+		if err != nil {
+			errorText = err.Error()
+		}
+		if submitErr := s.submitRemoteResult(RemoteResultRequest{
+			Ticket:    state.Ticket,
+			DeviceID:  s.deviceID,
+			CommandID: command.ID,
+			Status:    status,
+			Error:     errorText,
+			Snapshot:  snapshot,
+		}); submitErr != nil {
+			return submitErr
+		}
+		_ = message
+	}
+	return nil
+}
+
+func (s *ClientService) submitRemoteResult(req RemoteResultRequest) error {
+	var out map[string]bool
+	return s.postJSON("/api/license/remote/result", req, &out)
+}
+
+func (s *ClientService) remoteCapabilityReport() RemoteCapabilityReport {
+	if s == nil || s.remote == nil {
+		return RemoteCapabilityReport{}
+	}
+	key, err := s.ensureRemoteKey()
+	if err != nil {
+		return RemoteCapabilityReport{}
+	}
+	return RemoteCapabilityReport{
+		Supported: true,
+		Enabled:   true,
+		PublicKey: EncodeRemotePublicKey(key.PublicKey()),
+		Capabilities: []string{
+			"endpoints:view",
+			"endpoints:write",
+			"token_pool:view",
+			"token_pool:write",
+			"secrets:reveal",
+		},
+	}
+}
+
+func (s *ClientService) ensureRemoteKey() (*ecdh.PrivateKey, error) {
+	if s.remoteKey != nil {
+		return s.remoteKey, nil
+	}
+	if s.store != nil {
+		raw, err := s.store.GetConfig(clientRemoteKeyConfigKey)
+		if err == nil && strings.TrimSpace(raw) != "" {
+			data, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(raw))
+			if decodeErr == nil {
+				key, keyErr := ecdh.X25519().NewPrivateKey(data)
+				if keyErr == nil {
+					s.remoteKey = key
+					return key, nil
+				}
+			}
+		}
+	}
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	s.remoteKey = key
+	if s.store != nil {
+		_ = s.store.SetConfig(clientRemoteKeyConfigKey, base64.RawURLEncoding.EncodeToString(key.Bytes()))
+	}
+	return key, nil
 }
 
 func (s *ClientService) postJSON(path string, payload interface{}, out interface{}) error {

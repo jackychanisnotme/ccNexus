@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -97,6 +98,16 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleRefresh(w, r)
+	case path == "/api/license/remote/poll":
+		if !h.allowRate(w, r, "license_remote", 240, time.Minute) {
+			return
+		}
+		h.handleRemotePoll(w, r)
+	case path == "/api/license/remote/result":
+		if !h.allowRate(w, r, "license_remote", 240, time.Minute) {
+			return
+		}
+		h.handleRemoteResult(w, r)
 	case path == "/api/admin/login":
 		h.handleLogin(w, r)
 	case path == "/api/admin/logout":
@@ -119,6 +130,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveAdmin(w, r, h.handleActivations)
 	case strings.HasPrefix(path, "/api/admin/activations/") && strings.HasSuffix(path, "/disable"):
 		h.serveAdminMutation(w, r, h.handleDisableActivation)
+	case strings.HasPrefix(path, "/api/admin/devices/") && strings.HasSuffix(path, "/remote/commands"):
+		h.serveAdminMutation(w, r, h.handleQueueRemoteCommand)
+	case strings.HasPrefix(path, "/api/admin/devices/") && strings.HasSuffix(path, "/remote/secrets/reveal"):
+		h.serveAdminMutation(w, r, h.handleQueueRemoteSecretReveal)
+	case strings.HasPrefix(path, "/api/admin/devices/") && strings.HasSuffix(path, "/remote"):
+		h.serveAdmin(w, r, h.handleRemoteDevice)
 	case path == "/api/admin/devices/expiry":
 		h.serveAdminMutation(w, r, h.handleSetDeviceExpiry)
 	case path == "/api/admin/devices/remark":
@@ -334,6 +351,41 @@ func (h *HTTPHandler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	writeJSONSuccess(w, result)
 }
 
+func (h *HTTPHandler) handleRemotePoll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req RemotePollRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	result, err := h.service.PollRemoteCommands(req)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	writeJSONSuccess(w, result)
+}
+
+func (h *HTTPHandler) handleRemoteResult(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req RemoteResultRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.service.SubmitRemoteResult(req); err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	writeJSONSuccess(w, map[string]bool{"updated": true})
+}
+
 func (h *HTTPHandler) handleCards(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -496,6 +548,70 @@ func (h *HTTPHandler) handleSetDeviceRemark(w http.ResponseWriter, r *http.Reque
 	writeJSONSuccess(w, map[string]bool{"updated": true})
 }
 
+func (h *HTTPHandler) handleRemoteDevice(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	deviceID, err := remoteDeviceIDFromPath(r.URL.Path, "/api/admin/devices/", "/remote")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	detail, err := h.service.RemoteDeviceDetailFor(adminFromContext(r), deviceID)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	writeJSONSuccess(w, detail)
+}
+
+func (h *HTTPHandler) handleQueueRemoteCommand(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	deviceID, err := remoteDeviceIDFromPath(r.URL.Path, "/api/admin/devices/", "/remote/commands")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req RemoteCommandRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	command, err := h.service.QueueRemoteCommandFor(adminFromContext(r), deviceID, req)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	writeJSONSuccess(w, command)
+}
+
+func (h *HTTPHandler) handleQueueRemoteSecretReveal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	deviceID, err := remoteDeviceIDFromPath(r.URL.Path, "/api/admin/devices/", "/remote/secrets/reveal")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req RemoteSecretRevealRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	command, err := h.service.QueueRemoteSecretRevealFor(adminFromContext(r), deviceID, req)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	writeJSONSuccess(w, command)
+}
+
 func (h *HTTPHandler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -511,6 +627,15 @@ func (h *HTTPHandler) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONSuccess(w, history)
+}
+
+func remoteDeviceIDFromPath(path, prefix, suffix string) (string, error) {
+	value := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	value = strings.Trim(value, "/")
+	if value == "" || value == path {
+		return "", fmt.Errorf("device id is required")
+	}
+	return value, nil
 }
 
 func (h *HTTPHandler) serveAdmin(w http.ResponseWriter, r *http.Request, handler http.HandlerFunc) {

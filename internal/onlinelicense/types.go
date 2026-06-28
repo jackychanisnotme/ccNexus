@@ -1,6 +1,9 @@
 package onlinelicense
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	ProductCCNexusPro = "ccnexus-pro"
@@ -25,18 +28,21 @@ const (
 	AdminRelationshipSelf     = "self"
 	AdminRelationshipDownline = "downline"
 
-	PermissionCardsView          = "cards:view"
-	PermissionCardsGenerate      = "cards:generate"
-	PermissionCardsDisable       = "cards:disable"
-	PermissionCardsDelete        = "cards:delete"
-	PermissionDevicesView        = "devices:view"
-	PermissionDevicesRemark      = "devices:remark"
-	PermissionDevicesExpiry      = "devices:expiry"
-	PermissionActivationsView    = "activations:view"
-	PermissionActivationsDisable = "activations:disable"
-	PermissionHistoryView        = "history:view"
-	PermissionAccountsView       = "accounts:view"
-	PermissionAccountsManage     = "accounts:manage"
+	PermissionCardsView            = "cards:view"
+	PermissionCardsGenerate        = "cards:generate"
+	PermissionCardsDisable         = "cards:disable"
+	PermissionCardsDelete          = "cards:delete"
+	PermissionDevicesView          = "devices:view"
+	PermissionDevicesRemark        = "devices:remark"
+	PermissionDevicesExpiry        = "devices:expiry"
+	PermissionDevicesRemoteView    = "devices:remote:view"
+	PermissionDevicesRemoteWrite   = "devices:remote:write"
+	PermissionDevicesRemoteSecrets = "devices:remote:secrets"
+	PermissionActivationsView      = "activations:view"
+	PermissionActivationsDisable   = "activations:disable"
+	PermissionHistoryView          = "history:view"
+	PermissionAccountsView         = "accounts:view"
+	PermissionAccountsManage       = "accounts:manage"
 )
 
 type Plan string
@@ -108,19 +114,21 @@ type CardRecord struct {
 }
 
 type ActivationRequest struct {
-	CardKey    string `json:"cardKey"`
-	DeviceID   string `json:"deviceId"`
-	Platform   string `json:"platform"`
-	AppVersion string `json:"appVersion"`
-	IPAddress  string `json:"-"`
+	CardKey    string                 `json:"cardKey"`
+	DeviceID   string                 `json:"deviceId"`
+	Platform   string                 `json:"platform"`
+	AppVersion string                 `json:"appVersion"`
+	IPAddress  string                 `json:"-"`
+	Remote     RemoteCapabilityReport `json:"remote,omitempty"`
 }
 
 type RefreshRequest struct {
-	Ticket     string `json:"ticket"`
-	DeviceID   string `json:"deviceId"`
-	Platform   string `json:"platform"`
-	AppVersion string `json:"appVersion"`
-	IPAddress  string `json:"-"`
+	Ticket     string                 `json:"ticket"`
+	DeviceID   string                 `json:"deviceId"`
+	Platform   string                 `json:"platform"`
+	AppVersion string                 `json:"appVersion"`
+	IPAddress  string                 `json:"-"`
+	Remote     RemoteCapabilityReport `json:"remote,omitempty"`
 }
 
 type ActivationResult struct {
@@ -226,6 +234,131 @@ type SetDeviceExpiryRequest struct {
 type SetDeviceRemarkRequest struct {
 	DeviceID string `json:"deviceId"`
 	Remark   string `json:"remark"`
+}
+
+type RemoteCapabilityReport struct {
+	Supported    bool     `json:"supported"`
+	Enabled      bool     `json:"enabled"`
+	PublicKey    string   `json:"publicKey,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+type RemoteDeviceState struct {
+	DeviceID             string         `json:"deviceId"`
+	Supported            bool           `json:"supported"`
+	Enabled              bool           `json:"enabled"`
+	ClientVersion        string         `json:"clientVersion,omitempty"`
+	Capabilities         []string       `json:"capabilities,omitempty"`
+	DevicePublicKey      string         `json:"-"`
+	LastHeartbeatAt      time.Time      `json:"lastHeartbeatAt,omitempty"`
+	LastActivationID     int64          `json:"lastActivationId,omitempty"`
+	OwnerAccountID       int64          `json:"ownerAccountId,omitempty"`
+	OwnerUsername        string         `json:"ownerUsername,omitempty"`
+	LastSnapshotStatus   string         `json:"lastSnapshotStatus,omitempty"`
+	LastSnapshotAt       time.Time      `json:"lastSnapshotAt,omitempty"`
+	LastCommandStatus    string         `json:"lastCommandStatus,omitempty"`
+	LastCommandUpdatedAt time.Time      `json:"lastCommandUpdatedAt,omitempty"`
+	Snapshot             RemoteSnapshot `json:"snapshot"`
+}
+
+type RemoteSnapshot struct {
+	Endpoints  []RemoteEndpointSnapshot  `json:"endpoints"`
+	TokenPools []RemoteTokenPoolSnapshot `json:"tokenPools"`
+	UpdatedAt  time.Time                 `json:"updatedAt,omitempty"`
+}
+
+type RemoteEndpointSnapshot struct {
+	Name         string           `json:"name"`
+	APIUrl       string           `json:"apiUrl"`
+	APIKeyMasked string           `json:"apiKeyMasked,omitempty"`
+	AuthMode     string           `json:"authMode"`
+	Enabled      bool             `json:"enabled"`
+	Transformer  string           `json:"transformer,omitempty"`
+	Model        string           `json:"model,omitempty"`
+	Stats        RemoteUsageStats `json:"stats"`
+}
+
+type RemoteTokenPoolSnapshot struct {
+	EndpointName string                     `json:"endpointName"`
+	AuthMode     string                     `json:"authMode,omitempty"`
+	Credentials  []RemoteCredentialSnapshot `json:"credentials"`
+}
+
+type RemoteCredentialSnapshot struct {
+	ID              int64            `json:"id"`
+	AccountIDMasked string           `json:"accountIdMasked,omitempty"`
+	EmailMasked     string           `json:"emailMasked,omitempty"`
+	Status          string           `json:"status"`
+	Enabled         bool             `json:"enabled"`
+	Usage           RemoteUsageStats `json:"usage"`
+	Quota           interface{}      `json:"quota,omitempty"`
+}
+
+type RemoteUsageStats struct {
+	Requests     int `json:"requests"`
+	Errors       int `json:"errors"`
+	InputTokens  int `json:"inputTokens"`
+	OutputTokens int `json:"outputTokens"`
+}
+
+type RemoteAdminDetail struct {
+	State    RemoteDeviceState     `json:"state"`
+	Commands []RemoteCommandRecord `json:"commands"`
+}
+
+type RemoteCommandRequest struct {
+	CommandType string      `json:"commandType"`
+	Payload     interface{} `json:"payload"`
+}
+
+type RemoteCommandPayload struct {
+	CommandType string          `json:"commandType"`
+	Payload     json.RawMessage `json:"payload"`
+	QueuedAt    string          `json:"queuedAt,omitempty"`
+}
+
+type RemoteSecretRevealRequest struct {
+	EndpointName string `json:"endpointName"`
+	CredentialID int64  `json:"credentialId,omitempty"`
+	Field        string `json:"field"`
+}
+
+type RemoteCommandRecord struct {
+	ID          int64          `json:"id"`
+	DeviceID    string         `json:"deviceId"`
+	CommandType string         `json:"commandType"`
+	Status      string         `json:"status"`
+	ActorID     int64          `json:"actorId,omitempty"`
+	ActorName   string         `json:"actorName,omitempty"`
+	Envelope    RemoteEnvelope `json:"envelope,omitempty"`
+	Result      string         `json:"result,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
+}
+
+type RemoteEnvelope struct {
+	ServerPublicKey string `json:"serverPublicKey"`
+	Nonce           string `json:"nonce"`
+	Ciphertext      string `json:"ciphertext"`
+}
+
+type RemotePollRequest struct {
+	Ticket   string `json:"ticket"`
+	DeviceID string `json:"deviceId"`
+}
+
+type RemotePollResponse struct {
+	Commands []RemoteCommandRecord `json:"commands"`
+}
+
+type RemoteResultRequest struct {
+	Ticket    string          `json:"ticket"`
+	DeviceID  string          `json:"deviceId"`
+	CommandID int64           `json:"commandId"`
+	Status    string          `json:"status"`
+	Error     string          `json:"error,omitempty"`
+	Snapshot  *RemoteSnapshot `json:"snapshot,omitempty"`
 }
 
 type AuditRecord struct {

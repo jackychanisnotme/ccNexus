@@ -64,6 +64,13 @@ type Store interface {
 	ListAdminAccounts() ([]AdminAccount, error)
 	UpdateAdminAccount(account *AdminAccount, passwordHash string) error
 	ClaimUnownedCards(ownerID int64) error
+	UpsertRemoteDeviceState(state *RemoteDeviceState, now time.Time) error
+	UpsertRemoteSnapshot(deviceID string, snapshot RemoteSnapshot, now time.Time) error
+	GetRemoteDevice(deviceID string) (*RemoteDeviceState, error)
+	CreateRemoteCommand(command *RemoteCommandRecord, ownerAccountID int64) error
+	ListRemoteCommands(deviceID string, limit int) ([]RemoteCommandRecord, error)
+	ListQueuedRemoteCommands(deviceID string, limit int) ([]RemoteCommandRecord, error)
+	UpdateRemoteCommandResult(deviceID string, commandID int64, status, resultText, errorText string, now time.Time) error
 }
 
 type Service struct {
@@ -219,6 +226,7 @@ func (s *Service) CreateAdminAccount(actor *AdminAccount, req CreateAdminAccount
 	if len(permissions) == 0 {
 		permissions = defaultPermissionsForLevel(level)
 	}
+	permissions = permissionsForActor(actor, permissions)
 	now := s.currentTime()
 	passwordHash, err := hashAdminPassword(req.Password)
 	if err != nil {
@@ -230,7 +238,7 @@ func (s *Service) CreateAdminAccount(actor *AdminAccount, req CreateAdminAccount
 		Level:       level,
 		ParentID:    parentID,
 		Status:      AdminAccountStatusActive,
-		Permissions: normalizePermissions(permissions),
+		Permissions: permissions,
 		CreatedBy:   actor.ID,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -274,7 +282,7 @@ func (s *Service) UpdateAdminAccount(actor *AdminAccount, id int64, req UpdateAd
 		account.Status = strings.TrimSpace(req.Status)
 	}
 	if len(req.Permissions) > 0 {
-		account.Permissions = normalizePermissions(req.Permissions)
+		account.Permissions = permissionsForActor(actor, req.Permissions)
 	}
 	account.UpdatedAt = s.currentTime()
 	passwordHash := ""
@@ -380,6 +388,7 @@ func (s *Service) Activate(req ActivationRequest) (*ActivationResult, error) {
 	if activation.ActivatedAt.Equal(now) {
 		_ = s.store.AddAudit("activate", "activation", activation.ID, deviceID, now)
 	}
+	_ = s.upsertRemoteStateFromActivation(activation, req.Remote, strings.TrimSpace(req.AppVersion), now)
 	return s.resultFor(activation, now, "license is active")
 }
 
@@ -415,6 +424,10 @@ func (s *Service) Refresh(req RefreshRequest) (*ActivationResult, error) {
 		return nil, err
 	}
 	activation.LastCheckedAt = now
+	if strings.TrimSpace(req.AppVersion) != "" {
+		activation.AppVersion = strings.TrimSpace(req.AppVersion)
+	}
+	_ = s.upsertRemoteStateFromActivation(activation, req.Remote, strings.TrimSpace(req.AppVersion), now)
 	return s.resultFor(activation, now, "license refreshed")
 }
 
@@ -767,6 +780,190 @@ func (s *Service) SetDeviceRemarkFor(actor *AdminAccount, deviceID, remark strin
 	return s.SetDeviceRemark(deviceID, remark)
 }
 
+func (s *Service) RemoteDeviceDetailFor(actor *AdminAccount, deviceID string) (*RemoteAdminDetail, error) {
+	if actor == nil || !hasPermission(actor, PermissionDevicesRemoteView) {
+		return nil, ErrForbidden
+	}
+	if ok, err := s.deviceInScope(actor, deviceID); err != nil || !ok {
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrForbidden
+			}
+			return nil, err
+		}
+		return nil, ErrForbidden
+	}
+	state, err := s.store.GetRemoteDevice(strings.TrimSpace(deviceID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &RemoteAdminDetail{State: RemoteDeviceState{DeviceID: strings.TrimSpace(deviceID), Supported: false}}, nil
+		}
+		return nil, err
+	}
+	commands, err := s.store.ListRemoteCommands(strings.TrimSpace(deviceID), 20)
+	if err != nil {
+		return nil, err
+	}
+	return &RemoteAdminDetail{State: *state, Commands: commands}, nil
+}
+
+func (s *Service) QueueRemoteCommandFor(actor *AdminAccount, deviceID string, req RemoteCommandRequest) (*RemoteCommandRecord, error) {
+	if actor == nil || !hasPermission(actor, PermissionDevicesRemoteWrite) {
+		return nil, ErrForbidden
+	}
+	device, err := s.remoteDeviceForWrite(actor, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	commandType := strings.TrimSpace(req.CommandType)
+	if commandType == "" {
+		return nil, fmt.Errorf("command type is required")
+	}
+	payload := map[string]interface{}{
+		"commandType": commandType,
+		"payload":     req.Payload,
+		"queuedAt":    s.currentTime().UTC().Format(time.RFC3339Nano),
+	}
+	plain, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	envelope, err := EncryptRemoteEnvelope(device.DevicePublicKey, plain)
+	if err != nil {
+		return nil, err
+	}
+	now := s.currentTime()
+	command := &RemoteCommandRecord{
+		DeviceID:    strings.TrimSpace(deviceID),
+		CommandType: commandType,
+		Status:      "queued",
+		ActorID:     actor.ID,
+		ActorName:   actor.Username,
+		Envelope:    envelope,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := s.store.CreateRemoteCommand(command, device.OwnerAccountID); err != nil {
+		return nil, err
+	}
+	_ = s.store.AddAudit("remote_command", "device", 0, fmt.Sprintf("device=%s command=%s actor=%s", command.DeviceID, command.CommandType, actor.Username), now)
+	return command, nil
+}
+
+func (s *Service) QueueRemoteSecretRevealFor(actor *AdminAccount, deviceID string, req RemoteSecretRevealRequest) (*RemoteCommandRecord, error) {
+	if actor == nil || !hasPermission(actor, PermissionDevicesRemoteSecrets) {
+		return nil, ErrForbidden
+	}
+	payload := map[string]interface{}{
+		"endpointName": strings.TrimSpace(req.EndpointName),
+		"credentialId": req.CredentialID,
+		"field":        strings.TrimSpace(req.Field),
+	}
+	command, err := s.QueueRemoteCommandFor(actor, deviceID, RemoteCommandRequest{
+		CommandType: "secret.reveal",
+		Payload:     payload,
+	})
+	if err != nil {
+		return nil, err
+	}
+	_ = s.store.AddAudit("remote_secret_reveal", "device", 0, fmt.Sprintf("device=%s endpoint=%s credentialId=%d field=%s actor=%s", strings.TrimSpace(deviceID), strings.TrimSpace(req.EndpointName), req.CredentialID, strings.TrimSpace(req.Field), actor.Username), s.currentTime())
+	return command, nil
+}
+
+func (s *Service) PollRemoteCommands(req RemotePollRequest) (*RemotePollResponse, error) {
+	if err := s.verifyRemoteTicketDevice(req.Ticket, req.DeviceID); err != nil {
+		return nil, err
+	}
+	commands, err := s.store.ListQueuedRemoteCommands(strings.TrimSpace(req.DeviceID), 10)
+	if err != nil {
+		return nil, err
+	}
+	return &RemotePollResponse{Commands: commands}, nil
+}
+
+func (s *Service) SubmitRemoteResult(req RemoteResultRequest) error {
+	if err := s.verifyRemoteTicketDevice(req.Ticket, req.DeviceID); err != nil {
+		return err
+	}
+	status := strings.TrimSpace(req.Status)
+	if status == "" {
+		status = "applied"
+	}
+	now := s.currentTime()
+	resultText := ""
+	if req.Snapshot != nil {
+		if err := s.store.UpsertRemoteSnapshot(strings.TrimSpace(req.DeviceID), *req.Snapshot, now); err != nil {
+			return err
+		}
+		resultText = "snapshot updated"
+	}
+	if req.CommandID == 0 {
+		return nil
+	}
+	return s.store.UpdateRemoteCommandResult(strings.TrimSpace(req.DeviceID), req.CommandID, status, resultText, strings.TrimSpace(req.Error), now)
+}
+
+func (s *Service) upsertRemoteStateFromActivation(activation *ActivationRecord, report RemoteCapabilityReport, appVersion string, now time.Time) error {
+	if activation == nil || strings.TrimSpace(activation.DeviceID) == "" {
+		return nil
+	}
+	if !report.Supported && strings.TrimSpace(report.PublicKey) == "" && len(report.Capabilities) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(report.PublicKey) != "" {
+		if _, err := DecodeRemotePublicKey(strings.TrimSpace(report.PublicKey)); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(appVersion) == "" {
+		appVersion = activation.AppVersion
+	}
+	return s.store.UpsertRemoteDeviceState(&RemoteDeviceState{
+		DeviceID:           activation.DeviceID,
+		Supported:          report.Supported,
+		Enabled:            report.Enabled,
+		ClientVersion:      strings.TrimSpace(appVersion),
+		Capabilities:       normalizeRemoteCapabilities(report.Capabilities),
+		DevicePublicKey:    strings.TrimSpace(report.PublicKey),
+		LastHeartbeatAt:    now,
+		LastActivationID:   activation.ID,
+		OwnerAccountID:     activation.OwnerAccountID,
+		OwnerUsername:      activation.OwnerUsername,
+		LastSnapshotStatus: "pending",
+	}, now)
+}
+
+func (s *Service) remoteDeviceForWrite(actor *AdminAccount, deviceID string) (*RemoteDeviceState, error) {
+	if ok, err := s.deviceInScope(actor, deviceID); err != nil || !ok {
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrForbidden
+			}
+			return nil, err
+		}
+		return nil, ErrForbidden
+	}
+	device, err := s.store.GetRemoteDevice(strings.TrimSpace(deviceID))
+	if err != nil {
+		return nil, err
+	}
+	if !device.Supported || !device.Enabled || strings.TrimSpace(device.DevicePublicKey) == "" {
+		return nil, fmt.Errorf("device does not support remote management")
+	}
+	return device, nil
+}
+
+func (s *Service) verifyRemoteTicketDevice(ticket, deviceID string) error {
+	payload, err := s.decodeAndVerifyTicket(ticket)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(deviceID) == "" || payload.DeviceID != strings.TrimSpace(deviceID) {
+		return ErrInvalidTicket
+	}
+	return nil
+}
+
 func (s *Service) RecordAudit(action, targetType string, targetID int64, detail string) error {
 	return s.store.AddAudit(strings.TrimSpace(action), strings.TrimSpace(targetType), targetID, strings.TrimSpace(detail), s.currentTime())
 }
@@ -864,6 +1061,8 @@ func defaultPermissionsForLevel(level int) []string {
 			PermissionDevicesView,
 			PermissionDevicesRemark,
 			PermissionDevicesExpiry,
+			PermissionDevicesRemoteView,
+			PermissionDevicesRemoteWrite,
 			PermissionActivationsView,
 			PermissionActivationsDisable,
 			PermissionHistoryView,
@@ -878,6 +1077,8 @@ func defaultPermissionsForLevel(level int) []string {
 			PermissionDevicesView,
 			PermissionDevicesRemark,
 			PermissionDevicesExpiry,
+			PermissionDevicesRemoteView,
+			PermissionDevicesRemoteWrite,
 			PermissionActivationsView,
 			PermissionActivationsDisable,
 			PermissionHistoryView,
@@ -896,6 +1097,9 @@ func allAdminPermissions() []string {
 		PermissionDevicesView,
 		PermissionDevicesRemark,
 		PermissionDevicesExpiry,
+		PermissionDevicesRemoteView,
+		PermissionDevicesRemoteWrite,
+		PermissionDevicesRemoteSecrets,
 		PermissionActivationsView,
 		PermissionActivationsDisable,
 		PermissionHistoryView,
@@ -918,6 +1122,34 @@ func normalizePermissions(permissions []string) []string {
 		}
 		seen[permission] = true
 		result = append(result, permission)
+	}
+	return result
+}
+
+func permissionsForActor(actor *AdminAccount, permissions []string) []string {
+	normalized := normalizePermissions(permissions)
+	if actor == nil || actor.Level == AdminLevelRoot {
+		return normalized
+	}
+	result := make([]string, 0, len(normalized))
+	for _, permission := range normalized {
+		if hasPermission(actor, permission) {
+			result = append(result, permission)
+		}
+	}
+	return result
+}
+
+func normalizeRemoteCapabilities(capabilities []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		capability = strings.TrimSpace(capability)
+		if capability == "" || seen[capability] {
+			continue
+		}
+		seen[capability] = true
+		result = append(result, capability)
 	}
 	return result
 }

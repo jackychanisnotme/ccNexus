@@ -21,6 +21,7 @@ import (
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/onlinelicense"
 	"github.com/lich0821/ccNexus/internal/proxy"
+	"github.com/lich0821/ccNexus/internal/service"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
 
@@ -133,10 +134,14 @@ func main() {
 		startLicenseOnlyServer(cfg, licenseService, dataDir, dbPath)
 		return
 	}
-	licenseService.MaybeRefresh(timeNow())
-
 	statsAdapter := storage.NewStatsStorageAdapter(sqliteStorage)
 	p := proxy.New(cfg, statsAdapter, sqliteStorage, deviceID)
+	endpointService := service.NewEndpointService(cfg, p, sqliteStorage)
+	licenseService.SetRemoteExecutor(service.NewRemoteManagementExecutor(cfg, sqliteStorage, endpointService))
+	licenseService.MaybeRefresh(timeNow())
+	if err := licenseService.PollRemoteOnce(); err != nil {
+		logger.Warn("Remote management poll failed: %v", err)
+	}
 
 	// Create HTTP mux
 	mux := http.NewServeMux()

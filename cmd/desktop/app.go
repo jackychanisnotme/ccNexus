@@ -200,6 +200,9 @@ func (a *App) startup(ctx context.Context) {
 	if err != nil {
 		logger.Warn("Online license public key unavailable: %v", err)
 	}
+	if a.license != nil {
+		a.license.SetRemoteExecutor(service.NewRemoteManagementExecutor(a.config, a.storage, a.endpoint))
+	}
 	a.codexAuth = codexauth.NewManager(codexauth.Options{
 		Storage:    a.storage,
 		HTTPClient: codexauth.HTTPClientForConfig(a.config),
@@ -357,6 +360,9 @@ func (a *App) refreshLicenseFromServer(reason string) (*onlinelicense.Status, er
 	if _, err := a.license.Refresh(now); err != nil {
 		logger.Warn("License refresh failed (%s): %v", reason, err)
 		return nil, err
+	}
+	if err := a.license.PollRemoteOnce(); err != nil {
+		logger.Warn("Remote management poll failed (%s): %v", reason, err)
 	}
 	status, err := a.license.Status(time.Now())
 	if err != nil {
