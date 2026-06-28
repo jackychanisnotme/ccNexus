@@ -105,6 +105,11 @@ let tokenPoolOpenActionMenu = null;
 let currentEndpointName = '';
 let endpointRuntimeStatuses = {};
 let endpointActiveCounts = {};
+let endpointPoolHomeSummaries = {};
+let endpointPoolHomeLoadError = '';
+let endpointPoolHomeRotation = 0;
+let endpointPoolHomePollTimer = null;
+let endpointPoolHomeRotateTimer = null;
 
 function getLocalizedModal(id) {
     const modal = document.getElementById(id);
@@ -227,6 +232,192 @@ function renderEndpointRuntimeBadges(endpointName, viewMode = 'detail') {
     }
 
     return badges.join('');
+}
+
+function isCodexTokenPoolHomeEndpoint(endpoint = {}) {
+    return String(endpoint.authMode || '').trim().toLowerCase() === 'codex_token_pool';
+}
+
+function formatPoolHomePercent(value) {
+    const number = Number(value || 0);
+    if (!Number.isFinite(number) || number <= 0) {
+        return '0%';
+    }
+    return `${Math.round(number)}%`;
+}
+
+function formatPoolHomeTime(value) {
+    if (!value) {
+        return '-';
+    }
+    return formatTokenPoolTime(value);
+}
+
+function renderPoolHomeAccount(account = {}) {
+    const status = account.enabled === false ? t('tokenPool.statusLabels.disabled') : tokenPoolStatusLabel(account.status || 'active');
+    const quota = [
+        formatPoolHomePercent(account.primaryUsedPercent),
+        formatPoolHomePercent(account.secondaryUsedPercent)
+    ].join(' / ');
+    const titleParts = [
+        account.email || '',
+        tt('tokenPool.homeStatus', { status }),
+        tt('tokenPool.homeQuota', { primary: formatPoolHomePercent(account.primaryUsedPercent), secondary: formatPoolHomePercent(account.secondaryUsedPercent) })
+    ];
+    if (account.resetAt) {
+        titleParts.push(tt('tokenPool.homeReset', { time: formatPoolHomeTime(account.resetAt) }));
+    }
+    if (account.hasError) {
+        titleParts.push(account.errorText || t('tokenPool.homeAccountError'));
+    }
+    return `
+        <span class="endpoint-pool-home-account${account.hasError ? ' endpoint-pool-home-account-error' : ''}" title="${escapeHtml(titleParts.filter(Boolean).join(' · '))}">
+            <strong>${escapeHtml(account.label || account.accountId || '-')}</strong>
+            <span>${escapeHtml(status)}</span>
+            <small>${escapeHtml(quota)}</small>
+        </span>
+    `;
+}
+
+function getRotatedPoolHomeAccounts(accounts = [], limit = 2) {
+    if (!Array.isArray(accounts) || accounts.length === 0) {
+        return [];
+    }
+    const count = Math.min(limit, accounts.length);
+    const start = endpointPoolHomeRotation % accounts.length;
+    return Array.from({ length: count }, (_, offset) => accounts[(start + offset) % accounts.length]);
+}
+
+function renderEndpointPoolHomeSummary(endpoint = {}) {
+    if (!isCodexTokenPoolHomeEndpoint(endpoint)) {
+        return '';
+    }
+    const summary = endpointPoolHomeSummaries[endpoint.name];
+    if (!summary) {
+        if (!endpointPoolHomeLoadError) {
+            return '';
+        }
+        return `
+            <div class="endpoint-pool-home endpoint-pool-home-stale">
+                <span>${t('tokenPool.homeTitle')}</span>
+                <strong>${t('tokenPool.homeStale')}</strong>
+            </div>
+        `;
+    }
+    const accounts = getRotatedPoolHomeAccounts(summary.accounts, 2);
+    const accountHTML = accounts.length
+        ? accounts.map(renderPoolHomeAccount).join('')
+        : `<span class="endpoint-pool-home-empty">${t('tokenPool.homeNoAccounts')}</span>`;
+    const problemHTML = (summary.problemAccounts || 0) > 0
+        ? `<span class="endpoint-pool-home-badge endpoint-pool-home-badge-warn">${tt('tokenPool.homeProblems', { count: summary.problemAccounts || 0 })}</span>`
+        : '';
+    const staleHTML = endpointPoolHomeLoadError
+        ? `<span class="endpoint-pool-home-badge endpoint-pool-home-badge-stale">${t('tokenPool.homeStale')}</span>`
+        : '';
+    return `
+        <div class="endpoint-pool-home${endpointPoolHomeLoadError ? ' endpoint-pool-home-stale' : ''}" data-endpoint-name="${escapeHtml(endpoint.name || '')}">
+            <div class="endpoint-pool-home-head">
+                <span class="endpoint-pool-home-title">${t('tokenPool.homeTitle')}</span>
+                <span class="endpoint-pool-home-badge">${tt('tokenPool.homeHealthy', {
+                    active: summary.activeAccounts || 0,
+                    total: summary.totalAccounts || 0
+                })}</span>
+                ${problemHTML}
+                ${staleHTML}
+                <span class="endpoint-pool-home-badge">${tt('tokenPool.homeQuota', {
+                    primary: formatPoolHomePercent(summary.highestPrimaryUsedPercent),
+                    secondary: formatPoolHomePercent(summary.highestSecondaryUsedPercent)
+                })}</span>
+            </div>
+            <div class="endpoint-pool-home-meta">
+                <span>${tt('tokenPool.homeUpdated', { time: formatPoolHomeTime(summary.latestQuotaUpdatedAt) })}</span>
+                <span>${tt('tokenPool.homeReset', { time: formatPoolHomeTime(summary.nextResetAt) })}</span>
+            </div>
+            <div class="endpoint-pool-home-accounts">${accountHTML}</div>
+        </div>
+    `;
+}
+
+function renderCompactEndpointPoolHomeSummary(endpoint = {}) {
+    if (!isCodexTokenPoolHomeEndpoint(endpoint)) {
+        return '';
+    }
+    const summary = endpointPoolHomeSummaries[endpoint.name];
+    if (!summary) {
+        return endpointPoolHomeLoadError
+            ? `<span class="compact-pool-home compact-pool-home-stale">${t('tokenPool.homeStale')}</span>`
+            : '';
+    }
+    const warningClass = (summary.problemAccounts || 0) > 0 ? ' compact-pool-home-warn' : '';
+    const staleClass = endpointPoolHomeLoadError ? ' compact-pool-home-stale' : '';
+    const account = getRotatedPoolHomeAccounts(summary.accounts, 1)[0];
+    const accountLabel = account ? ` · ${account.label || account.accountId || '-'}` : '';
+    return `<span class="compact-pool-home${warningClass}${staleClass}" title="${escapeHtml(tt('tokenPool.homeQuota', {
+        primary: formatPoolHomePercent(summary.highestPrimaryUsedPercent),
+        secondary: formatPoolHomePercent(summary.highestSecondaryUsedPercent)
+    }))}">${tt('tokenPool.homeHealthy', {
+        active: summary.activeAccounts || 0,
+        total: summary.totalAccounts || 0
+    })}${escapeHtml(accountLabel)}</span>`;
+}
+
+function updateEndpointPoolHomeSlots() {
+    document.querySelectorAll('.endpoint-pool-home-slot').forEach(slot => {
+        const endpointName = slot.dataset.name || '';
+        const authMode = slot.dataset.authMode || '';
+        const compact = slot.dataset.view === 'compact';
+        const endpoint = { name: endpointName, authMode };
+        slot.innerHTML = compact
+            ? renderCompactEndpointPoolHomeSummary(endpoint)
+            : renderEndpointPoolHomeSummary(endpoint);
+    });
+}
+
+async function refreshEndpointPoolHomeSummaries() {
+    if (!window.go?.main?.App?.GetCodexTokenPoolHomeSummaries) {
+        return;
+    }
+    try {
+        const raw = await window.go.main.App.GetCodexTokenPoolHomeSummaries();
+        const result = parseAppJSON(raw);
+        if (!result.success) {
+            throw new Error(result.error || t('tokenPool.homeLoadFailed'));
+        }
+        endpointPoolHomeSummaries = {};
+        (Array.isArray(result.data) ? result.data : []).forEach((summary) => {
+            if (summary?.endpointName) {
+                endpointPoolHomeSummaries[summary.endpointName] = summary;
+            }
+        });
+        endpointPoolHomeLoadError = '';
+    } catch (error) {
+        console.error('Failed to load Codex token pool home summaries:', error);
+        endpointPoolHomeLoadError = error?.message || String(error);
+    }
+    updateEndpointPoolHomeSlots();
+}
+
+function ensureEndpointPoolHomeTimers() {
+    if (!endpointPoolHomePollTimer) {
+        endpointPoolHomePollTimer = setInterval(() => {
+            if (document.visibilityState === 'hidden') {
+                return;
+            }
+            refreshEndpointPoolHomeSummaries();
+        }, 30000);
+    }
+    if (!endpointPoolHomeRotateTimer) {
+        endpointPoolHomeRotateTimer = setInterval(() => {
+            endpointPoolHomeRotation += 1;
+            updateEndpointPoolHomeSlots();
+        }, 6000);
+    }
+}
+
+function setEndpointPoolHomeSummariesForTest(summaries = {}, rotation = 0, error = '') {
+    endpointPoolHomeSummaries = summaries;
+    endpointPoolHomeRotation = rotation;
+    endpointPoolHomeLoadError = error;
 }
 
 function updateRuntimeStatusSlot(endpointName) {
@@ -432,6 +623,7 @@ export async function renderEndpoints(endpoints) {
                 ${authMode === 'api_key'
                     ? `<p style="display: flex; align-items: center; gap: 8px; min-width: 0;"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">🔑 ${maskApiKey(ep.apiKey)}</span> <button class="copy-btn" data-copy="${ep.apiKey}" aria-label="${t('endpoints.copy')}" title="${t('endpoints.copy')}"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em"><path d="M7 4c0-1.1.9-2 2-2h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-1V8c0-2-1-3-3-3H7V4Z" fill="currentColor"></path><path d="M5 7a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2h10a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H5Z" fill="currentColor"></path></svg></button></p>`
                     : `<p style="color: #666; font-size: 14px; margin-top: 3px;">🪪 Using credential pool</p>`}
+                <div class="endpoint-pool-home-slot" data-name="${escapeHtml(ep.name)}" data-auth-mode="${escapeHtml(authMode)}" data-view="detail">${renderEndpointPoolHomeSummary(ep)}</div>
                 <p style="color: #666; font-size: 14px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">🔄 ${t('endpoints.transformer')}: ${transformer}${model ? ` (${model})` : ''}</p>
                 <p style="color: #666; font-size: 14px; margin-top: 3px;">📊 ${t('endpoints.requests')}: ${stats.requests} | ${t('endpoints.errors')}: ${stats.errors}</p>
                 <p style="color: #666; font-size: 14px; margin-top: 3px;">🎯 ${t('endpoints.tokens')}: ${formatTokens(totalTokens)} (${t('statistics.in')}: ${formatTokens(stats.inputTokens)}, ${t('statistics.out')}: ${formatTokens(stats.outputTokens)})</p>
@@ -502,6 +694,9 @@ export async function renderEndpoints(endpoints) {
 
         container.appendChild(item);
     });
+
+    ensureEndpointPoolHomeTimers();
+    refreshEndpointPoolHomeSummaries();
 }
 
 function ensureTokenPoolModal() {
@@ -1789,6 +1984,7 @@ async function loadTokenPoolData(index) {
     statsEl.innerHTML = renderTokenPoolStats(stats);
     bodyEl.innerHTML = renderTokenPoolRows(credentials, { mode });
     await loadCodexAccountOverview(index);
+    await refreshEndpointPoolHomeSummaries();
     setTokenPoolHint(modal, '');
 
     bodyEl.querySelectorAll('.token-pool-toggle-action').forEach((button) => {
@@ -2669,6 +2865,7 @@ function renderCompactView(sortedEndpoints, container, currentEndpointName, isFi
             <span class="endpoint-runtime-slot compact-runtime-slot" data-name="${escapeHtml(ep.name)}">${renderEndpointRuntimeBadges(ep.name, 'compact')}</span>
             <span class="compact-url" title="${ep.apiUrl}"><span class="compact-url-icon">🌐</span>${displayUrl}</span>
             <span class="compact-transformer">🔄 ${transformer}</span>
+            <span class="endpoint-pool-home-slot compact-pool-home-slot" data-name="${escapeHtml(ep.name)}" data-auth-mode="${escapeHtml(authMode)}" data-view="compact">${renderCompactEndpointPoolHomeSummary(ep)}</span>
             <span class="compact-stats" title="${statsTooltip}">📊 ${stats.requests} | 🎯 ${formatTokens(stats.inputTokens + stats.outputTokens)}</span>
             <div class="compact-actions">
                 <label class="toggle-switch">
@@ -2692,6 +2889,9 @@ function renderCompactView(sortedEndpoints, container, currentEndpointName, isFi
 
         container.appendChild(item);
     });
+
+    ensureEndpointPoolHomeTimers();
+    refreshEndpointPoolHomeSummaries();
 
     // 点击其他地方关闭下拉菜单（先移除旧监听器，避免重复绑定）
     document.removeEventListener('click', closeAllDropdowns);

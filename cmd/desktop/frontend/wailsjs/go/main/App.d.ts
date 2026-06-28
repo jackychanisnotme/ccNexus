@@ -81,6 +81,8 @@ export function GetCodexAccountOverview(arg1:number):Promise<string>;
 
 export function GetCodexResetCredits(arg1:number,arg2:number):Promise<string>;
 
+export function GetCodexTokenPoolHomeSummaries():Promise<string>;
+
 export function GetCodexProxyURL():Promise<string>;
 
 export function GetCodexSessionData(arg1:string):Promise<string>;

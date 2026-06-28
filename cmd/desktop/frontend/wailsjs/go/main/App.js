@@ -162,6 +162,10 @@ export function GetCodexResetCredits(arg1, arg2) {
   return window['go']['main']['App']['GetCodexResetCredits'](arg1, arg2);
 }
 
+export function GetCodexTokenPoolHomeSummaries() {
+  return window['go']['main']['App']['GetCodexTokenPoolHomeSummaries']();
+}
+
 export function GetCodexProxyURL() {
   return window['go']['main']['App']['GetCodexProxyURL']();
 }
