@@ -49,7 +49,7 @@ type ClientOptions struct {
 
 type RemoteExecutor interface {
 	Snapshot() (RemoteSnapshot, error)
-	ExecuteRemoteCommand(command RemoteCommandPayload) (*RemoteSnapshot, string, error)
+	ExecuteRemoteCommand(command RemoteCommandPayload) (*RemoteExecutionOutcome, error)
 }
 
 type ClientState struct {
@@ -227,50 +227,78 @@ func (s *ClientService) MaybeRefresh(now time.Time) {
 	_, _ = s.Refresh(now)
 }
 
-func (s *ClientService) PollRemoteOnce() error {
+func (s *ClientService) PollRemoteOnce() (*RemotePollOutcome, error) {
+	outcome := &RemotePollOutcome{}
 	if s == nil || s.remote == nil {
-		return nil
+		return outcome, nil
 	}
 	state, err := s.loadState()
 	if err != nil || state.Ticket == "" {
-		return err
+		return outcome, err
 	}
 	var response RemotePollResponse
 	if err := s.postJSON("/api/license/remote/poll", RemotePollRequest{
 		Ticket:   state.Ticket,
 		DeviceID: s.deviceID,
 	}, &response); err != nil {
-		return err
+		return outcome, err
 	}
+	outcome.CommandCount = len(response.Commands)
 	if len(response.Commands) == 0 {
 		snapshot, err := s.remote.Snapshot()
 		if err != nil {
-			return err
+			return outcome, err
 		}
-		return s.submitRemoteResult(RemoteResultRequest{
+		if err := s.submitRemoteResult(RemoteResultRequest{
 			Ticket:   state.Ticket,
 			DeviceID: s.deviceID,
 			Status:   "snapshot",
 			Snapshot: &snapshot,
-		})
+		}); err != nil {
+			return outcome, err
+		}
+		outcome.SnapshotUpdated = true
+		return outcome, nil
 	}
 	key, err := s.ensureRemoteKey()
 	if err != nil {
-		return err
+		return outcome, err
 	}
 	for _, command := range response.Commands {
 		plain, err := DecryptRemoteEnvelope(key, command.Envelope)
 		status := "failed"
-		message := ""
 		var snapshot *RemoteSnapshot
+		var result *RemoteCommandResult
+		var secretReveal *RemoteSecretRevealResult
 		if err == nil {
 			var payload RemoteCommandPayload
 			if decodeErr := json.Unmarshal(plain, &payload); decodeErr != nil {
 				err = decodeErr
 			} else {
-				snapshot, message, err = s.remote.ExecuteRemoteCommand(payload)
+				commandOutcome, execErr := s.remote.ExecuteRemoteCommand(payload)
+				err = execErr
 				if err == nil {
 					status = "applied"
+					if commandOutcome != nil {
+						snapshot = commandOutcome.Snapshot
+						result = &RemoteCommandResult{
+							Message:           commandOutcome.Message,
+							ConfigChanged:     commandOutcome.ConfigChanged,
+							SnapshotUpdated:   commandOutcome.SnapshotUpdated || commandOutcome.Snapshot != nil,
+							SecretRevealReady: commandOutcome.SecretRevealReady,
+							SecretReveal:      commandOutcome.SecretReveal,
+						}
+						if commandOutcome.SecretReveal != nil {
+							commandOutcome.SecretReveal.CommandID = command.ID
+							secretReveal = commandOutcome.SecretReveal
+						}
+						if snapshot != nil {
+							result.SnapshotUpdatedAt = snapshot.UpdatedAt
+						}
+						outcome.ConfigChanged = outcome.ConfigChanged || commandOutcome.ConfigChanged
+						outcome.SnapshotUpdated = outcome.SnapshotUpdated || commandOutcome.SnapshotUpdated || commandOutcome.Snapshot != nil
+						outcome.SecretRevealReady = outcome.SecretRevealReady || commandOutcome.SecretRevealReady
+					}
 				}
 			}
 		}
@@ -279,18 +307,19 @@ func (s *ClientService) PollRemoteOnce() error {
 			errorText = err.Error()
 		}
 		if submitErr := s.submitRemoteResult(RemoteResultRequest{
-			Ticket:    state.Ticket,
-			DeviceID:  s.deviceID,
-			CommandID: command.ID,
-			Status:    status,
-			Error:     errorText,
-			Snapshot:  snapshot,
+			Ticket:       state.Ticket,
+			DeviceID:     s.deviceID,
+			CommandID:    command.ID,
+			Status:       status,
+			Error:        errorText,
+			Snapshot:     snapshot,
+			Result:       result,
+			SecretReveal: secretReveal,
 		}); submitErr != nil {
-			return submitErr
+			return outcome, submitErr
 		}
-		_ = message
 	}
-	return nil
+	return outcome, nil
 }
 
 func (s *ClientService) submitRemoteResult(req RemoteResultRequest) error {

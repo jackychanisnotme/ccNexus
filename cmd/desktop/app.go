@@ -361,8 +361,18 @@ func (a *App) refreshLicenseFromServer(reason string) (*onlinelicense.Status, er
 		logger.Warn("License refresh failed (%s): %v", reason, err)
 		return nil, err
 	}
-	if err := a.license.PollRemoteOnce(); err != nil {
+	if remoteOutcome, err := a.license.PollRemoteOnce(); err != nil {
 		logger.Warn("Remote management poll failed (%s): %v", reason, err)
+	} else if remoteOutcome != nil {
+		a.ctxMutex.RLock()
+		ctx := a.ctx
+		a.ctxMutex.RUnlock()
+		if ctx != nil && remoteOutcome.ConfigChanged {
+			runtime.EventsEmit(ctx, "remote:config-updated", remoteOutcome)
+		}
+		if ctx != nil && remoteOutcome.SnapshotUpdated {
+			runtime.EventsEmit(ctx, "remote:snapshot-updated", remoteOutcome)
+		}
 	}
 	status, err := a.license.Status(time.Now())
 	if err != nil {

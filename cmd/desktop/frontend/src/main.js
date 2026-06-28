@@ -187,6 +187,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         window.runtime.EventsOn('lan-discovery:updated', (data) => {
             updateLANDiscoveryStatus(data);
         });
+        window.runtime.EventsOn('remote:config-updated', async () => {
+            await loadConfigAndRender();
+        });
     }
 
     // Fallback: If event-based updates fail, uncomment the following to restore polling

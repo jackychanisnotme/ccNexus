@@ -309,6 +309,7 @@ type RemoteAdminDetail struct {
 type RemoteCommandRequest struct {
 	CommandType string      `json:"commandType"`
 	Payload     interface{} `json:"payload"`
+	ExpiresAt   time.Time   `json:"-"`
 }
 
 type RemoteCommandPayload struct {
@@ -318,23 +319,75 @@ type RemoteCommandPayload struct {
 }
 
 type RemoteSecretRevealRequest struct {
+	EndpointName   string `json:"endpointName"`
+	CredentialID   int64  `json:"credentialId,omitempty"`
+	Field          string `json:"field"`
+	AdminPublicKey string `json:"adminPublicKey,omitempty"`
+}
+
+type RemoteSecretRevealPayload struct {
+	EndpointName   string `json:"endpointName"`
+	CredentialID   int64  `json:"credentialId,omitempty"`
+	Field          string `json:"field"`
+	AdminPublicKey string `json:"adminPublicKey"`
+	ExpiresAt      string `json:"expiresAt"`
+}
+
+type RemoteSecretRevealPlaintext struct {
 	EndpointName string `json:"endpointName"`
 	CredentialID int64  `json:"credentialId,omitempty"`
 	Field        string `json:"field"`
+	Value        string `json:"value"`
+}
+
+type RemoteSecretRevealResult struct {
+	CommandID       int64     `json:"commandId,omitempty"`
+	Algorithm       string    `json:"algorithm"`
+	ClientPublicKey string    `json:"clientPublicKey"`
+	Nonce           string    `json:"nonce"`
+	Ciphertext      string    `json:"ciphertext"`
+	ExpiresAt       time.Time `json:"expiresAt"`
+}
+
+type RemoteCommandResult struct {
+	Message           string                    `json:"message,omitempty"`
+	ConfigChanged     bool                      `json:"configChanged,omitempty"`
+	SnapshotUpdated   bool                      `json:"snapshotUpdated,omitempty"`
+	SnapshotUpdatedAt time.Time                 `json:"snapshotUpdatedAt,omitempty"`
+	SecretRevealReady bool                      `json:"secretRevealReady,omitempty"`
+	SecretReveal      *RemoteSecretRevealResult `json:"secretReveal,omitempty"`
+}
+
+type RemoteExecutionOutcome struct {
+	Snapshot          *RemoteSnapshot           `json:"snapshot,omitempty"`
+	Message           string                    `json:"message,omitempty"`
+	ConfigChanged     bool                      `json:"configChanged,omitempty"`
+	SnapshotUpdated   bool                      `json:"snapshotUpdated,omitempty"`
+	SecretRevealReady bool                      `json:"secretRevealReady,omitempty"`
+	SecretReveal      *RemoteSecretRevealResult `json:"secretReveal,omitempty"`
+}
+
+type RemotePollOutcome struct {
+	CommandCount      int  `json:"commandCount"`
+	ConfigChanged     bool `json:"configChanged,omitempty"`
+	SnapshotUpdated   bool `json:"snapshotUpdated,omitempty"`
+	SecretRevealReady bool `json:"secretRevealReady,omitempty"`
 }
 
 type RemoteCommandRecord struct {
-	ID          int64          `json:"id"`
-	DeviceID    string         `json:"deviceId"`
-	CommandType string         `json:"commandType"`
-	Status      string         `json:"status"`
-	ActorID     int64          `json:"actorId,omitempty"`
-	ActorName   string         `json:"actorName,omitempty"`
-	Envelope    RemoteEnvelope `json:"envelope,omitempty"`
-	Result      string         `json:"result,omitempty"`
-	Error       string         `json:"error,omitempty"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
+	ID          int64                `json:"id"`
+	DeviceID    string               `json:"deviceId"`
+	CommandType string               `json:"commandType"`
+	Status      string               `json:"status"`
+	ActorID     int64                `json:"actorId,omitempty"`
+	ActorName   string               `json:"actorName,omitempty"`
+	Envelope    RemoteEnvelope       `json:"envelope,omitempty"`
+	Result      string               `json:"result,omitempty"`
+	ResultJSON  *RemoteCommandResult `json:"resultJson,omitempty"`
+	Error       string               `json:"error,omitempty"`
+	ExpiresAt   time.Time            `json:"expiresAt,omitempty"`
+	CreatedAt   time.Time            `json:"createdAt"`
+	UpdatedAt   time.Time            `json:"updatedAt"`
 }
 
 type RemoteEnvelope struct {
@@ -353,12 +406,14 @@ type RemotePollResponse struct {
 }
 
 type RemoteResultRequest struct {
-	Ticket    string          `json:"ticket"`
-	DeviceID  string          `json:"deviceId"`
-	CommandID int64           `json:"commandId"`
-	Status    string          `json:"status"`
-	Error     string          `json:"error,omitempty"`
-	Snapshot  *RemoteSnapshot `json:"snapshot,omitempty"`
+	Ticket       string                    `json:"ticket"`
+	DeviceID     string                    `json:"deviceId"`
+	CommandID    int64                     `json:"commandId"`
+	Status       string                    `json:"status"`
+	Error        string                    `json:"error,omitempty"`
+	Snapshot     *RemoteSnapshot           `json:"snapshot,omitempty"`
+	Result       *RemoteCommandResult      `json:"result,omitempty"`
+	SecretReveal *RemoteSecretRevealResult `json:"secretReveal,omitempty"`
 }
 
 type AuditRecord struct {

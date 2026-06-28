@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -217,6 +218,144 @@ func TestRemoteSnapshotResultWithoutCommandUpdatesDeviceDetail(t *testing.T) {
 	}
 }
 
+func TestRemoteCommandStatusEndpointReturnsEncryptedRevealResult(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	rootCookie := loginAdmin(t, handler)
+	cardKey := generateHTTPCard(t, handler, 1)
+	activated := activateHTTPCardWithRemote(t, handler, cardKey, "device-a")
+
+	adminKey, adminPub := testRemoteRevealAdminKey(t)
+	revealBody := `{"endpointName":"OpenAI","field":"apiKey","adminPublicKey":"` + adminPub + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/devices/device-a/remote/secrets/reveal", strings.NewReader(revealBody))
+	req.AddCookie(rootCookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("queue reveal status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var queued struct {
+		Data RemoteCommandRecord `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode queued reveal: %v", err)
+	}
+	if queued.Data.ID == 0 {
+		t.Fatalf("queued command missing id: %#v", queued.Data)
+	}
+
+	result, err := EncryptRemoteSecretRevealResult(adminPub, RemoteSecretRevealPlaintext{
+		EndpointName: "OpenAI",
+		Field:        "apiKey",
+		Value:        "sk-live-secret",
+	}, time.Now().UTC().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("encrypt reveal result: %v", err)
+	}
+	body, err := json.Marshal(RemoteResultRequest{
+		Ticket:       activated.Ticket,
+		DeviceID:     "device-a",
+		CommandID:    queued.Data.ID,
+		Status:       "applied",
+		SecretReveal: result,
+	})
+	if err != nil {
+		t.Fatalf("marshal reveal result: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/license/remote/result", bytes.NewReader(body))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit reveal result status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/devices/device-a/remote/commands/"+strconv.FormatInt(queued.Data.ID, 10), nil)
+	req.AddCookie(rootCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("command status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "sk-live-secret") {
+		t.Fatalf("command status leaked plaintext reveal: %s", rec.Body.String())
+	}
+	var status struct {
+		Data RemoteCommandRecord `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode command status: %v", err)
+	}
+	if status.Data.Status != "applied" || status.Data.ResultJSON == nil || status.Data.ResultJSON.SecretReveal == nil {
+		t.Fatalf("unexpected command status: %#v", status.Data)
+	}
+	plain, err := DecryptRemoteSecretRevealResult(adminKey, *status.Data.ResultJSON.SecretReveal)
+	if err != nil {
+		t.Fatalf("decrypt status reveal: %v", err)
+	}
+	if plain.Value != "sk-live-secret" {
+		t.Fatalf("revealed value = %q", plain.Value)
+	}
+}
+
+func TestExpiredRemoteRevealResultIsNotReturned(t *testing.T) {
+	handler := newTestHTTPHandler(t).(*HTTPHandler)
+	rootCookie := loginAdmin(t, handler)
+	cardKey := generateHTTPCard(t, handler, 1)
+	activated := activateHTTPCardWithRemote(t, handler, cardKey, "device-a")
+	_, adminPub := testRemoteRevealAdminKey(t)
+
+	revealBody := `{"endpointName":"OpenAI","field":"apiKey","adminPublicKey":"` + adminPub + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/devices/device-a/remote/secrets/reveal", strings.NewReader(revealBody))
+	req.AddCookie(rootCookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("queue reveal status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var queued struct {
+		Data RemoteCommandRecord `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode queued reveal: %v", err)
+	}
+
+	expiredAt := time.Date(2026, 6, 19, 7, 59, 0, 0, time.UTC)
+	result, err := EncryptRemoteSecretRevealResult(adminPub, RemoteSecretRevealPlaintext{
+		EndpointName: "OpenAI",
+		Field:        "apiKey",
+		Value:        "expired-secret",
+	}, expiredAt)
+	if err != nil {
+		t.Fatalf("encrypt expired reveal result: %v", err)
+	}
+	body, err := json.Marshal(RemoteResultRequest{
+		Ticket:       activated.Ticket,
+		DeviceID:     "device-a",
+		CommandID:    queued.Data.ID,
+		Status:       "applied",
+		SecretReveal: result,
+	})
+	if err != nil {
+		t.Fatalf("marshal expired reveal result: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/license/remote/result", bytes.NewReader(body))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit expired reveal status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/devices/device-a/remote/commands/"+strconv.FormatInt(queued.Data.ID, 10), nil)
+	req.AddCookie(rootCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expired command status = %d body=%s, want 410", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "expired-secret") {
+		t.Fatalf("expired command leaked plaintext: %s", rec.Body.String())
+	}
+}
+
 func activateHTTPCardWithRemote(t *testing.T, handler http.Handler, cardKey, deviceID string) ActivationResult {
 	t.Helper()
 	_, pub := testRemoteDeviceKey(t)
@@ -248,6 +387,15 @@ func testRemoteDeviceKey(t *testing.T) (*ecdh.PrivateKey, string) {
 		t.Fatalf("generate remote key: %v", err)
 	}
 	return key, EncodeRemotePublicKey(key.PublicKey())
+}
+
+func testRemoteRevealAdminKey(t *testing.T) (*ecdh.PrivateKey, string) {
+	t.Helper()
+	key, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate reveal admin key: %v", err)
+	}
+	return key, EncodeRemoteRevealPublicKey(key.PublicKey())
 }
 
 func mustJSON(t *testing.T, v interface{}) string {

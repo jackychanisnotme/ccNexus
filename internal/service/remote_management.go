@@ -91,45 +91,58 @@ func (e *RemoteManagementExecutor) Snapshot() (onlinelicense.RemoteSnapshot, err
 	return result, nil
 }
 
-func (e *RemoteManagementExecutor) ExecuteRemoteCommand(command onlinelicense.RemoteCommandPayload) (*onlinelicense.RemoteSnapshot, string, error) {
+func (e *RemoteManagementExecutor) ExecuteRemoteCommand(command onlinelicense.RemoteCommandPayload) (*onlinelicense.RemoteExecutionOutcome, error) {
 	commandType := strings.TrimSpace(command.CommandType)
+	outcome := &onlinelicense.RemoteExecutionOutcome{}
 	switch commandType {
 	case "endpoint.create":
 		if err := e.executeEndpointCreate(command.Payload); err != nil {
-			return nil, "", err
+			return nil, err
 		}
+		outcome.ConfigChanged = true
 	case "endpoint.update":
 		if err := e.executeEndpointUpdate(command.Payload); err != nil {
-			return nil, "", err
+			return nil, err
 		}
+		outcome.ConfigChanged = true
 	case "endpoint.delete":
 		if err := e.executeEndpointDelete(command.Payload); err != nil {
-			return nil, "", err
+			return nil, err
 		}
+		outcome.ConfigChanged = true
 	case "credential.setEnabled":
 		if err := e.executeCredentialEnabled(command.Payload); err != nil {
-			return nil, "", err
+			return nil, err
 		}
+		outcome.ConfigChanged = true
 	case "credential.updateToken":
 		if err := e.executeCredentialUpdateToken(command.Payload); err != nil {
-			return nil, "", err
+			return nil, err
 		}
+		outcome.ConfigChanged = true
 	case "credential.delete":
 		if err := e.executeCredentialDelete(command.Payload); err != nil {
-			return nil, "", err
+			return nil, err
 		}
+		outcome.ConfigChanged = true
 	case "secret.reveal":
-		// The reveal command is acknowledged without returning plaintext into
-		// normal result storage. A future admin-specific public key can carry
-		// one-time reveal payloads without weakening snapshots or audit logs.
+		reveal, err := e.executeSecretReveal(command.Payload)
+		if err != nil {
+			return nil, err
+		}
+		outcome.SecretReveal = reveal
+		outcome.SecretRevealReady = reveal != nil
 	default:
-		return nil, "", fmt.Errorf("unsupported remote command %q", commandType)
+		return nil, fmt.Errorf("unsupported remote command %q", commandType)
 	}
 	snapshot, err := e.Snapshot()
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return &snapshot, "ok", nil
+	outcome.Snapshot = &snapshot
+	outcome.SnapshotUpdated = true
+	outcome.Message = "ok"
+	return outcome, nil
 }
 
 func (e *RemoteManagementExecutor) executeEndpointCreate(raw json.RawMessage) error {
@@ -171,18 +184,18 @@ func (e *RemoteManagementExecutor) executeEndpointCreate(raw json.RawMessage) er
 
 func (e *RemoteManagementExecutor) executeEndpointUpdate(raw json.RawMessage) error {
 	var req struct {
-		EndpointName string `json:"endpointName"`
-		Name         string `json:"name"`
-		APIUrl       string `json:"apiUrl"`
-		APIKey       string `json:"apiKey"`
-		AuthMode     string `json:"authMode"`
-		Transformer  string `json:"transformer"`
-		Model        string `json:"model"`
-		Thinking     string `json:"thinking"`
-		ProxyURL     string `json:"proxyUrl"`
-		ForceStream  *bool  `json:"forceStream"`
-		Remark       string `json:"remark"`
-		Enabled      *bool  `json:"enabled"`
+		EndpointName string  `json:"endpointName"`
+		Name         *string `json:"name"`
+		APIUrl       *string `json:"apiUrl"`
+		APIKey       *string `json:"apiKey"`
+		AuthMode     *string `json:"authMode"`
+		Transformer  *string `json:"transformer"`
+		Model        *string `json:"model"`
+		Thinking     *string `json:"thinking"`
+		ProxyURL     *string `json:"proxyUrl"`
+		ForceStream  *bool   `json:"forceStream"`
+		Remark       *string `json:"remark"`
+		Enabled      *bool   `json:"enabled"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return err
@@ -192,32 +205,40 @@ func (e *RemoteManagementExecutor) executeEndpointUpdate(raw json.RawMessage) er
 		return err
 	}
 	name := endpoint.Name
-	if strings.TrimSpace(req.Name) != "" {
-		name = strings.TrimSpace(req.Name)
+	if req.Name != nil && strings.TrimSpace(*req.Name) != "" {
+		name = strings.TrimSpace(*req.Name)
 	}
 	apiURL := endpoint.APIUrl
-	if strings.TrimSpace(req.APIUrl) != "" {
-		apiURL = strings.TrimSpace(req.APIUrl)
+	if req.APIUrl != nil {
+		apiURL = strings.TrimSpace(*req.APIUrl)
 	}
 	apiKey := endpoint.APIKey
-	if strings.TrimSpace(req.APIKey) != "" {
-		apiKey = strings.TrimSpace(req.APIKey)
+	if req.APIKey != nil {
+		apiKey = strings.TrimSpace(*req.APIKey)
 	}
 	authMode := endpoint.AuthMode
-	if strings.TrimSpace(req.AuthMode) != "" {
-		authMode = strings.TrimSpace(req.AuthMode)
+	if req.AuthMode != nil && strings.TrimSpace(*req.AuthMode) != "" {
+		authMode = strings.TrimSpace(*req.AuthMode)
 	}
 	transformer := endpoint.Transformer
-	if strings.TrimSpace(req.Transformer) != "" {
-		transformer = strings.TrimSpace(req.Transformer)
+	if req.Transformer != nil && strings.TrimSpace(*req.Transformer) != "" {
+		transformer = strings.TrimSpace(*req.Transformer)
 	}
 	model := endpoint.Model
-	if strings.TrimSpace(req.Model) != "" {
-		model = strings.TrimSpace(req.Model)
+	if req.Model != nil {
+		model = strings.TrimSpace(*req.Model)
 	}
 	thinking := endpoint.Thinking
-	if strings.TrimSpace(req.Thinking) != "" {
-		thinking = strings.TrimSpace(req.Thinking)
+	if req.Thinking != nil {
+		thinking = strings.TrimSpace(*req.Thinking)
+	}
+	proxyURL := endpoint.ProxyURL
+	if req.ProxyURL != nil {
+		proxyURL = strings.TrimSpace(*req.ProxyURL)
+	}
+	remark := endpoint.Remark
+	if req.Remark != nil {
+		remark = strings.TrimSpace(*req.Remark)
 	}
 	forceStream := endpoint.ForceStream
 	if req.ForceStream != nil {
@@ -230,10 +251,71 @@ func (e *RemoteManagementExecutor) executeEndpointUpdate(raw json.RawMessage) er
 	if e.Endpoints == nil {
 		return fmt.Errorf("endpoint service unavailable")
 	}
-	if err := e.Endpoints.UpdateEndpoint(index, name, apiURL, apiKey, authMode, transformer, model, thinking, req.ProxyURL, forceStream, req.Remark); err != nil {
+	if err := e.Endpoints.UpdateEndpoint(index, name, apiURL, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, remark); err != nil {
 		return err
 	}
 	return e.Endpoints.ToggleEndpoint(index, enabled)
+}
+
+func (e *RemoteManagementExecutor) executeSecretReveal(raw json.RawMessage) (*onlinelicense.RemoteSecretRevealResult, error) {
+	var req onlinelicense.RemoteSecretRevealPayload
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	field := strings.TrimSpace(req.Field)
+	if field == "" {
+		return nil, fmt.Errorf("secret field is required")
+	}
+	if strings.TrimSpace(req.AdminPublicKey) == "" {
+		return nil, fmt.Errorf("admin public key is required")
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(req.ExpiresAt))
+	if err != nil {
+		return nil, fmt.Errorf("invalid reveal expiry: %w", err)
+	}
+	if !expiresAt.IsZero() && !time.Now().UTC().Before(expiresAt.UTC()) {
+		return nil, fmt.Errorf("secret reveal command expired")
+	}
+	value, endpointName, credentialID, err := e.remoteSecretValue(req)
+	if err != nil {
+		return nil, err
+	}
+	return onlinelicense.EncryptRemoteSecretRevealResult(req.AdminPublicKey, onlinelicense.RemoteSecretRevealPlaintext{
+		EndpointName: endpointName,
+		CredentialID: credentialID,
+		Field:        field,
+		Value:        value,
+	}, expiresAt.UTC())
+}
+
+func (e *RemoteManagementExecutor) remoteSecretValue(req onlinelicense.RemoteSecretRevealPayload) (string, string, int64, error) {
+	field := strings.TrimSpace(req.Field)
+	if req.CredentialID > 0 {
+		cred, err := e.credentialByID(req.CredentialID)
+		if err != nil {
+			return "", "", 0, err
+		}
+		switch field {
+		case "accessToken":
+			return cred.AccessToken, cred.EndpointName, cred.ID, nil
+		case "refreshToken":
+			return cred.RefreshToken, cred.EndpointName, cred.ID, nil
+		case "idToken":
+			return cred.IDToken, cred.EndpointName, cred.ID, nil
+		default:
+			return "", "", 0, fmt.Errorf("unsupported credential secret field %q", field)
+		}
+	}
+	_, endpoint, err := e.endpointByName(req.EndpointName)
+	if err != nil {
+		return "", "", 0, err
+	}
+	switch field {
+	case "apiKey":
+		return endpoint.APIKey, endpoint.Name, 0, nil
+	default:
+		return "", "", 0, fmt.Errorf("unsupported endpoint secret field %q", field)
+	}
 }
 
 func (e *RemoteManagementExecutor) executeEndpointDelete(raw json.RawMessage) error {

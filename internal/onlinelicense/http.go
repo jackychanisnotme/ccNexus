@@ -130,6 +130,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveAdmin(w, r, h.handleActivations)
 	case strings.HasPrefix(path, "/api/admin/activations/") && strings.HasSuffix(path, "/disable"):
 		h.serveAdminMutation(w, r, h.handleDisableActivation)
+	case strings.HasPrefix(path, "/api/admin/devices/") && strings.Contains(path, "/remote/commands/"):
+		h.serveAdmin(w, r, h.handleRemoteCommandStatus)
 	case strings.HasPrefix(path, "/api/admin/devices/") && strings.HasSuffix(path, "/remote/commands"):
 		h.serveAdminMutation(w, r, h.handleQueueRemoteCommand)
 	case strings.HasPrefix(path, "/api/admin/devices/") && strings.HasSuffix(path, "/remote/secrets/reveal"):
@@ -612,6 +614,24 @@ func (h *HTTPHandler) handleQueueRemoteSecretReveal(w http.ResponseWriter, r *ht
 	writeJSONSuccess(w, command)
 }
 
+func (h *HTTPHandler) handleRemoteCommandStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	deviceID, commandID, err := remoteCommandPath(r.URL.Path)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	command, err := h.service.RemoteCommandFor(adminFromContext(r), deviceID, commandID)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	writeJSONSuccess(w, command)
+}
+
 func (h *HTTPHandler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -636,6 +656,22 @@ func remoteDeviceIDFromPath(path, prefix, suffix string) (string, error) {
 		return "", fmt.Errorf("device id is required")
 	}
 	return value, nil
+}
+
+func remoteCommandPath(path string) (string, int64, error) {
+	const marker = "/remote/commands/"
+	if !strings.HasPrefix(path, "/api/admin/devices/") || !strings.Contains(path, marker) {
+		return "", 0, fmt.Errorf("invalid remote command path")
+	}
+	parts := strings.SplitN(strings.TrimPrefix(path, "/api/admin/devices/"), marker, 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		return "", 0, fmt.Errorf("device id is required")
+	}
+	id, err := strconv.ParseInt(strings.Trim(parts[1], "/"), 10, 64)
+	if err != nil || id <= 0 {
+		return "", 0, fmt.Errorf("invalid command id")
+	}
+	return strings.Trim(parts[0], "/"), id, nil
 }
 
 func (h *HTTPHandler) serveAdmin(w http.ResponseWriter, r *http.Request, handler http.HandlerFunc) {
@@ -755,6 +791,8 @@ func (h *HTTPHandler) writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):
 		writeJSONError(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, ErrRemoteResultExpired):
+		writeJSONError(w, http.StatusGone, "remote command result expired")
 	case errors.Is(err, sql.ErrNoRows):
 		writeJSONError(w, http.StatusNotFound, "not found")
 	default:

@@ -121,7 +121,9 @@ func (s *SQLiteStore) init() error {
 		owner_account_id INTEGER NOT NULL DEFAULT 0,
 		envelope_json TEXT NOT NULL DEFAULT '{}',
 		result TEXT,
+		result_json TEXT,
 		error TEXT,
+		expires_at DATETIME,
 		created_at DATETIME NOT NULL,
 		updated_at DATETIME NOT NULL
 	);
@@ -166,6 +168,8 @@ func (s *SQLiteStore) init() error {
 		{"admin_audit_logs", "actor_account_id", "INTEGER NOT NULL DEFAULT 0"},
 		{"admin_audit_logs", "actor_username", "TEXT"},
 		{"admin_audit_logs", "ip_address", "TEXT"},
+		{"license_remote_commands", "result_json", "TEXT"},
+		{"license_remote_commands", "expires_at", "DATETIME"},
 	} {
 		if err := s.ensureColumn(column.table, column.name, column.definition); err != nil {
 			return err
@@ -323,10 +327,11 @@ func (s *SQLiteStore) CreateRemoteCommand(command *RemoteCommandRecord, ownerAcc
 	result, err := s.db.Exec(`
 		INSERT INTO license_remote_commands (
 			device_id, command_type, status, actor_account_id, actor_username, owner_account_id,
-			envelope_json, result, error, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			envelope_json, result, result_json, error, expires_at, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, strings.TrimSpace(command.DeviceID), strings.TrimSpace(command.CommandType), command.Status, command.ActorID,
-		strings.TrimSpace(command.ActorName), ownerAccountID, string(envelope), command.Result, command.Error,
+		strings.TrimSpace(command.ActorName), ownerAccountID, string(envelope), command.Result, remoteCommandResultJSON(command.ResultJSON), command.Error,
+		nullableFormattedTime(command.ExpiresAt),
 		formatTime(command.CreatedAt), formatTime(command.UpdatedAt))
 	if err != nil {
 		return err
@@ -349,7 +354,7 @@ func (s *SQLiteStore) ListRemoteCommands(deviceID string, limit int) ([]RemoteCo
 	}
 	rows, err := s.db.Query(`
 		SELECT id, device_id, command_type, status, actor_account_id, COALESCE(actor_username,''),
-			envelope_json, COALESCE(result,''), COALESCE(error,''), created_at, updated_at
+			envelope_json, COALESCE(result,''), COALESCE(result_json,''), COALESCE(error,''), expires_at, created_at, updated_at
 		FROM license_remote_commands
 		WHERE device_id=?
 		ORDER BY id DESC
@@ -376,7 +381,7 @@ func (s *SQLiteStore) ListQueuedRemoteCommands(deviceID string, limit int) ([]Re
 	}
 	rows, err := s.db.Query(`
 		SELECT id, device_id, command_type, status, actor_account_id, COALESCE(actor_username,''),
-			envelope_json, COALESCE(result,''), COALESCE(error,''), created_at, updated_at
+			envelope_json, COALESCE(result,''), COALESCE(result_json,''), COALESCE(error,''), expires_at, created_at, updated_at
 		FROM license_remote_commands
 		WHERE device_id=? AND status='queued'
 		ORDER BY id ASC
@@ -397,15 +402,26 @@ func (s *SQLiteStore) ListQueuedRemoteCommands(deviceID string, limit int) ([]Re
 	return result, rows.Err()
 }
 
-func (s *SQLiteStore) UpdateRemoteCommandResult(deviceID string, commandID int64, status, resultText, errorText string, now time.Time) error {
+func (s *SQLiteStore) GetRemoteCommand(deviceID string, commandID int64) (*RemoteCommandRecord, error) {
+	row := s.db.QueryRow(`
+		SELECT id, device_id, command_type, status, actor_account_id, COALESCE(actor_username,''),
+			envelope_json, COALESCE(result,''), COALESCE(result_json,''), COALESCE(error,''), expires_at, created_at, updated_at
+		FROM license_remote_commands
+		WHERE device_id=? AND id=?
+	`, strings.TrimSpace(deviceID), commandID)
+	return scanRemoteCommand(row)
+}
+
+func (s *SQLiteStore) UpdateRemoteCommandResult(deviceID string, commandID int64, status, resultText, errorText string, resultJSON *RemoteCommandResult, expiresAt time.Time, now time.Time) error {
 	if now.IsZero() {
 		now = time.Now()
 	}
 	res, err := s.db.Exec(`
 		UPDATE license_remote_commands
-		SET status=?, result=?, error=?, updated_at=?
+		SET status=?, result=?, result_json=?, error=?, expires_at=?, updated_at=?
 		WHERE id=? AND device_id=?
-	`, strings.TrimSpace(status), strings.TrimSpace(resultText), strings.TrimSpace(errorText), formatTime(now), commandID, strings.TrimSpace(deviceID))
+	`, strings.TrimSpace(status), strings.TrimSpace(resultText), remoteCommandResultJSON(resultJSON),
+		strings.TrimSpace(errorText), nullableFormattedTime(expiresAt), formatTime(now), commandID, strings.TrimSpace(deviceID))
 	if err != nil {
 		return err
 	}
@@ -456,14 +472,36 @@ func scanRemoteCommand(scanner interface {
 }) (*RemoteCommandRecord, error) {
 	var command RemoteCommandRecord
 	var rawEnvelope string
+	var rawResult string
+	var expiresAt sql.NullTime
 	if err := scanner.Scan(&command.ID, &command.DeviceID, &command.CommandType, &command.Status, &command.ActorID,
-		&command.ActorName, &rawEnvelope, &command.Result, &command.Error, &command.CreatedAt, &command.UpdatedAt); err != nil {
+		&command.ActorName, &rawEnvelope, &command.Result, &rawResult, &command.Error, &expiresAt, &command.CreatedAt, &command.UpdatedAt); err != nil {
 		return nil, err
 	}
 	_ = json.Unmarshal([]byte(rawEnvelope), &command.Envelope)
+	if strings.TrimSpace(rawResult) != "" {
+		var result RemoteCommandResult
+		if err := json.Unmarshal([]byte(rawResult), &result); err == nil {
+			command.ResultJSON = &result
+		}
+	}
+	if expiresAt.Valid {
+		command.ExpiresAt = expiresAt.Time.UTC()
+	}
 	command.CreatedAt = command.CreatedAt.UTC()
 	command.UpdatedAt = command.UpdatedAt.UTC()
 	return &command, nil
+}
+
+func remoteCommandResultJSON(result *RemoteCommandResult) interface{} {
+	if result == nil {
+		return nil
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return nil
+	}
+	return string(data)
 }
 
 func boolInt(value bool) int {

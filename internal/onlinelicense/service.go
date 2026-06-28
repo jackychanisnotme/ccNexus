@@ -20,19 +20,21 @@ import (
 )
 
 const (
-	cardPrefix         = "CCNX-ONL-"
-	nextCheckInterval  = 24 * time.Hour
-	offlineGracePeriod = 30 * 24 * time.Hour
+	cardPrefix            = "CCNX-ONL-"
+	nextCheckInterval     = 24 * time.Hour
+	offlineGracePeriod    = 30 * 24 * time.Hour
+	remoteSecretRevealTTL = time.Minute
 )
 
 var (
-	ErrInvalidCard       = errors.New("invalid license card")
-	ErrCardDisabled      = errors.New("license card is disabled")
-	ErrDeviceLimit       = errors.New("license card device limit reached")
-	ErrActivationBlocked = errors.New("license activation is disabled")
-	ErrInvalidTicket     = errors.New("invalid license ticket")
-	ErrTicketExpired     = errors.New("license ticket grace period expired")
-	ErrForbidden         = errors.New("forbidden")
+	ErrInvalidCard         = errors.New("invalid license card")
+	ErrCardDisabled        = errors.New("license card is disabled")
+	ErrDeviceLimit         = errors.New("license card device limit reached")
+	ErrActivationBlocked   = errors.New("license activation is disabled")
+	ErrInvalidTicket       = errors.New("invalid license ticket")
+	ErrTicketExpired       = errors.New("license ticket grace period expired")
+	ErrForbidden           = errors.New("forbidden")
+	ErrRemoteResultExpired = errors.New("remote command result expired")
 )
 
 type Store interface {
@@ -70,7 +72,8 @@ type Store interface {
 	CreateRemoteCommand(command *RemoteCommandRecord, ownerAccountID int64) error
 	ListRemoteCommands(deviceID string, limit int) ([]RemoteCommandRecord, error)
 	ListQueuedRemoteCommands(deviceID string, limit int) ([]RemoteCommandRecord, error)
-	UpdateRemoteCommandResult(deviceID string, commandID int64, status, resultText, errorText string, now time.Time) error
+	GetRemoteCommand(deviceID string, commandID int64) (*RemoteCommandRecord, error)
+	UpdateRemoteCommandResult(deviceID string, commandID int64, status, resultText, errorText string, resultJSON *RemoteCommandResult, expiresAt time.Time, now time.Time) error
 }
 
 type Service struct {
@@ -804,13 +807,30 @@ func (s *Service) RemoteDeviceDetailFor(actor *AdminAccount, deviceID string) (*
 	if err != nil {
 		return nil, err
 	}
+	commands = redactRemoteCommandsForActor(actor, commands)
 	return &RemoteAdminDetail{State: *state, Commands: commands}, nil
+}
+
+func redactRemoteCommandsForActor(actor *AdminAccount, commands []RemoteCommandRecord) []RemoteCommandRecord {
+	canViewSecrets := hasPermission(actor, PermissionDevicesRemoteSecrets)
+	for i := range commands {
+		commands[i].Envelope = RemoteEnvelope{}
+		if commands[i].CommandType == "secret.reveal" && !canViewSecrets {
+			commands[i].ResultJSON = nil
+			commands[i].Result = ""
+		}
+	}
+	return commands
 }
 
 func (s *Service) QueueRemoteCommandFor(actor *AdminAccount, deviceID string, req RemoteCommandRequest) (*RemoteCommandRecord, error) {
 	if actor == nil || !hasPermission(actor, PermissionDevicesRemoteWrite) {
 		return nil, ErrForbidden
 	}
+	return s.queueRemoteCommandFor(actor, deviceID, req)
+}
+
+func (s *Service) queueRemoteCommandFor(actor *AdminAccount, deviceID string, req RemoteCommandRequest) (*RemoteCommandRecord, error) {
 	device, err := s.remoteDeviceForWrite(actor, deviceID)
 	if err != nil {
 		return nil, err
@@ -840,6 +860,7 @@ func (s *Service) QueueRemoteCommandFor(actor *AdminAccount, deviceID string, re
 		ActorID:     actor.ID,
 		ActorName:   actor.Username,
 		Envelope:    envelope,
+		ExpiresAt:   req.ExpiresAt,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -854,19 +875,65 @@ func (s *Service) QueueRemoteSecretRevealFor(actor *AdminAccount, deviceID strin
 	if actor == nil || !hasPermission(actor, PermissionDevicesRemoteSecrets) {
 		return nil, ErrForbidden
 	}
-	payload := map[string]interface{}{
-		"endpointName": strings.TrimSpace(req.EndpointName),
-		"credentialId": req.CredentialID,
-		"field":        strings.TrimSpace(req.Field),
+	adminPublicKey := strings.TrimSpace(req.AdminPublicKey)
+	if adminPublicKey == "" {
+		return nil, fmt.Errorf("admin public key is required")
 	}
-	command, err := s.QueueRemoteCommandFor(actor, deviceID, RemoteCommandRequest{
+	if _, err := DecodeRemoteRevealPublicKey(adminPublicKey); err != nil {
+		return nil, fmt.Errorf("invalid admin public key: %w", err)
+	}
+	expiresAt := s.currentTime().UTC().Add(remoteSecretRevealTTL)
+	payload := RemoteSecretRevealPayload{
+		EndpointName:   strings.TrimSpace(req.EndpointName),
+		CredentialID:   req.CredentialID,
+		Field:          strings.TrimSpace(req.Field),
+		AdminPublicKey: adminPublicKey,
+		ExpiresAt:      expiresAt.Format(time.RFC3339Nano),
+	}
+	command, err := s.queueRemoteCommandFor(actor, deviceID, RemoteCommandRequest{
 		CommandType: "secret.reveal",
 		Payload:     payload,
+		ExpiresAt:   expiresAt,
 	})
 	if err != nil {
 		return nil, err
 	}
 	_ = s.store.AddAudit("remote_secret_reveal", "device", 0, fmt.Sprintf("device=%s endpoint=%s credentialId=%d field=%s actor=%s", strings.TrimSpace(deviceID), strings.TrimSpace(req.EndpointName), req.CredentialID, strings.TrimSpace(req.Field), actor.Username), s.currentTime())
+	return command, nil
+}
+
+func (s *Service) RemoteCommandFor(actor *AdminAccount, deviceID string, commandID int64) (*RemoteCommandRecord, error) {
+	if actor == nil || (!hasPermission(actor, PermissionDevicesRemoteView) && !hasPermission(actor, PermissionDevicesRemoteWrite) && !hasPermission(actor, PermissionDevicesRemoteSecrets)) {
+		return nil, ErrForbidden
+	}
+	if ok, err := s.deviceInScope(actor, deviceID); err != nil || !ok {
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrForbidden
+			}
+			return nil, err
+		}
+		return nil, ErrForbidden
+	}
+	command, err := s.store.GetRemoteCommand(strings.TrimSpace(deviceID), commandID)
+	if err != nil {
+		return nil, err
+	}
+	if command.CommandType == "secret.reveal" && !hasPermission(actor, PermissionDevicesRemoteSecrets) {
+		return nil, ErrForbidden
+	}
+	if command.CommandType != "secret.reveal" && !hasPermission(actor, PermissionDevicesRemoteView) && !hasPermission(actor, PermissionDevicesRemoteWrite) {
+		return nil, ErrForbidden
+	}
+	if !command.ExpiresAt.IsZero() && !s.currentTime().Before(command.ExpiresAt) {
+		return nil, ErrRemoteResultExpired
+	}
+	if command.ResultJSON != nil && command.ResultJSON.SecretReveal != nil {
+		expiresAt := command.ResultJSON.SecretReveal.ExpiresAt
+		if !expiresAt.IsZero() && !s.currentTime().Before(expiresAt) {
+			return nil, ErrRemoteResultExpired
+		}
+	}
 	return command, nil
 }
 
@@ -891,16 +958,39 @@ func (s *Service) SubmitRemoteResult(req RemoteResultRequest) error {
 	}
 	now := s.currentTime()
 	resultText := ""
+	var resultJSON *RemoteCommandResult
+	if req.Result != nil {
+		copyResult := *req.Result
+		resultJSON = &copyResult
+	}
 	if req.Snapshot != nil {
 		if err := s.store.UpsertRemoteSnapshot(strings.TrimSpace(req.DeviceID), *req.Snapshot, now); err != nil {
 			return err
 		}
+		if resultJSON == nil {
+			resultJSON = &RemoteCommandResult{}
+		}
+		resultJSON.SnapshotUpdated = true
+		resultJSON.SnapshotUpdatedAt = now.UTC()
 		resultText = "snapshot updated"
+	}
+	expiresAt := time.Time{}
+	if req.SecretReveal != nil {
+		if resultJSON == nil {
+			resultJSON = &RemoteCommandResult{}
+		}
+		resultJSON.SecretRevealReady = true
+		resultJSON.SecretReveal = req.SecretReveal
+		expiresAt = req.SecretReveal.ExpiresAt
+		resultText = "secret reveal encrypted"
+	}
+	if resultJSON != nil && resultJSON.Message == "" && resultText != "" {
+		resultJSON.Message = resultText
 	}
 	if req.CommandID == 0 {
 		return nil
 	}
-	return s.store.UpdateRemoteCommandResult(strings.TrimSpace(req.DeviceID), req.CommandID, status, resultText, strings.TrimSpace(req.Error), now)
+	return s.store.UpdateRemoteCommandResult(strings.TrimSpace(req.DeviceID), req.CommandID, status, resultText, strings.TrimSpace(req.Error), resultJSON, expiresAt, now)
 }
 
 func (s *Service) upsertRemoteStateFromActivation(activation *ActivationRecord, report RemoteCapabilityReport, appVersion string, now time.Time) error {

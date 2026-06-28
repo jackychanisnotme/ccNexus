@@ -139,7 +139,7 @@ func main() {
 	endpointService := service.NewEndpointService(cfg, p, sqliteStorage)
 	licenseService.SetRemoteExecutor(service.NewRemoteManagementExecutor(cfg, sqliteStorage, endpointService))
 	licenseService.MaybeRefresh(timeNow())
-	if err := licenseService.PollRemoteOnce(); err != nil {
+	if _, err := licenseService.PollRemoteOnce(); err != nil {
 		logger.Warn("Remote management poll failed: %v", err)
 	}
 
