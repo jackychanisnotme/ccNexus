@@ -24,6 +24,8 @@ const (
 	ReservedPairingMethod = "code-v1"
 	UnpairedAPIKey        = "ainexus-lan-unpaired"
 	EndpointRemark        = "AINexus LAN discovery; pairing reserved but disabled"
+	EndpointTransformer   = "openai2"
+	EndpointModel         = "gpt-5.5"
 	DefaultScanTimeout    = 700 * time.Millisecond
 )
 
@@ -176,7 +178,8 @@ func EndpointForCandidate(candidate Candidate) config.Endpoint {
 		APIKey:      UnpairedAPIKey,
 		AuthMode:    config.AuthModeAPIKey,
 		Enabled:     true,
-		Transformer: "claude",
+		Transformer: EndpointTransformer,
+		Model:       EndpointModel,
 		Remark:      EndpointRemark,
 	}
 }

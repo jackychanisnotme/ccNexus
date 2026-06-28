@@ -142,8 +142,8 @@ func TestAddDiscoveredLANEndpointCreatesEnabledCompatibleEndpoint(t *testing.T) 
 		added.APIUrl != "http://192.168.1.20:3000" ||
 		added.APIKey != "ainexus-lan-unpaired" ||
 		added.AuthMode != config.AuthModeAPIKey ||
-		added.Transformer != "claude" ||
-		added.Model != "" ||
+		added.Transformer != "openai2" ||
+		added.Model != "gpt-5.5" ||
 		!added.Enabled {
 		t.Fatalf("unexpected LAN endpoint: %#v", added)
 	}
