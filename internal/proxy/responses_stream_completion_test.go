@@ -657,6 +657,158 @@ func TestResponsesStreamMissingCompletedWithOnlyFunctionCallArgumentsDeltaStaysS
 	}
 }
 
+func TestResponsesStreamMissingCompletedWithDoneCustomToolCallCompletesCodexClient(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-custom-tool-done","object":"response","status":"in_progress","created_at":0,"model":"gpt-5.5","output":[]}}`,
+			"",
+			`data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"tool-1","call_id":"call-1","type":"custom_tool_call","name":"apply_patch","input":"","status":"in_progress"}}`,
+			"",
+			`data: {"type":"response.custom_tool_call_input.delta","sequence_number":3,"item_id":"tool-1","output_index":0,"delta":"*** Begin Patch\n"}`,
+			"",
+			`data: {"type":"response.custom_tool_call_input.delta","sequence_number":4,"item_id":"tool-1","output_index":0,"delta":"*** End Patch\n"}`,
+			"",
+			`data: {"type":"response.custom_tool_call_input.done","sequence_number":5,"item_id":"tool-1","output_index":0,"input":"*** Begin Patch\n*** End Patch\n"}`,
+			"",
+			`data: {"type":"response.output_item.done","sequence_number":6,"output_index":0,"item":{"id":"tool-1","call_id":"call-1","type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** End Patch\n","status":"completed"}}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Codex_Desktop/0.142.0-alpha.1")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"response.completed"`) {
+		t.Fatalf("expected synthetic response.completed for completed custom_tool_call, got %q", body)
+	}
+	if !strings.Contains(body, `"type":"custom_tool_call"`) || !strings.Contains(body, `"name":"apply_patch"`) || !strings.Contains(body, `"input":"*** Begin Patch\n*** End Patch\n"`) {
+		t.Fatalf("expected synthetic completion to preserve custom_tool_call input, got %q", body)
+	}
+	if strings.Contains(body, "event: error") || strings.Contains(body, "missing_response_completed") {
+		t.Fatalf("did not expect error after completed custom_tool_call recovery, got %q", body)
+	}
+
+	logs := joinedProxyLogs()
+	for _, want := range []string{
+		"Completing OpenAI Responses custom_tool_call stream missing response.completed",
+		"responses_tool_recoverable=true",
+		"responses_tool_pending=false",
+		"responses_output_items=1",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected logs to contain %q; logs:\n%s", want, logs)
+		}
+	}
+}
+
+func TestResponsesStreamMissingCompletedWithOutputDoneCustomToolCallCompletesOpenAIPythonClient(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-custom-tool-output-done","object":"response","status":"in_progress","created_at":0,"model":"gpt-5.5","output":[]}}`,
+			"",
+			`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"id":"tool-1","call_id":"call-1","type":"custom_tool_call","name":"exec","input":"echo ok","status":"completed"}}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "OpenAI/Python_2.31.0")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"response.completed"`) {
+		t.Fatalf("expected synthetic response.completed for output_item.done custom_tool_call, got %q", body)
+	}
+	if !strings.Contains(body, `"type":"custom_tool_call"`) || !strings.Contains(body, `"name":"exec"`) || !strings.Contains(body, `"input":"echo ok"`) {
+		t.Fatalf("expected synthetic completion to preserve output_item.done custom_tool_call, got %q", body)
+	}
+	if strings.Contains(body, "event: error") || strings.Contains(body, "missing_response_completed") {
+		t.Fatalf("did not expect error after output_item.done custom_tool_call recovery, got %q", body)
+	}
+}
+
+func TestResponsesStreamMissingCompletedWithOnlyCustomToolInputDeltaStaysStrictAndRecordsFailure(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-custom-tool-delta","object":"response","status":"in_progress","created_at":0,"model":"gpt-5.5","output":[]}}`,
+			"",
+			`data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"tool-1","call_id":"call-1","type":"custom_tool_call","name":"apply_patch","input":"","status":"in_progress"}}`,
+			"",
+			`data: {"type":"response.custom_tool_call_input.delta","sequence_number":3,"item_id":"tool-1","output_index":0,"delta":"*** Begin Patch\n"}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Codex_Desktop/0.142.0-alpha.1")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if strings.Contains(body, `"type":"response.completed"`) {
+		t.Fatalf("did not expect synthetic response.completed for partial custom_tool_call input, got %q", body)
+	}
+	if !strings.Contains(body, "event: error") || !strings.Contains(body, "missing_response_completed") {
+		t.Fatalf("expected strict missing completed error for partial custom_tool_call input, got %q", body)
+	}
+
+	p.cooldownMu.RLock()
+	_, cooled := p.endpointCooldowns["Primary"]
+	p.cooldownMu.RUnlock()
+	if !cooled {
+		t.Fatal("expected partial custom_tool_call missing completion to cool endpoint")
+	}
+
+	logs := joinedProxyLogs()
+	for _, want := range []string{
+		"responses_unsafe_reason=custom_tool_input_pending",
+		"responses_tool_recoverable=false",
+		"responses_tool_pending=true",
+		"synthetic_completion_attempted=false",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected logs to contain %q; logs:\n%s", want, logs)
+		}
+	}
+	if strings.Contains(logs, "Tolerating missing response.completed for tolerant client") {
+		t.Fatalf("did not expect Codex client to tolerate partial custom_tool_call missing completion; logs:\n%s", logs)
+	}
+}
+
 func TestResponsesStreamExistingCompletedIsNotDuplicated(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

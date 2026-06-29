@@ -221,7 +221,7 @@ func (p *Proxy) cooldownDurationForReason(reason string, headers http.Header) ti
 			return retryAfter
 		}
 		return secondsToDuration(cooldowns.RateLimitedSec)
-	case "upstream_5xx", "retryable_status", "upstream_stream_error", "streaming_failed", retryReasonRouteUnavailable, retryReasonSemanticEmptyResponse:
+	case "upstream_5xx", "retryable_status", "upstream_stream_error", "streaming_failed", retryReasonRouteUnavailable, retryReasonSemanticEmptyResponse, streamFinishMissingResponsesDone:
 		return secondsToDuration(cooldowns.UpstreamErrorSec)
 	case "send_request_failed", "transient_network_error", retryReasonTransportProtocol:
 		return secondsToDuration(cooldowns.NetworkErrorSec)

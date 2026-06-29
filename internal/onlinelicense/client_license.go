@@ -8,16 +8,19 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	clientStateConfigKey     = "online_license_state"
 	clientRemoteKeyConfigKey = "online_license_remote_x25519_private_key"
+	licenseServerURLCooldown = time.Minute
 )
 
 var AppPublicKey string
@@ -28,23 +31,27 @@ type ConfigStore interface {
 }
 
 type ClientService struct {
-	store     ConfigStore
-	deviceID  string
-	serverURL string
-	verifier  *Service
-	client    *http.Client
-	version   string
-	now       func() time.Time
-	remote    RemoteExecutor
-	remoteKey *ecdh.PrivateKey
+	store              ConfigStore
+	deviceID           string
+	serverURL          string
+	serverURLs         []string
+	serverURLCooldowns map[string]time.Time
+	serverURLMu        sync.Mutex
+	verifier           *Service
+	client             *http.Client
+	version            string
+	now                func() time.Time
+	remote             RemoteExecutor
+	remoteKey          *ecdh.PrivateKey
 }
 
 type ClientOptions struct {
-	ServerURL string
-	PublicKey ed25519.PublicKey
-	Version   string
-	Now       func() time.Time
-	Client    *http.Client
+	ServerURL  string
+	ServerURLs []string
+	PublicKey  ed25519.PublicKey
+	Version    string
+	Now        func() time.Time
+	Client     *http.Client
 }
 
 type RemoteExecutor interface {
@@ -67,12 +74,10 @@ type ClientState struct {
 }
 
 func NewClientService(store ConfigStore, deviceID string, opts ClientOptions) *ClientService {
-	serverURL := strings.TrimRight(strings.TrimSpace(opts.ServerURL), "/")
-	if serverURL == "" {
-		serverURL = strings.TrimRight(strings.TrimSpace(os.Getenv("CCNEXUS_LICENSE_SERVER_URL")), "/")
-	}
-	if serverURL == "" {
-		serverURL = DefaultLicenseServerURL
+	serverURLs := configuredLicenseServerURLs(opts)
+	serverURL := DefaultLicenseServerURL
+	if len(serverURLs) > 0 {
+		serverURL = serverURLs[0]
 	}
 	now := time.Now
 	if opts.Now != nil {
@@ -83,14 +88,67 @@ func NewClientService(store ConfigStore, deviceID string, opts ClientOptions) *C
 		client = &http.Client{Timeout: 12 * time.Second}
 	}
 	return &ClientService{
-		store:     store,
-		deviceID:  strings.TrimSpace(deviceID),
-		serverURL: serverURL,
-		verifier:  NewVerifier(opts.PublicKey, Options{Now: now}),
-		client:    client,
-		version:   strings.TrimSpace(opts.Version),
-		now:       now,
+		store:              store,
+		deviceID:           strings.TrimSpace(deviceID),
+		serverURL:          serverURL,
+		serverURLs:         serverURLs,
+		serverURLCooldowns: make(map[string]time.Time),
+		verifier:           NewVerifier(opts.PublicKey, Options{Now: now}),
+		client:             client,
+		version:            strings.TrimSpace(opts.Version),
+		now:                now,
 	}
+}
+
+func configuredLicenseServerURLs(opts ClientOptions) []string {
+	if len(opts.ServerURLs) > 0 {
+		return normalizeLicenseServerURLs(opts.ServerURLs, false)
+	}
+	if strings.TrimSpace(opts.ServerURL) != "" {
+		return normalizeLicenseServerURLs([]string{opts.ServerURL}, true)
+	}
+	if raw := strings.TrimSpace(os.Getenv("CCNEXUS_LICENSE_SERVER_URLS")); raw != "" {
+		return normalizeLicenseServerURLs(strings.Split(raw, ","), false)
+	}
+	if raw := strings.TrimSpace(os.Getenv("CCNEXUS_LICENSE_SERVER_URL")); raw != "" {
+		return normalizeLicenseServerURLs([]string{raw}, true)
+	}
+	return normalizeLicenseServerURLs(DefaultLicenseServerURLs, false)
+}
+
+func normalizeLicenseServerURLs(values []string, addDefaultPeer bool) []string {
+	result := make([]string, 0, len(values)+1)
+	for _, value := range values {
+		addLicenseServerURL(&result, value)
+	}
+	if len(result) == 0 {
+		for _, value := range DefaultLicenseServerURLs {
+			addLicenseServerURL(&result, value)
+		}
+		return result
+	}
+	if addDefaultPeer {
+		switch result[0] {
+		case DefaultLicenseServerDomainURL:
+			addLicenseServerURL(&result, DefaultLicenseServerIPURL)
+		case DefaultLicenseServerIPURL:
+			addLicenseServerURL(&result, DefaultLicenseServerDomainURL)
+		}
+	}
+	return result
+}
+
+func addLicenseServerURL(urls *[]string, value string) {
+	clean := strings.TrimRight(strings.TrimSpace(value), "/")
+	if clean == "" {
+		return
+	}
+	for _, existing := range *urls {
+		if existing == clean {
+			return
+		}
+	}
+	*urls = append(*urls, clean)
 }
 
 func (s *ClientService) SetRemoteExecutor(executor RemoteExecutor) {
@@ -106,10 +164,15 @@ func NewConfiguredClientService(store ConfigStore, deviceID, version string) (*C
 		publicKeyText = os.Getenv("CCNEXUS_LICENSE_PUBLIC_KEY")
 	}
 	publicKey, err := PublicKeyFromString(publicKeyText)
+	var serverURLs []string
+	if raw := strings.TrimSpace(os.Getenv("CCNEXUS_LICENSE_SERVER_URLS")); raw != "" {
+		serverURLs = strings.Split(raw, ",")
+	}
 	service := NewClientService(store, deviceID, ClientOptions{
-		ServerURL: os.Getenv("CCNEXUS_LICENSE_SERVER_URL"),
-		PublicKey: publicKey,
-		Version:   version,
+		ServerURL:  os.Getenv("CCNEXUS_LICENSE_SERVER_URL"),
+		ServerURLs: serverURLs,
+		PublicKey:  publicKey,
+		Version:    version,
 	})
 	if err != nil {
 		return service, err
@@ -393,26 +456,139 @@ func (s *ClientService) postJSON(path string, payload interface{}, out interface
 	if err != nil {
 		return err
 	}
-	resp, err := s.client.Post(s.serverURL+path, "application/json", bytes.NewReader(data))
+	urls := s.orderedServerURLs()
+	var lastErr error
+	for _, baseURL := range urls {
+		raw, retryable, err := s.postJSONTo(baseURL, path, data)
+		if err == nil {
+			s.markServerURLSuccess(baseURL)
+			if out == nil {
+				return nil
+			}
+			return json.Unmarshal(raw, out)
+		}
+		if !retryable {
+			return err
+		}
+		s.markServerURLFailure(baseURL)
+		lastErr = err
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("no license server URL configured")
+}
+
+func (s *ClientService) postJSONTo(baseURL, path string, data []byte) (json.RawMessage, bool, error) {
+	resp, err := s.client.Post(baseURL+path, "application/json", bytes.NewReader(data))
 	if err != nil {
-		return err
+		return nil, true, err
 	}
 	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, true, err
+	}
 	var envelope struct {
 		Success bool            `json:"success"`
 		Data    json.RawMessage `json:"data"`
 		Error   string          `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return err
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		if isRetryableLicenseServerStatus(resp.StatusCode) {
+			return nil, true, fmt.Errorf("%s", resp.Status)
+		}
+		return nil, false, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !envelope.Success {
 		if envelope.Error == "" {
 			envelope.Error = resp.Status
 		}
-		return fmt.Errorf("%s", envelope.Error)
+		return nil, isRetryableLicenseServerStatus(resp.StatusCode), fmt.Errorf("%s", envelope.Error)
 	}
-	return json.Unmarshal(envelope.Data, out)
+	return envelope.Data, false, nil
+}
+
+func isRetryableLicenseServerStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status >= 500
+}
+
+func (s *ClientService) orderedServerURLs() []string {
+	if s == nil {
+		return nil
+	}
+	now := s.currentTime()
+	s.serverURLMu.Lock()
+	defer s.serverURLMu.Unlock()
+	source := s.serverURLs
+	if len(source) == 0 && strings.TrimSpace(s.serverURL) != "" {
+		source = []string{s.serverURL}
+	}
+	active := strings.TrimSpace(s.serverURL)
+	result := make([]string, 0, len(source))
+	addIfAvailable := func(url string) {
+		url = strings.TrimRight(strings.TrimSpace(url), "/")
+		if url == "" || serverURLInList(result, url) {
+			return
+		}
+		if until, ok := s.serverURLCooldowns[url]; ok && now.Before(until) {
+			return
+		}
+		result = append(result, url)
+	}
+	addIfAvailable(active)
+	for _, url := range source {
+		addIfAvailable(url)
+	}
+	if len(result) > 0 {
+		return result
+	}
+	for _, url := range source {
+		url = strings.TrimRight(strings.TrimSpace(url), "/")
+		if url != "" && !serverURLInList(result, url) {
+			result = append(result, url)
+		}
+	}
+	return result
+}
+
+func (s *ClientService) markServerURLSuccess(baseURL string) {
+	if s == nil {
+		return
+	}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return
+	}
+	s.serverURLMu.Lock()
+	s.serverURL = baseURL
+	delete(s.serverURLCooldowns, baseURL)
+	s.serverURLMu.Unlock()
+}
+
+func (s *ClientService) markServerURLFailure(baseURL string) {
+	if s == nil {
+		return
+	}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return
+	}
+	s.serverURLMu.Lock()
+	if s.serverURLCooldowns == nil {
+		s.serverURLCooldowns = make(map[string]time.Time)
+	}
+	s.serverURLCooldowns[baseURL] = s.currentTime().Add(licenseServerURLCooldown)
+	s.serverURLMu.Unlock()
+}
+
+func serverURLInList(values []string, value string) bool {
+	for _, existing := range values {
+		if existing == value {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *ClientService) loadState() (*ClientState, error) {

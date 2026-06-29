@@ -52,7 +52,9 @@ go build ./cmd/server
 - 项目目录：`/var/www/ccnexus-license`
 - PM2 进程：`ccnexus-license`
 - 端口：`24220`
-- 绑定：`0.0.0.0:24220`（后续如切域名可改为 `127.0.0.1:24220`）
+- HTTPS 入口：`https://license.wenche.xyz`
+- IP 备用入口：`http://207.57.134.147:24220`
+- 绑定：`0.0.0.0:24220`（如后续只保留 Nginx 反代，可改为 `127.0.0.1:24220`）
 
 必需环境变量：
 
@@ -69,8 +71,11 @@ CCNEXUS_LICENSE_BIND=0.0.0.0
 CCNEXUS_LICENSE_DATA_DIR=/var/www/ccnexus-license/shared
 CCNEXUS_LICENSE_DB_PATH=/var/www/ccnexus-license/shared/license.db
 CCNEXUS_LICENSE_KEY_PATH=/var/www/ccnexus-license/shared/private_key.txt
-CCNEXUS_LICENSE_SERVER_URL=http://207.57.134.147:24220
+CCNEXUS_LICENSE_SERVER_URL=https://license.wenche.xyz
+CCNEXUS_LICENSE_SERVER_URLS=https://license.wenche.xyz,http://207.57.134.147:24220
 ```
+
+客户端默认优先访问 HTTPS 域名，IP 直连作为备用。若构建或运行环境只设置 `CCNEXUS_LICENSE_SERVER_URL=http://207.57.134.147:24220`，新版客户端会自动把 `https://license.wenche.xyz` 加为备用；若设置 `CCNEXUS_LICENSE_SERVER_URLS`，则按列表顺序尝试并自动去重。
 
 ## 维护流程
 

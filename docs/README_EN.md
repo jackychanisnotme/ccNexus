@@ -196,7 +196,8 @@ Online licensing supports:
 
 | Environment variable | Description |
 |----------------------|-------------|
-| `CCNEXUS_LICENSE_SERVER_URL` | Client license server URL |
+| `CCNEXUS_LICENSE_SERVER_URL` | Client license server URL; defaults to `https://license.wenche.xyz` with `http://207.57.134.147:24220` as backup |
+| `CCNEXUS_LICENSE_SERVER_URLS` | Optional comma-separated client license server URLs, tried in order with duplicates removed |
 | `CCNEXUS_LICENSE_PUBLIC_KEY` | Ed25519 public key embedded in client builds |
 | `CCNEXUS_LICENSE_PORT` | License server port |
 | `CCNEXUS_LICENSE_BIND` | License server bind address |

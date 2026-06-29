@@ -449,6 +449,9 @@ type openAIResponsesOutputItemState struct {
 	Done               bool
 	ArgumentsDone      bool
 	ArgumentsDeltaSeen bool
+	InputDone          bool
+	InputDeltaSeen     bool
+	Input              string
 }
 
 func (s openAIResponsesCompletionState) canSynthesizeCompleted() bool {
@@ -522,7 +525,7 @@ func (s openAIResponsesCompletionState) completedOutputItems() []interface{} {
 	output := make([]interface{}, 0, len(indexes))
 	for _, index := range indexes {
 		itemState := s.OutputItems[index]
-		if itemState == nil || !itemState.Done || !isRecoverableFunctionCallItem(itemState.Item) {
+		if itemState == nil || !itemState.Done || !isRecoverableOpenAIResponsesToolItem(itemState.Item) {
 			continue
 		}
 		output = append(output, cloneOpenAIResponsesMap(itemState.Item))
@@ -616,6 +619,10 @@ func (s *openAIResponsesCompletionState) observeJSON(event map[string]interface{
 		s.observeFunctionCallArguments(event, false)
 	case "response.function_call_arguments.done":
 		s.observeFunctionCallArguments(event, true)
+	case "response.custom_tool_call_input.delta":
+		s.observeCustomToolCallInput(event, false)
+	case "response.custom_tool_call_input.done":
+		s.observeCustomToolCallInput(event, true)
 	case "response.output_item.added", "response.output_item.done":
 		if item, ok := event["item"].(map[string]interface{}); ok {
 			itemType := strings.ToLower(strings.TrimSpace(stringFromInterface(item["type"])))
@@ -672,6 +679,31 @@ func (s *openAIResponsesCompletionState) observeFunctionCallArguments(event map[
 	itemState.ArgumentsDeltaSeen = true
 }
 
+func (s *openAIResponsesCompletionState) observeCustomToolCallInput(event map[string]interface{}, done bool) {
+	if s == nil || event == nil {
+		return
+	}
+	s.ToolSeen = true
+	index := parseTokenNumber(event["output_index"])
+	itemState := s.ensureOutputItem(index)
+	itemState.ItemType = "custom_tool_call"
+	if done {
+		itemState.InputDone = true
+		s.ToolArgumentsDone = true
+		if input, ok := event["input"].(string); ok {
+			itemState.Input = input
+		}
+		if itemState.Item != nil && itemState.Input != "" {
+			itemState.Item["input"] = itemState.Input
+		}
+		return
+	}
+	itemState.InputDeltaSeen = true
+	if delta, ok := event["delta"].(string); ok {
+		itemState.Input += delta
+	}
+}
+
 func (s *openAIResponsesCompletionState) observeOutputItem(event map[string]interface{}, item map[string]interface{}, done bool) {
 	if s == nil || item == nil {
 		return
@@ -680,6 +712,9 @@ func (s *openAIResponsesCompletionState) observeOutputItem(event map[string]inte
 	itemState := s.ensureOutputItem(index)
 	itemState.Item = cloneOpenAIResponsesMap(item)
 	itemState.ItemType = strings.ToLower(strings.TrimSpace(stringFromInterface(item["type"])))
+	if itemState.ItemType == "custom_tool_call" && itemState.Input != "" && !hasNonEmptyString(itemState.Item["input"]) {
+		itemState.Item["input"] = itemState.Input
+	}
 	itemState.Done = itemState.Done || done
 	if itemState.ItemType != "message" && itemState.ItemType != "reasoning" {
 		s.ToolSeen = true
@@ -688,6 +723,14 @@ func (s *openAIResponsesCompletionState) observeOutputItem(event map[string]inte
 		s.ToolItemDone = true
 		if hasNonEmptyString(item["arguments"]) {
 			itemState.ArgumentsDone = true
+			s.ToolArgumentsDone = true
+		}
+	}
+	if itemState.ItemType == "custom_tool_call" && done {
+		s.ToolItemDone = true
+		if hasNonEmptyString(itemState.Item["input"]) {
+			itemState.InputDone = true
+			itemState.Input = stringFromInterface(itemState.Item["input"])
 			s.ToolArgumentsDone = true
 		}
 	}
@@ -711,7 +754,7 @@ func (s *openAIResponsesCompletionState) updateToolSafety() {
 		}
 		s.OutputItemCount++
 		s.ToolSeen = true
-		if itemType == "function_call" && itemState.Done && isRecoverableFunctionCallItem(itemState.Item) {
+		if isRecoverableOpenAIResponsesCompletedToolItem(itemState) {
 			s.ToolRecoverable = true
 			continue
 		}
@@ -747,12 +790,31 @@ func openAIResponsesPendingReason(itemType string) string {
 	case "function_call":
 		return "function_call_pending"
 	case "custom_tool_call":
-		return "custom_tool_pending"
+		return "custom_tool_input_pending"
 	case "":
 		return "tool_pending"
 	default:
 		return itemType + "_pending"
 	}
+}
+
+func isRecoverableOpenAIResponsesCompletedToolItem(itemState *openAIResponsesOutputItemState) bool {
+	if itemState == nil || !itemState.Done {
+		return false
+	}
+	itemType := strings.ToLower(strings.TrimSpace(itemState.ItemType))
+	switch itemType {
+	case "function_call":
+		return isRecoverableFunctionCallItem(itemState.Item)
+	case "custom_tool_call":
+		return itemState.InputDone && isRecoverableCustomToolCallItem(itemState.Item)
+	default:
+		return false
+	}
+}
+
+func isRecoverableOpenAIResponsesToolItem(item map[string]interface{}) bool {
+	return isRecoverableFunctionCallItem(item) || isRecoverableCustomToolCallItem(item)
 }
 
 func isRecoverableFunctionCallItem(item map[string]interface{}) bool {
@@ -767,6 +829,23 @@ func isRecoverableFunctionCallItem(item map[string]interface{}) bool {
 		return false
 	}
 	return hasNonEmptyString(item["arguments"]) || hasNonEmptyString(item["call_id"]) || hasNonEmptyString(item["id"])
+}
+
+func isRecoverableCustomToolCallItem(item map[string]interface{}) bool {
+	if item == nil {
+		return false
+	}
+	itemType := strings.ToLower(strings.TrimSpace(stringFromInterface(item["type"])))
+	if itemType != "custom_tool_call" {
+		return false
+	}
+	if !hasNonEmptyString(item["name"]) {
+		return false
+	}
+	if !hasNonEmptyString(item["input"]) {
+		return false
+	}
+	return hasNonEmptyString(item["call_id"]) || hasNonEmptyString(item["id"])
 }
 
 func openAIResponsesOutputItemText(item map[string]interface{}) string {
@@ -986,9 +1065,14 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 			return false
 		}
 		if responsesCompletion.ToolRecoverable {
+			toolType := responsesCompletion.LastOutputItemType
+			if toolType == "" {
+				toolType = "function_call"
+			}
 			logger.Debug(
-				"[%s] Completing OpenAI Responses function_call stream missing response.completed responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d",
+				"[%s] Completing OpenAI Responses %s stream missing response.completed responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d",
 				endpoint.Name,
+				sanitizeLogField(toolType),
 				responsesCompletion.ToolRecoverable,
 				responsesCompletion.ToolPending,
 				responsesCompletion.OutputItemCount,

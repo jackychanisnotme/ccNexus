@@ -75,6 +75,155 @@ func TestClientActivateRequiresVerifierBeforeContactingServer(t *testing.T) {
 	}
 }
 
+func TestClientDefaultLicenseServerURLsUseDomainThenIP(t *testing.T) {
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URL", "")
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URLS", "")
+
+	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{})
+
+	want := []string{"https://license.wenche.xyz", "http://207.57.134.147:24220"}
+	if !equalStrings(client.serverURLs, want) {
+		t.Fatalf("serverURLs = %#v, want %#v", client.serverURLs, want)
+	}
+	if client.serverURL != want[0] {
+		t.Fatalf("serverURL = %q, want %q", client.serverURL, want[0])
+	}
+}
+
+func TestClientLicenseServerURLIPAddsDomainBackup(t *testing.T) {
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URL", "http://207.57.134.147:24220")
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URLS", "")
+
+	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{})
+
+	want := []string{"http://207.57.134.147:24220", "https://license.wenche.xyz"}
+	if !equalStrings(client.serverURLs, want) {
+		t.Fatalf("serverURLs = %#v, want %#v", client.serverURLs, want)
+	}
+}
+
+func TestClientLicenseServerURLSDeduplicatesAndPreservesOrder(t *testing.T) {
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URL", "")
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URLS", " http://a.example.test , https://b.example.test/ , http://a.example.test/")
+
+	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{})
+
+	want := []string{"http://a.example.test", "https://b.example.test"}
+	if !equalStrings(client.serverURLs, want) {
+		t.Fatalf("serverURLs = %#v, want %#v", client.serverURLs, want)
+	}
+}
+
+func TestConfiguredClientServiceLicenseServerURLSOverridesSingleURL(t *testing.T) {
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate public key: %v", err)
+	}
+	previousPublicKey := AppPublicKey
+	AppPublicKey = base64.StdEncoding.EncodeToString(publicKey)
+	t.Cleanup(func() {
+		AppPublicKey = previousPublicKey
+	})
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URL", "http://legacy.example.test")
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URLS", "https://primary.example.test,http://backup.example.test")
+
+	client, err := NewConfiguredClientService(newMemoryConfigStore(), "device-a", "test")
+	if err != nil {
+		t.Fatalf("NewConfiguredClientService error: %v", err)
+	}
+
+	want := []string{"https://primary.example.test", "http://backup.example.test"}
+	if !equalStrings(client.serverURLs, want) {
+		t.Fatalf("serverURLs = %#v, want %#v", client.serverURLs, want)
+	}
+}
+
+func TestClientPostJSONFallsBackAfterRetryableStatus(t *testing.T) {
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URL", "")
+	firstHits := 0
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstHits++
+		writeJSONError(w, http.StatusServiceUnavailable, "temporary unavailable")
+	}))
+	t.Cleanup(first.Close)
+	secondHits := 0
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		writeJSONSuccess(w, map[string]string{"ok": "yes"})
+	}))
+	t.Cleanup(second.Close)
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URLS", first.URL+","+second.URL)
+
+	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{})
+	var out map[string]string
+	if err := client.postJSON("/test", map[string]string{"hello": "world"}, &out); err != nil {
+		t.Fatalf("postJSON fallback error: %v", err)
+	}
+	if firstHits != 1 || secondHits != 1 {
+		t.Fatalf("hits first=%d second=%d, want 1/1", firstHits, secondHits)
+	}
+	if out["ok"] != "yes" {
+		t.Fatalf("response = %#v", out)
+	}
+	if client.serverURL != second.URL {
+		t.Fatalf("current serverURL = %q, want %q", client.serverURL, second.URL)
+	}
+}
+
+func TestClientPostJSONFallsBackAfterTimeout(t *testing.T) {
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URL", "")
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(120 * time.Millisecond)
+		writeJSONSuccess(w, map[string]string{"slow": "yes"})
+	}))
+	t.Cleanup(first.Close)
+	secondHits := 0
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		writeJSONSuccess(w, map[string]string{"ok": "yes"})
+	}))
+	t.Cleanup(second.Close)
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URLS", first.URL+","+second.URL)
+
+	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{
+		Client: &http.Client{Timeout: 20 * time.Millisecond},
+	})
+	var out map[string]string
+	if err := client.postJSON("/test", map[string]string{"hello": "world"}, &out); err != nil {
+		t.Fatalf("postJSON timeout fallback error: %v", err)
+	}
+	if secondHits != 1 || out["ok"] != "yes" {
+		t.Fatalf("second hits=%d response=%#v", secondHits, out)
+	}
+}
+
+func TestClientPostJSONDoesNotFallbackOnBusinessError(t *testing.T) {
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URL", "")
+	firstHits := 0
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstHits++
+		writeJSONError(w, http.StatusBadRequest, "invalid license ticket")
+	}))
+	t.Cleanup(first.Close)
+	secondHits := 0
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		writeJSONSuccess(w, map[string]string{"ok": "yes"})
+	}))
+	t.Cleanup(second.Close)
+	t.Setenv("CCNEXUS_LICENSE_SERVER_URLS", first.URL+","+second.URL)
+
+	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{})
+	var out map[string]string
+	err := client.postJSON("/test", map[string]string{"hello": "world"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "invalid license ticket") {
+		t.Fatalf("postJSON error = %v, want invalid license ticket", err)
+	}
+	if firstHits != 1 || secondHits != 0 {
+		t.Fatalf("hits first=%d second=%d, want 1/0", firstHits, secondHits)
+	}
+}
+
 func TestClientActivateRejectsTicketSignedByDifferentKey(t *testing.T) {
 	now := time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC)
 	_, serverPrivateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -404,6 +553,18 @@ func mustJSONClient(t *testing.T, v interface{}) string {
 		t.Fatalf("marshal json: %v", err)
 	}
 	return string(data)
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestClientRefreshPreservesCachedTicketWhenServerUnavailable(t *testing.T) {

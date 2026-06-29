@@ -22,6 +22,7 @@ import (
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/onlinelicense"
 	"github.com/lich0821/ccNexus/internal/proxy"
+	"github.com/lich0821/ccNexus/internal/remotelog"
 	"github.com/lich0821/ccNexus/internal/service"
 	"github.com/lich0821/ccNexus/internal/storage"
 	"github.com/lich0821/ccNexus/internal/tray"
@@ -67,6 +68,7 @@ const (
 	desktopRemotePollInterval     = 3 * time.Second
 	desktopRemotePollMaxBackoff   = 30 * time.Second
 	desktopRemoteSnapshotInterval = 60 * time.Second
+	desktopRemotePollWarnFailures = 3
 )
 
 // App struct
@@ -98,11 +100,17 @@ type App struct {
 	agent         *service.AgentService
 	license       *onlinelicense.ClientService
 	lanDiscovery  *landiscovery.Scanner
+	remotePollLog *remotelog.PollFailureRecorder
 }
 
 // NewApp creates a new App application struct
 func NewApp(trayIcon []byte) *App {
-	return &App{trayIcon: trayIcon}
+	return &App{
+		trayIcon: trayIcon,
+		remotePollLog: remotelog.NewPollFailureRecorder(
+			desktopRemotePollWarnFailures,
+		),
+	}
 }
 
 // startup is called when the app starts
@@ -110,6 +118,9 @@ func (a *App) startup(ctx context.Context) {
 	a.ctxMutex.Lock()
 	a.ctx = ctx
 	a.ctxMutex.Unlock()
+	if a.remotePollLog == nil {
+		a.remotePollLog = remotelog.NewPollFailureRecorder(desktopRemotePollWarnFailures)
+	}
 
 	logger.Info("Application starting...")
 
@@ -277,9 +288,10 @@ func (a *App) runRemoteManagementLoop(ctx context.Context) {
 			fullSnapshot := time.Since(lastSnapshot) >= desktopRemoteSnapshotInterval
 			outcome, err := a.pollRemoteManagement(fullSnapshot)
 			if err != nil {
-				logger.Warn("Remote management poll failed: %v", err)
+				a.recordRemotePollResult(err)
 				interval = nextDesktopRemotePollInterval(interval)
 			} else {
+				a.recordRemotePollResult(nil)
 				interval = desktopRemotePollInterval
 				if fullSnapshot || (outcome != nil && outcome.SnapshotUpdated) {
 					lastSnapshot = time.Now()
@@ -312,6 +324,16 @@ func (a *App) pollRemoteManagement(fullSnapshot bool) (*onlinelicense.RemotePoll
 		return a.license.PollRemoteOnce()
 	}
 	return a.license.PollRemoteCommandsOnly()
+}
+
+func (a *App) recordRemotePollResult(err error) {
+	if a == nil {
+		return
+	}
+	if a.remotePollLog == nil {
+		a.remotePollLog = remotelog.NewPollFailureRecorder(desktopRemotePollWarnFailures)
+	}
+	a.remotePollLog.Record(err)
 }
 
 func (a *App) runLANDiscoveryLoop(ctx context.Context) {
@@ -418,8 +440,9 @@ func (a *App) refreshLicenseFromServer(reason string) (*onlinelicense.Status, er
 		return nil, err
 	}
 	if remoteOutcome, err := a.license.PollRemoteOnce(); err != nil {
-		logger.Warn("Remote management poll failed (%s): %v", reason, err)
+		a.recordRemotePollResult(err)
 	} else if remoteOutcome != nil {
+		a.recordRemotePollResult(nil)
 		a.emitRemoteOutcome(remoteOutcome)
 	}
 	status, err := a.license.Status(time.Now())

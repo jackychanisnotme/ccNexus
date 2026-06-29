@@ -41,17 +41,25 @@ export CCNEXUS_LICENSE_KEY_PATH=/var/www/ccnexus-license/shared/private_key.txt
 
 - 项目目录：`/var/www/ccnexus-license`
 - PM2 进程：`ccnexus-license`
-- 初期端口：`24220`
+- 服务端口：`24220`
+- HTTPS 入口：`https://license.wenche.xyz`
+- IP 备用入口：`http://207.57.134.147:24220`
 
-不要修改 `wenche-ai` 或 `flower-logistics` 的目录、PM2 进程、Nginx 配置。初期用 IP + 端口验证；后续切 HTTPS 域名时，再新增独立 Nginx 配置并把服务绑定改为 `127.0.0.1:24220`。
+不要修改 `wenche-ai` 或 `flower-logistics` 的目录、PM2 进程、Nginx 配置。HTTPS 域名使用独立 Nginx 配置；IP + 端口保留为授权刷新和远程维护的备用链路。
 
 ## 客户 App
 
 客户 App 使用在线激活：
 
 ```bash
-CCNEXUS_LICENSE_SERVER_URL=http://207.57.134.147:24220
+CCNEXUS_LICENSE_SERVER_URL=https://license.wenche.xyz
 CCNEXUS_LICENSE_PUBLIC_KEY=<server-public-key>
+```
+
+新版客户端默认内置双通道：优先使用 `https://license.wenche.xyz`，备用使用 `http://207.57.134.147:24220`。如需显式指定多个地址，可使用逗号分隔：
+
+```bash
+CCNEXUS_LICENSE_SERVER_URLS=https://license.wenche.xyz,http://207.57.134.147:24220
 ```
 
 桌面 Pro 构建脚本会把公钥嵌入：
@@ -68,9 +76,10 @@ CCNEXUS_LICENSE_PUBLIC_KEY_FILE
 ~/.ccnexus-license/public_key.txt
 ```
 
-如果未设置 `CCNEXUS_LICENSE_SERVER_URL`，默认激活服务为：
+如果未设置 `CCNEXUS_LICENSE_SERVER_URL` 或 `CCNEXUS_LICENSE_SERVER_URLS`，默认激活服务地址顺序为：
 
 ```text
+https://license.wenche.xyz
 http://207.57.134.147:24220
 ```
 

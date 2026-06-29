@@ -20,8 +20,12 @@ const (
 	RemoteCommandStatusFailed    = "failed"
 	RemoteCommandStatusExpired   = "expired"
 
-	DefaultLicenseServerURL = "http://207.57.134.147:24220"
+	DefaultLicenseServerDomainURL = "https://license.wenche.xyz"
+	DefaultLicenseServerIPURL     = "http://207.57.134.147:24220"
+	DefaultLicenseServerURL       = DefaultLicenseServerDomainURL
 )
+
+var DefaultLicenseServerURLs = []string{DefaultLicenseServerDomainURL, DefaultLicenseServerIPURL}
 
 const (
 	AdminLevelRoot        = 1

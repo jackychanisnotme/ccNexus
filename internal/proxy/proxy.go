@@ -1337,7 +1337,9 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 								logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishDownstreamWriteFailed, "Failed to write synthetic OpenAI Responses completion after missing response.completed: %v", writeErr)
 							} else {
 								completionMessage := "Completing OpenAI Responses stream missing response.completed for compatible client: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
-								if streamResult.ResponsesCompletionSafe.ToolRecoverable {
+								if streamResult.ResponsesCompletionSafe.ToolRecoverable && lastOutputItemType == "custom_tool_call" {
+									completionMessage = "Completing OpenAI Responses custom_tool_call stream missing response.completed: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
+								} else if streamResult.ResponsesCompletionSafe.ToolRecoverable {
 									completionMessage = "Completing OpenAI Responses function_call stream missing response.completed: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
 								}
 								logRequestAttemptWarn(
@@ -1396,6 +1398,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 						p.markCredentialFailureIfCurrent(credentialID, credentialAccessToken, 0, streamResult.Err.Error())
 						p.recordCredentialUsage(credentialID, endpoint.Name, 0, 1, 0, 0)
 						p.recordEndpointErrorForClient(endpoint.Name, retryReason, obs.ClientIP)
+						p.markEndpointCooldownForReason(endpoint.Name, retryReason, resp.Header, obs, attemptNumber)
 						p.markRequestInactive(endpoint.Name)
 						return
 					}

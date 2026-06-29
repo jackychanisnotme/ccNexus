@@ -22,6 +22,7 @@ import (
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/onlinelicense"
 	"github.com/lich0821/ccNexus/internal/proxy"
+	"github.com/lich0821/ccNexus/internal/remotelog"
 	"github.com/lich0821/ccNexus/internal/service"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
@@ -140,12 +141,15 @@ func main() {
 	endpointService := service.NewEndpointService(cfg, p, sqliteStorage)
 	licenseService.SetRemoteExecutor(service.NewRemoteManagementExecutor(cfg, sqliteStorage, endpointService))
 	licenseService.MaybeRefresh(timeNow())
+	remotePollLog := remotelog.NewPollFailureRecorder(serverRemotePollWarnFailures)
 	if _, err := licenseService.PollRemoteOnce(); err != nil {
-		logger.Warn("Remote management poll failed: %v", err)
+		remotePollLog.Record(err)
+	} else {
+		remotePollLog.Record(nil)
 	}
 	ctx, cancelRemote := context.WithCancel(context.Background())
 	defer cancelRemote()
-	go runRemoteManagementLoop(ctx, licenseService)
+	go runRemoteManagementLoop(ctx, licenseService, remotePollLog)
 
 	// Create HTTP mux
 	mux := http.NewServeMux()
@@ -192,11 +196,15 @@ const (
 	serverRemotePollInterval     = 3 * time.Second
 	serverRemotePollMaxBackoff   = 30 * time.Second
 	serverRemoteSnapshotInterval = 60 * time.Second
+	serverRemotePollWarnFailures = 3
 )
 
-func runRemoteManagementLoop(ctx context.Context, licenseService *onlinelicense.ClientService) {
+func runRemoteManagementLoop(ctx context.Context, licenseService *onlinelicense.ClientService, remotePollLog *remotelog.PollFailureRecorder) {
 	if licenseService == nil {
 		return
+	}
+	if remotePollLog == nil {
+		remotePollLog = remotelog.NewPollFailureRecorder(serverRemotePollWarnFailures)
 	}
 	interval := serverRemotePollInterval
 	lastSnapshot := time.Now()
@@ -216,9 +224,10 @@ func runRemoteManagementLoop(ctx context.Context, licenseService *onlinelicense.
 				outcome, err = licenseService.PollRemoteCommandsOnly()
 			}
 			if err != nil {
-				logger.Warn("Remote management poll failed: %v", err)
+				remotePollLog.Record(err)
 				interval = nextServerRemotePollInterval(interval)
 			} else {
+				remotePollLog.Record(nil)
 				interval = serverRemotePollInterval
 				if fullSnapshot || (outcome != nil && outcome.SnapshotUpdated) {
 					lastSnapshot = time.Now()
