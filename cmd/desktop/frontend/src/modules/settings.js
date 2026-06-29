@@ -187,7 +187,7 @@ export async function showStartupLicenseGate() {
     const modal = document.getElementById('startupLicenseModal');
     if (!modal) return null;
 
-    const status = await refreshLicenseStatus('startupLicense');
+    const status = await refreshLicenseStatus('startupLicense', false);
     if (status?.licensed) {
         modal.classList.remove('active');
         return status;

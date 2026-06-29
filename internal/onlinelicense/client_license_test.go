@@ -289,6 +289,44 @@ func TestClientStatusPersistsPlanAfterActivation(t *testing.T) {
 	}
 }
 
+func TestClientStatusUsesCachedTicketWithoutContactingServer(t *testing.T) {
+	now := time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate server key: %v", err)
+	}
+	service := NewService(newTestStore(t), privateKey, Options{Now: func() time.Time { return now }})
+	card := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanMonthly, Count: 1, MaxDevices: 1})
+	handler := NewHTTPHandler(service, AdminConfig{})
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{
+		ServerURL: server.URL,
+		PublicKey: privateKey.Public().(ed25519.PublicKey),
+		Now:       func() time.Time { return now },
+	})
+	if _, err := client.Activate(card.CardKey, time.Time{}); err != nil {
+		t.Fatalf("Activate error = %v", err)
+	}
+	requestsAfterActivate := requests
+
+	status, err := client.Status(now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("Status error = %v", err)
+	}
+	if !status.Licensed {
+		t.Fatalf("Status licensed = false, want true: %#v", status)
+	}
+	if requests != requestsAfterActivate {
+		t.Fatalf("Status contacted server: requests before=%d after=%d", requestsAfterActivate, requests)
+	}
+}
+
 func TestClientActivateAcceptsLegacyTicketWithoutPlanField(t *testing.T) {
 	now := time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC)
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)

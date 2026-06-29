@@ -96,6 +96,11 @@ func TestExtractResponseOutputTextSupportsCommonFormats(t *testing.T) {
 	if got := extractResponseOutputText(responsesResp); got != "ok" {
 		t.Fatalf("unexpected responses text: %q", got)
 	}
+
+	responsesOutputTextResp := []byte(`{"output_text":"root answer","output":[]}`)
+	if got := extractResponseOutputText(responsesOutputTextResp); got != "root answer" {
+		t.Fatalf("unexpected responses output_text: %q", got)
+	}
 }
 
 func TestHandleNonStreamingResponseExtractsUsageFromSSEPayloadFallback(t *testing.T) {
@@ -117,7 +122,7 @@ func TestHandleNonStreamingResponseExtractsUsageFromSSEPayloadFallback(t *testin
 	rec := httptest.NewRecorder()
 	p := &Proxy{}
 
-	in, out, err := p.handleNonStreamingResponse(rec, resp, endpoint, &passthroughResponseTransformer{})
+	in, out, err := p.handleNonStreamingResponse(rec, resp, endpoint, &passthroughResponseTransformer{}, false)
 	if err != nil {
 		t.Fatalf("handleNonStreamingResponse failed: %v", err)
 	}

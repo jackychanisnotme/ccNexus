@@ -602,6 +602,40 @@ func shouldCompleteInterruptedOpenAIResponsesStream(r *http.Request, clientForma
 	return false
 }
 
+func shouldCompleteInterruptedOpenAIResponsesCustomToolInputStream(r *http.Request, clientFormat ClientFormat, streamResult streamResponseResult) bool {
+	if clientFormat != ClientFormatOpenAIResponses {
+		return false
+	}
+	if !streamResult.ResponsesCompletionSafe.canSynthesizeInterruptedCustomToolInputCompleted() {
+		return false
+	}
+	for _, value := range openAIResponsesClientAgentValues(r) {
+		agent := strings.ToLower(strings.TrimSpace(value))
+		if strings.Contains(agent, "codex") {
+			return true
+		}
+	}
+	return false
+}
+
+func interruptedOpenAIResponsesCompletionEvents(r *http.Request, clientFormat ClientFormat, streamResult streamResponseResult, inputTokens, outputTokens int) ([]byte, string, bool) {
+	if shouldCompleteInterruptedOpenAIResponsesStream(r, clientFormat, streamResult) {
+		completionMessage := "Completing OpenAI Responses stream missing response.completed for compatible client: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
+		lastOutputItemType := strings.ToLower(strings.TrimSpace(streamResult.ResponsesCompletionSafe.LastOutputItemType))
+		if streamResult.ResponsesCompletionSafe.ToolRecoverable && lastOutputItemType == "custom_tool_call" {
+			completionMessage = "Completing OpenAI Responses custom_tool_call stream missing response.completed: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
+		} else if streamResult.ResponsesCompletionSafe.ToolRecoverable {
+			completionMessage = "Completing OpenAI Responses function_call stream missing response.completed: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
+		}
+		return streamResult.ResponsesCompletionSafe.completedEvent(inputTokens, outputTokens), completionMessage, true
+	}
+	if shouldCompleteInterruptedOpenAIResponsesCustomToolInputStream(r, clientFormat, streamResult) {
+		completionMessage := "Completing OpenAI Responses interrupted custom_tool_call stream missing response.completed: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
+		return streamResult.ResponsesCompletionSafe.interruptedCustomToolInputTerminalEvents(inputTokens, outputTokens), completionMessage, true
+	}
+	return nil, "", false
+}
+
 func openAIResponsesClientAgentValues(r *http.Request) []string {
 	if r == nil {
 		return nil
@@ -1130,7 +1164,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		// Codex backend and force-stream endpoints may require stream=true upstream.
 		// Bridge to non-stream client responses regardless of upstream Content-Type quirks.
 		if resp.StatusCode == http.StatusOK && !streamReq.Stream && shouldAggregateStreamingAsNonStreaming(endpoint, transformerName) {
-			inputTokens, outputTokens, outputText, err := p.handleStreamingAsNonStreaming(w, resp, endpoint, trans, credentialID)
+			inputTokens, outputTokens, outputText, err := p.handleStreamingAsNonStreaming(w, resp, endpoint, trans, credentialID, isAgentNoEndpointThinkingRequest(r))
 			if err == nil {
 				// Fallback: estimate tokens when usage is missing.
 				if inputTokens == 0 || outputTokens == 0 {
@@ -1155,16 +1189,17 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 					attemptNumber,
 					http.StatusOK,
 					retryReasonSemanticEmptyResponse,
-					"Semantic empty response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d",
+					"Semantic empty response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d agent_strict_text=%t",
 					semanticErr.Kind,
 					credentialID,
 					semanticErr.OutputTokens,
 					semanticErr.OutputTextLen,
+					semanticErr.AgentStrictTextOnly,
 				)
 				semanticEmptyExhausted := endpointAttempts >= endpointSlowFailoverAttempts || p.isEndpointInActiveCooldown(endpoint.Name)
 				p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, obs.ClientIP, semanticErr, semanticEmptyExhausted)
 				p.markRequestInactive(endpoint.Name)
-				if semanticEmptyExhausted {
+				if semanticEmptyExhausted && !semanticErr.AgentStrictTextOnly {
 					advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
 				}
 				continue
@@ -1328,43 +1363,39 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 							return
 						}
 						syntheticCompletionAttempted := false
-						if shouldCompleteInterruptedOpenAIResponsesStream(r, clientFormat, streamResult) && streamSession != nil && streamSession.Started() {
-							syntheticCompletionAttempted = true
-							completedEvent := streamResult.ResponsesCompletionSafe.completedEvent(inputTokens, outputTokens)
-							if len(completedEvent) == 0 {
+						if streamSession != nil && streamSession.Started() {
+							completionEvents, completionMessage, attempted := interruptedOpenAIResponsesCompletionEvents(r, clientFormat, streamResult, inputTokens, outputTokens)
+							syntheticCompletionAttempted = attempted
+							if attempted && len(completionEvents) == 0 {
 								logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishTransformFailed, "Failed to build synthetic OpenAI Responses completion after missing response.completed")
-							} else if writeErr := streamSession.Write(completedEvent); writeErr != nil {
-								logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishDownstreamWriteFailed, "Failed to write synthetic OpenAI Responses completion after missing response.completed: %v", writeErr)
-							} else {
-								completionMessage := "Completing OpenAI Responses stream missing response.completed for compatible client: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
-								if streamResult.ResponsesCompletionSafe.ToolRecoverable && lastOutputItemType == "custom_tool_call" {
-									completionMessage = "Completing OpenAI Responses custom_tool_call stream missing response.completed: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
-								} else if streamResult.ResponsesCompletionSafe.ToolRecoverable {
-									completionMessage = "Completing OpenAI Responses function_call stream missing response.completed: %v wrote_data=%t wrote_semantic_data=%t first_transformed_event_type=%s responses_text_len=%d responses_unsafe=%t responses_unsafe_reason=%s last_transformed_event_type=%s last_output_item_type=%s responses_tool_recoverable=%t responses_tool_pending=%t responses_output_items=%d synthetic_completion_attempted=true synthetic_completion_completed=true"
+							} else if attempted {
+								if writeErr := streamSession.Write(completionEvents); writeErr != nil {
+									logRequestAttemptWarn(obs, endpoint.Name, attemptNumber, http.StatusOK, streamFinishDownstreamWriteFailed, "Failed to write synthetic OpenAI Responses completion after missing response.completed: %v", writeErr)
+								} else {
+									logRequestAttemptWarn(
+										obs,
+										endpoint.Name,
+										attemptNumber,
+										http.StatusOK,
+										retryReason,
+										completionMessage,
+										streamResult.Err,
+										streamResult.WroteData,
+										streamResult.WroteSemanticData,
+										sanitizeLogField(streamResult.FirstTransformedEventType),
+										responsesTextLen,
+										responsesUnsafe,
+										responsesUnsafeReason,
+										lastTransformedEventType,
+										lastOutputItemType,
+										responsesToolRecoverable,
+										responsesToolPending,
+										responsesOutputItems,
+									)
+									streamSession.Close()
+									recordStreamingSuccess()
+									return
 								}
-								logRequestAttemptWarn(
-									obs,
-									endpoint.Name,
-									attemptNumber,
-									http.StatusOK,
-									retryReason,
-									completionMessage,
-									streamResult.Err,
-									streamResult.WroteData,
-									streamResult.WroteSemanticData,
-									sanitizeLogField(streamResult.FirstTransformedEventType),
-									responsesTextLen,
-									responsesUnsafe,
-									responsesUnsafeReason,
-									lastTransformedEventType,
-									lastOutputItemType,
-									responsesToolRecoverable,
-									responsesToolPending,
-									responsesOutputItems,
-								)
-								streamSession.Close()
-								recordStreamingSuccess()
-								return
 							}
 						}
 						logRequestAttemptWarn(
@@ -1496,11 +1527,12 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 						attemptNumber,
 						http.StatusOK,
 						retryReasonSemanticEmptyResponse,
-						"Semantic empty streaming response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d wrote_data=%t wrote_semantic_data=%t",
+						"Semantic empty streaming response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d agent_strict_text=%t wrote_data=%t wrote_semantic_data=%t",
 						semanticErr.Kind,
 						credentialID,
 						semanticErr.OutputTokens,
 						semanticErr.OutputTextLen,
+						semanticErr.AgentStrictTextOnly,
 						streamResult.WroteData,
 						streamResult.WroteSemanticData,
 					)
@@ -1518,7 +1550,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 						}
 						return
 					}
-					if semanticEmptyExhausted {
+					if semanticEmptyExhausted && !semanticErr.AgentStrictTextOnly {
 						advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
 					}
 					continue
@@ -1595,7 +1627,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if resp.StatusCode == http.StatusOK {
-			inputTokens, outputTokens, err := p.handleNonStreamingResponse(w, resp, endpoint, trans)
+			inputTokens, outputTokens, err := p.handleNonStreamingResponse(w, resp, endpoint, trans, isAgentNoEndpointThinkingRequest(r))
 			if err == nil {
 				p.stats.RecordRequestForClient(endpoint.Name, obs.ClientIP)
 				p.stats.RecordTokensForClient(endpoint.Name, obs.ClientIP, inputTokens, outputTokens)
@@ -1620,16 +1652,17 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 					attemptNumber,
 					http.StatusOK,
 					retryReasonSemanticEmptyResponse,
-					"Semantic empty non-streaming response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d",
+					"Semantic empty non-streaming response from upstream; retrying empty_kind=%s cred_id=%d output_tokens=%d outputTextLen=%d agent_strict_text=%t",
 					semanticErr.Kind,
 					credentialID,
 					semanticErr.OutputTokens,
 					semanticErr.OutputTextLen,
+					semanticErr.AgentStrictTextOnly,
 				)
 				semanticEmptyExhausted := endpointAttempts >= endpointSlowFailoverAttempts || p.isEndpointInActiveCooldown(endpoint.Name)
 				p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, obs.ClientIP, semanticErr, semanticEmptyExhausted)
 				p.markRequestInactive(endpoint.Name)
-				if semanticEmptyExhausted {
+				if semanticEmptyExhausted && !semanticErr.AgentStrictTextOnly {
 					advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
 				}
 				continue
@@ -2021,11 +2054,11 @@ func (p *Proxy) recordSemanticEmptyResponseFailure(endpointName string, credenti
 	if err == nil {
 		err = newSemanticEmptyResponseError("", 0, 0)
 	}
-	if credentialID > 0 {
+	if credentialID > 0 && !err.AgentStrictTextOnly {
 		p.markCredentialCooldown(credentialID, p.semanticEmptyCredentialCooldown(), err.Error())
 	}
 	p.recordCredentialUsage(credentialID, endpointName, 0, 1, 0, 0)
-	if recordEndpointFailure {
+	if recordEndpointFailure && !err.AgentStrictTextOnly {
 		p.recordEndpointErrorForClient(endpointName, retryReasonSemanticEmptyResponse, clientIP)
 	}
 }

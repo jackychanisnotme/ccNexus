@@ -404,6 +404,90 @@ func TestAgentRunSkipsEndpointThinkingThroughLocalProxy(t *testing.T) {
 	}
 }
 
+func TestAgentRunRetriesPositiveTokenEmptyResponsesThroughLocalProxy(t *testing.T) {
+	var hits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		if hits == 1 {
+			_, _ = w.Write([]byte(`{"id":"resp-empty","object":"response","status":"completed","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5},"output":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"resp-ok","object":"response","status":"completed","usage":{"input_tokens":2,"output_tokens":2,"total_tokens":4},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"agent text"}]}]}`))
+	}))
+	defer upstream.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "AgentStrict",
+		APIUrl:      upstream.URL,
+		APIKey:      "test-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai2",
+		Model:       "gpt-5.5",
+	}})
+	port := freeTCPPort(t)
+	cfg.UpdatePort(port)
+	p := proxy.New(cfg, noopAgentStatsStorage{}, nil, "agent-test-device")
+	go func() { _ = p.Start() }()
+	t.Cleanup(func() { _ = p.Stop() })
+	localBaseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	waitForTestHTTP(t, localBaseURL+"/health")
+
+	svc := NewAgentServiceWithOptions(cfg, p, nil, AgentServiceOptions{
+		LocalBaseURL: localBaseURL,
+	})
+
+	result := svc.Run(AgentRunRequest{Task: "检查当前ainexus日志有什么问题"})
+
+	if !result.Success || result.Answer != "agent text" {
+		t.Fatalf("expected agent answer after strict empty retry, got %#v", result)
+	}
+	if hits != 2 {
+		t.Fatalf("expected upstream to be retried once after positive-token empty answer, got hits=%d", hits)
+	}
+}
+
+func TestAgentRunReportsModelFailureWhenResponsesAndChatAnswersAreEmpty(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if got := r.Header.Get(proxy.AgentNoEndpointThinkingHeader); got != "1" {
+			t.Fatalf("expected agent no-thinking marker on %s, got %q", r.URL.Path, got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/responses":
+			_, _ = w.Write([]byte(`{"id":"resp-empty","object":"response","status":"completed","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5},"output":[]}`))
+		case "/v1/chat/completions":
+			_, _ = w.Write([]byte(`{"id":"chat-empty","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{Name: "primary", Enabled: true}})
+	svc := NewAgentServiceWithOptions(cfg, nil, nil, AgentServiceOptions{
+		LocalBaseURL: server.URL,
+		HTTPClient:   server.Client(),
+	})
+
+	result := svc.Run(AgentRunRequest{Task: "hello"})
+
+	if result.Success || result.Error != "model_call_failed" {
+		t.Fatalf("expected model_call_failed for empty responses and chat answers, got %#v", result)
+	}
+	if !strings.Contains(result.Events[len(result.Events)-1].Message, "empty chat answer") {
+		t.Fatalf("expected final error to mention empty chat answer, got %#v", result.Events)
+	}
+	if len(paths) != 2 || paths[0] != "/v1/responses" || paths[1] != "/v1/chat/completions" {
+		t.Fatalf("expected responses then chat paths, got %#v", paths)
+	}
+}
+
 func TestAgentRunChecksConfigsBeforeRepairAndAfterRepair(t *testing.T) {
 	home := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

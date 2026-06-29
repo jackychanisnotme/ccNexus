@@ -14,7 +14,7 @@ import (
 )
 
 // handleNonStreamingResponse processes non-streaming responses
-func (p *Proxy) handleNonStreamingResponse(w http.ResponseWriter, resp *http.Response, endpoint config.Endpoint, trans transformer.Transformer) (int, int, error) {
+func (p *Proxy) handleNonStreamingResponse(w http.ResponseWriter, resp *http.Response, endpoint config.Endpoint, trans transformer.Transformer, requireTextOutput bool) (int, int, error) {
 	var bodyBytes []byte
 	var err error
 	defer resp.Body.Close()
@@ -54,7 +54,7 @@ func (p *Proxy) handleNonStreamingResponse(w http.ResponseWriter, resp *http.Res
 		p.extractTokensFromEvent(bodyBytes, &inputTokens, &outputTokens)
 	}
 	outputText := extractResponseOutputText(transformedResp)
-	if semanticErr := semanticEmptyErrorForResponse(transformedResp, outputTokens); semanticErr != nil {
+	if semanticErr := semanticEmptyErrorForResponseWithTextRequirement(transformedResp, outputTokens, requireTextOutput); semanticErr != nil {
 		semanticErr.OutputTextLen = len(outputText)
 		return 0, 0, semanticErr
 	}
@@ -160,6 +160,9 @@ func extractResponseOutputText(responseBody []byte) string {
 			builder.WriteString(text)
 		}
 	}
+
+	// OpenAI Responses convenience field: output_text
+	appendString(payload["output_text"])
 
 	// OpenAI Chat style: choices[].message.content
 	if choices, ok := payload["choices"].([]interface{}); ok {

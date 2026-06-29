@@ -948,7 +948,7 @@ func TestNonCodexResponsesDoNotUseCodexWebSocket(t *testing.T) {
 	}
 }
 
-func TestCodexPendingCustomToolMissingCompletionIsNeverTolerated(t *testing.T) {
+func TestCodexPendingCustomToolMissingCompletionIsRecovered(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(strings.Join([]string{
@@ -971,8 +971,18 @@ func TestCodexPendingCustomToolMissingCompletionIsNeverTolerated(t *testing.T) {
 	p.handleProxy(rec, req)
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "event: error") || !strings.Contains(body, streamFinishMissingResponsesDone) {
-		t.Fatalf("expected typed missing-completion error for pending tool, got %q", body)
+	for _, want := range []string{
+		`"type":"response.custom_tool_call_input.done"`,
+		`"type":"response.output_item.done"`,
+		`"type":"response.completed"`,
+		`"input":"partial"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected recovered pending custom tool stream to contain %q, got %q", want, body)
+		}
+	}
+	if strings.Contains(body, "event: error") || strings.Contains(body, streamFinishMissingResponsesDone) {
+		t.Fatalf("did not expect missing-completion error for recovered pending tool, got %q", body)
 	}
 }
 

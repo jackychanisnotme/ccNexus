@@ -750,7 +750,7 @@ func TestResponsesStreamMissingCompletedWithOutputDoneCustomToolCallCompletesOpe
 	}
 }
 
-func TestResponsesStreamMissingCompletedWithOnlyCustomToolInputDeltaStaysStrictAndRecordsFailure(t *testing.T) {
+func TestResponsesStreamMissingCompletedWithCustomToolInputDeltaCompletesCodexClient(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
 
@@ -761,7 +761,7 @@ func TestResponsesStreamMissingCompletedWithOnlyCustomToolInputDeltaStaysStrictA
 			"",
 			`data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"tool-1","call_id":"call-1","type":"custom_tool_call","name":"apply_patch","input":"","status":"in_progress"}}`,
 			"",
-			`data: {"type":"response.custom_tool_call_input.delta","sequence_number":3,"item_id":"tool-1","output_index":0,"delta":"*** Begin Patch\n"}`,
+			`data: {"type":"response.custom_tool_call_input.delta","sequence_number":3,"item_id":"tool-1","output_index":0,"delta":"*** Begin Patch\n*** End Patch\n"}`,
 			"",
 			"",
 		}, "\n")))
@@ -779,33 +779,38 @@ func TestResponsesStreamMissingCompletedWithOnlyCustomToolInputDeltaStaysStrictA
 	p.handleProxy(rec, req)
 
 	body := rec.Body.String()
-	if strings.Contains(body, `"type":"response.completed"`) {
-		t.Fatalf("did not expect synthetic response.completed for partial custom_tool_call input, got %q", body)
+	for _, want := range []string{
+		`"type":"response.custom_tool_call_input.done"`,
+		`"type":"response.output_item.done"`,
+		`"type":"response.completed"`,
+		`"input":"*** Begin Patch\n*** End Patch\n"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected recovered custom tool stream to contain %q, got %q", want, body)
+		}
 	}
-	if !strings.Contains(body, "event: error") || !strings.Contains(body, "missing_response_completed") {
-		t.Fatalf("expected strict missing completed error for partial custom_tool_call input, got %q", body)
+	if strings.Contains(body, "event: error") || strings.Contains(body, "missing_response_completed") {
+		t.Fatalf("did not expect missing completion error for recovered Codex custom tool stream, got %q", body)
 	}
 
 	p.cooldownMu.RLock()
 	_, cooled := p.endpointCooldowns["Primary"]
 	p.cooldownMu.RUnlock()
-	if !cooled {
-		t.Fatal("expected partial custom_tool_call missing completion to cool endpoint")
+	if cooled {
+		t.Fatal("expected recovered custom tool stream not to cool endpoint")
 	}
 
 	logs := joinedProxyLogs()
 	for _, want := range []string{
 		"responses_unsafe_reason=custom_tool_input_pending",
-		"responses_tool_recoverable=false",
 		"responses_tool_pending=true",
-		"synthetic_completion_attempted=false",
+		"synthetic_completion_attempted=true",
+		"synthetic_completion_completed=true",
+		"Completing OpenAI Responses interrupted custom_tool_call stream missing response.completed",
 	} {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("expected logs to contain %q; logs:\n%s", want, logs)
 		}
-	}
-	if strings.Contains(logs, "Tolerating missing response.completed for tolerant client") {
-		t.Fatalf("did not expect Codex client to tolerate partial custom_tool_call missing completion; logs:\n%s", logs)
 	}
 }
 

@@ -102,6 +102,7 @@ func TestHandleNonStreamingResponseNormalizesToolSearchCallArguments(t *testing.
 		resp,
 		config.Endpoint{Name: "Primary", Transformer: "openai2", Model: "gpt-5.5"},
 		responses.NewOpenAI2Transformer("gpt-5.5"),
+		false,
 	)
 	if err != nil {
 		t.Fatalf("handleNonStreamingResponse failed: %v", err)

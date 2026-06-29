@@ -458,6 +458,11 @@ func (s openAIResponsesCompletionState) canSynthesizeCompleted() bool {
 	return !s.Completed && !s.Unsafe && (strings.TrimSpace(s.Text) != "" || s.ToolRecoverable)
 }
 
+func (s openAIResponsesCompletionState) canSynthesizeInterruptedCustomToolInputCompleted() bool {
+	_, ok := s.interruptedCustomToolInputCompletionState()
+	return ok
+}
+
 func (s openAIResponsesCompletionState) completedEvent(inputTokens, outputTokens int) []byte {
 	responseID := strings.TrimSpace(s.ResponseID)
 	if responseID == "" {
@@ -531,6 +536,141 @@ func (s openAIResponsesCompletionState) completedOutputItems() []interface{} {
 		output = append(output, cloneOpenAIResponsesMap(itemState.Item))
 	}
 	return output
+}
+
+func (s openAIResponsesCompletionState) clone() openAIResponsesCompletionState {
+	cloned := s
+	if s.OutputItems == nil {
+		return cloned
+	}
+	cloned.OutputItems = make(map[int]*openAIResponsesOutputItemState, len(s.OutputItems))
+	for index, itemState := range s.OutputItems {
+		if itemState == nil {
+			continue
+		}
+		itemClone := *itemState
+		itemClone.Item = cloneOpenAIResponsesMap(itemState.Item)
+		cloned.OutputItems[index] = &itemClone
+	}
+	return cloned
+}
+
+func (s openAIResponsesCompletionState) interruptedCustomToolInputCompletionState() (openAIResponsesCompletionState, bool) {
+	if s.Completed || s.StructuralUnsafe || len(s.OutputItems) == 0 {
+		return s, false
+	}
+
+	completed := s.clone()
+	recovered := false
+	for _, itemState := range completed.OutputItems {
+		if itemState == nil {
+			continue
+		}
+		itemType := strings.ToLower(strings.TrimSpace(itemState.ItemType))
+		if itemType != "custom_tool_call" {
+			continue
+		}
+		if itemState.Done && itemState.InputDone && isRecoverableCustomToolCallItem(itemState.Item) {
+			continue
+		}
+		if !itemState.InputDeltaSeen || strings.TrimSpace(itemState.Input) == "" {
+			continue
+		}
+		if itemState.Item == nil {
+			continue
+		}
+		if !hasNonEmptyString(itemState.Item["name"]) {
+			continue
+		}
+		if !hasNonEmptyString(itemState.Item["id"]) && !hasNonEmptyString(itemState.Item["call_id"]) {
+			continue
+		}
+
+		itemState.Item["input"] = itemState.Input
+		itemState.Item["status"] = "completed"
+		itemState.Done = true
+		itemState.InputDone = true
+		completed.ToolItemDone = true
+		completed.ToolArgumentsDone = true
+		recovered = true
+	}
+	if !recovered {
+		return s, false
+	}
+
+	completed.updateToolSafety()
+	if completed.Unsafe || !completed.canSynthesizeCompleted() {
+		return s, false
+	}
+	return completed, true
+}
+
+func openAIResponsesSSEEvent(event map[string]interface{}) []byte {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return nil
+	}
+	return []byte("data: " + string(data) + "\n\n")
+}
+
+func (s openAIResponsesCompletionState) interruptedCustomToolInputTerminalEvents(inputTokens, outputTokens int) []byte {
+	completed, ok := s.interruptedCustomToolInputCompletionState()
+	if !ok {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(completed.OutputItems))
+	for index := range completed.OutputItems {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	sequenceNumber := s.SequenceNumber
+	var events bytes.Buffer
+	for _, index := range indexes {
+		originalItemState := s.OutputItems[index]
+		itemState := completed.OutputItems[index]
+		if originalItemState == nil || itemState == nil {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(originalItemState.ItemType)) != "custom_tool_call" {
+			continue
+		}
+		if !originalItemState.InputDeltaSeen || strings.TrimSpace(originalItemState.Input) == "" || originalItemState.InputDone {
+			continue
+		}
+		if !itemState.Done || !itemState.InputDone || !isRecoverableCustomToolCallItem(itemState.Item) {
+			continue
+		}
+
+		sequenceNumber++
+		inputDoneEvent := map[string]interface{}{
+			"type":            "response.custom_tool_call_input.done",
+			"sequence_number": sequenceNumber,
+			"output_index":    index,
+			"input":           itemState.Input,
+		}
+		if itemID := strings.TrimSpace(stringFromInterface(itemState.Item["id"])); itemID != "" {
+			inputDoneEvent["item_id"] = itemID
+		}
+		events.Write(openAIResponsesSSEEvent(inputDoneEvent))
+
+		sequenceNumber++
+		outputItemDoneEvent := map[string]interface{}{
+			"type":            "response.output_item.done",
+			"sequence_number": sequenceNumber,
+			"output_index":    index,
+			"item":            cloneOpenAIResponsesMap(itemState.Item),
+		}
+		events.Write(openAIResponsesSSEEvent(outputItemDoneEvent))
+	}
+	if events.Len() == 0 {
+		return nil
+	}
+
+	completed.SequenceNumber = sequenceNumber
+	events.Write(completed.completedEvent(inputTokens, outputTokens))
+	return events.Bytes()
 }
 
 func cloneOpenAIResponsesMap(value map[string]interface{}) map[string]interface{} {
@@ -1337,7 +1477,7 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 // handleStreamingAsNonStreaming aggregates SSE and returns a single non-stream response.
 // This is used for Codex endpoints that require stream=true upstream while client requested non-stream.
-func (p *Proxy) handleStreamingAsNonStreaming(w http.ResponseWriter, resp *http.Response, endpoint config.Endpoint, trans transformer.Transformer, credentialID int64) (int, int, string, error) {
+func (p *Proxy) handleStreamingAsNonStreaming(w http.ResponseWriter, resp *http.Response, endpoint config.Endpoint, trans transformer.Transformer, credentialID int64, requireTextOutput bool) (int, int, string, error) {
 	var reader io.Reader = resp.Body
 	if resp.Header.Get("Content-Encoding") == "gzip" {
 		gzipReader, err := gzip.NewReader(resp.Body)
@@ -1357,6 +1497,7 @@ func (p *Proxy) handleStreamingAsNonStreaming(w http.ResponseWriter, resp *http.
 	var completedPayload []byte
 	var lastJSONPayload []byte
 	chatAccumulator := newOpenAIChatStreamAccumulator()
+	responsesAccumulator := newOpenAIResponsesStreamAccumulator()
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
@@ -1376,6 +1517,7 @@ func (p *Proxy) handleStreamingAsNonStreaming(w http.ResponseWriter, resp *http.
 		if chatAccumulator.addChunk(event) {
 			continue
 		}
+		responsesAccumulator.addEvent(event)
 		if eventType, _ := event["type"].(string); eventType != "response.completed" {
 			continue
 		}
@@ -1393,6 +1535,15 @@ func (p *Proxy) handleStreamingAsNonStreaming(w http.ResponseWriter, resp *http.
 	}
 	if err := scanner.Err(); err != nil {
 		return 0, 0, "", err
+	}
+	if responsesAccumulator.hasData() {
+		payload, ok, err := responsesAccumulator.payload(completedPayload)
+		if err != nil {
+			return 0, 0, "", err
+		}
+		if ok {
+			completedPayload = payload
+		}
 	}
 	if len(completedPayload) == 0 {
 		if chatAccumulator.hasData() {
@@ -1436,7 +1587,7 @@ func (p *Proxy) handleStreamingAsNonStreaming(w http.ResponseWriter, resp *http.
 		len(outputText),
 	)
 
-	if semanticErr := semanticEmptyErrorForResponse(transformedResp, outputTokens); semanticErr != nil {
+	if semanticErr := semanticEmptyErrorForResponseWithTextRequirement(transformedResp, outputTokens, requireTextOutput); semanticErr != nil {
 		semanticErr.OutputTextLen = len(outputText)
 		return 0, 0, "", semanticErr
 	}
@@ -1466,6 +1617,233 @@ type openAIChatStreamAccumulator struct {
 	usage             map[string]interface{}
 	choices           map[int]*openAIChatStreamChoice
 	seen              bool
+}
+
+type openAIResponsesStreamAccumulator struct {
+	id           string
+	object       string
+	status       string
+	model        string
+	created      interface{}
+	usage        map[string]interface{}
+	textByOutput map[int]string
+	itemIDs      map[int]string
+	outputItems  map[int]map[string]interface{}
+	seen         bool
+}
+
+func newOpenAIResponsesStreamAccumulator() *openAIResponsesStreamAccumulator {
+	return &openAIResponsesStreamAccumulator{
+		textByOutput: make(map[int]string),
+		itemIDs:      make(map[int]string),
+		outputItems:  make(map[int]map[string]interface{}),
+	}
+}
+
+func (a *openAIResponsesStreamAccumulator) hasData() bool {
+	return a != nil && a.seen
+}
+
+func (a *openAIResponsesStreamAccumulator) addEvent(event map[string]interface{}) {
+	if a == nil || event == nil {
+		return
+	}
+	eventType, _ := event["type"].(string)
+	if !strings.HasPrefix(eventType, "response.") {
+		return
+	}
+	a.seen = true
+
+	switch eventType {
+	case "response.created", "response.completed":
+		if response, ok := event["response"].(map[string]interface{}); ok {
+			a.observeResponse(response)
+		}
+	case "response.output_text.delta":
+		index := parseTokenNumber(event["output_index"])
+		if delta := stringFromInterface(event["delta"]); delta != "" {
+			a.textByOutput[index] += delta
+		}
+		if itemID := stringFromInterface(event["item_id"]); itemID != "" && a.itemIDs[index] == "" {
+			a.itemIDs[index] = itemID
+		}
+	case "response.output_text.done":
+		index := parseTokenNumber(event["output_index"])
+		if text := stringFromInterface(event["text"]); text != "" {
+			a.textByOutput[index] = text
+		} else if delta := stringFromInterface(event["delta"]); delta != "" && a.textByOutput[index] == "" {
+			a.textByOutput[index] = delta
+		}
+		if itemID := stringFromInterface(event["item_id"]); itemID != "" && a.itemIDs[index] == "" {
+			a.itemIDs[index] = itemID
+		}
+	case "response.output_item.done":
+		index := parseTokenNumber(event["output_index"])
+		if item, ok := event["item"].(map[string]interface{}); ok {
+			a.outputItems[index] = cloneOpenAIResponsesMap(item)
+			if itemID := stringFromInterface(item["id"]); itemID != "" && a.itemIDs[index] == "" {
+				a.itemIDs[index] = itemID
+			}
+		}
+	}
+}
+
+func (a *openAIResponsesStreamAccumulator) observeResponse(response map[string]interface{}) {
+	if response == nil {
+		return
+	}
+	if id := stringFromInterface(response["id"]); id != "" {
+		a.id = id
+	}
+	if object := stringFromInterface(response["object"]); object != "" {
+		a.object = object
+	}
+	if status := stringFromInterface(response["status"]); status != "" {
+		a.status = status
+	}
+	if model := stringFromInterface(response["model"]); model != "" {
+		a.model = model
+	}
+	if created, ok := response["created_at"]; ok && a.created == nil {
+		a.created = created
+	}
+	if usage, ok := response["usage"].(map[string]interface{}); ok && len(usage) > 0 {
+		a.usage = cloneOpenAIResponsesMap(usage)
+	}
+}
+
+func (a *openAIResponsesStreamAccumulator) payload(completedPayload []byte) ([]byte, bool, error) {
+	if a == nil || !a.hasData() {
+		return nil, false, nil
+	}
+
+	var payload map[string]interface{}
+	if len(completedPayload) > 0 {
+		if err := json.Unmarshal(completedPayload, &payload); err != nil {
+			return nil, false, err
+		}
+		if strings.TrimSpace(extractResponseOutputText(completedPayload)) != "" {
+			return nil, false, nil
+		}
+	}
+	if payload == nil {
+		payload = make(map[string]interface{})
+	}
+
+	output := a.output(payload)
+	if len(output) == 0 {
+		return nil, false, nil
+	}
+
+	if _, ok := payload["id"]; !ok && a.id != "" {
+		payload["id"] = a.id
+	}
+	if _, ok := payload["object"]; !ok {
+		if a.object != "" {
+			payload["object"] = a.object
+		} else {
+			payload["object"] = "response"
+		}
+	}
+	if _, ok := payload["status"]; !ok {
+		if a.status != "" {
+			payload["status"] = a.status
+		} else {
+			payload["status"] = "completed"
+		}
+	}
+	if _, ok := payload["model"]; !ok && a.model != "" {
+		payload["model"] = a.model
+	}
+	if _, ok := payload["created_at"]; !ok && a.created != nil {
+		payload["created_at"] = a.created
+	}
+	if _, ok := payload["usage"]; !ok && a.usage != nil {
+		payload["usage"] = cloneOpenAIResponsesMap(a.usage)
+	}
+	payload["output"] = output
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+func (a *openAIResponsesStreamAccumulator) output(payload map[string]interface{}) []interface{} {
+	output := make([]interface{}, 0)
+	if existing, ok := payload["output"].([]interface{}); ok && len(existing) > 0 {
+		output = append(output, existing...)
+	}
+
+	indexSet := make(map[int]bool)
+	for index := range a.outputItems {
+		indexSet[index] = true
+	}
+	for index := range a.textByOutput {
+		indexSet[index] = true
+	}
+	indices := make([]int, 0, len(indexSet))
+	for index := range indexSet {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+
+	for _, index := range indices {
+		item := cloneOpenAIResponsesMap(a.outputItems[index])
+		text := strings.TrimSpace(a.textByOutput[index])
+		if text != "" {
+			item = a.messageItemWithText(index, item, text)
+		}
+		if len(item) > 0 {
+			output = append(output, item)
+		}
+	}
+
+	return output
+}
+
+func (a *openAIResponsesStreamAccumulator) messageItemWithText(index int, item map[string]interface{}, text string) map[string]interface{} {
+	if item == nil {
+		item = make(map[string]interface{})
+	}
+	if itemType := stringFromInterface(item["type"]); itemType != "" && itemType != "message" {
+		return map[string]interface{}{
+			"type":   "message",
+			"id":     a.outputItemID(index),
+			"role":   "assistant",
+			"status": "completed",
+			"content": []map[string]interface{}{
+				{"type": "output_text", "text": text},
+			},
+		}
+	}
+	if _, ok := item["type"]; !ok {
+		item["type"] = "message"
+	}
+	if _, ok := item["id"]; !ok {
+		item["id"] = a.outputItemID(index)
+	}
+	if _, ok := item["role"]; !ok {
+		item["role"] = "assistant"
+	}
+	if _, ok := item["status"]; !ok {
+		item["status"] = "completed"
+	}
+	item["content"] = []map[string]interface{}{
+		{"type": "output_text", "text": text},
+	}
+	return item
+}
+
+func (a *openAIResponsesStreamAccumulator) outputItemID(index int) string {
+	if itemID := a.itemIDs[index]; itemID != "" {
+		return itemID
+	}
+	if a.id != "" {
+		return fmt.Sprintf("msg_%s_%d", a.id, index)
+	}
+	return fmt.Sprintf("msg_%d", index)
 }
 
 type openAIChatStreamChoice struct {

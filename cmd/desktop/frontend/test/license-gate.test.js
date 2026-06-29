@@ -10,6 +10,7 @@ const frontendRoot = resolve(__dirname, '..');
 const uiSource = readFileSync(resolve(frontendRoot, 'src/modules/ui.js'), 'utf8');
 const modalSource = readFileSync(resolve(frontendRoot, 'src/modules/modal.js'), 'utf8');
 const cssSource = readFileSync(resolve(frontendRoot, 'src/style.css'), 'utf8');
+const mainSource = readFileSync(resolve(frontendRoot, 'src/main.js'), 'utf8');
 const settingsSource = readFileSync(resolve(frontendRoot, 'src/modules/settings.js'), 'utf8');
 const zhSource = readFileSync(resolve(frontendRoot, 'src/i18n/zh-CN.js'), 'utf8');
 const enSource = readFileSync(resolve(frontendRoot, 'src/i18n/en.js'), 'utf8');
@@ -43,5 +44,34 @@ describe('startup license gate', () => {
         assert.match(settingsSource, /getLicenseStatusData\(force = false\)/);
         assert.match(settingsSource, /force\s*\?\s*window\.go\.main\.App\.RefreshLicenseStatus\(\)\s*:\s*window\.go\.main\.App\.GetLicenseStatus\(\)/);
         assert.match(settingsSource, /refreshLicenseStatus\(prefix = 'license', force = true\)/);
+    });
+
+    it('uses cached local license status for the automatic startup gate', () => {
+        const start = settingsSource.indexOf('export async function showStartupLicenseGate()');
+        const end = settingsSource.indexOf('export async function activateStartupLicenseCard()', start);
+        assert.notEqual(start, -1);
+        assert.notEqual(end, -1);
+
+        const functionSource = settingsSource.slice(start, end);
+        assert.match(functionSource, /refreshLicenseStatus\('startupLicense',\s*false\)/);
+        assert.doesNotMatch(functionSource, /RefreshLicenseStatus\(\)/);
+    });
+
+    it('renders endpoint config before startup stats are loaded', () => {
+        const start = mainSource.indexOf("window.addEventListener('DOMContentLoaded'");
+        const end = mainSource.indexOf('// Helper function to load config and render endpoints', start);
+        assert.notEqual(start, -1);
+        assert.notEqual(end, -1);
+
+        const startupSource = mainSource.slice(start, end);
+        const endpointViewIndex = startupSource.indexOf('initEndpointViewMode();');
+        const configIndex = startupSource.indexOf('await loadConfigAndRender();');
+        const statsIndex = startupSource.indexOf("await loadStatsByPeriod('daily')");
+
+        assert.notEqual(endpointViewIndex, -1);
+        assert.notEqual(configIndex, -1);
+        assert.notEqual(statsIndex, -1);
+        assert.ok(endpointViewIndex < configIndex, 'endpoint view mode should be ready before rendering endpoints');
+        assert.ok(configIndex < statsIndex, 'endpoint config should render before startup stats load');
     });
 });

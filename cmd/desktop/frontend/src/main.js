@@ -126,10 +126,13 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    await showStartupLicenseGate();
-
     // Initialize endpoint view mode
     initEndpointViewMode();
+
+    // Render local endpoint config before any network-backed startup work.
+    await loadConfigAndRender();
+
+    await showStartupLicenseGate();
 
     // Initialize filter dropdowns
     initFilterDropdowns();
@@ -152,10 +155,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         console.error('Failed to get version:', error);
     }
 
-    // Load initial data
-    // IMPORTANT: Load stats first to populate cache, then render endpoints
+    // Load initial stats after endpoints are visible, then refresh endpoint cards with stats.
     await loadStatsByPeriod('daily'); // Load today's stats by default (ensure initialization completes before events)
-    await loadConfigAndRender();      // Render endpoints after stats are loaded
+    await loadConfigAndRender();
 
     // Restore log level from config
     try {

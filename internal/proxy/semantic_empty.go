@@ -19,16 +19,21 @@ const (
 )
 
 type semanticEmptyResponseError struct {
-	Kind          string
-	OutputTokens  int
-	OutputTextLen int
+	Kind                string
+	OutputTokens        int
+	OutputTextLen       int
+	AgentStrictTextOnly bool
 }
 
 func (e *semanticEmptyResponseError) Error() string {
 	if e == nil {
 		return retryReasonSemanticEmptyResponse
 	}
-	return fmt.Sprintf("%s empty_kind=%s output_tokens=%d outputTextLen=%d", retryReasonSemanticEmptyResponse, e.Kind, e.OutputTokens, e.OutputTextLen)
+	msg := fmt.Sprintf("%s empty_kind=%s output_tokens=%d outputTextLen=%d", retryReasonSemanticEmptyResponse, e.Kind, e.OutputTokens, e.OutputTextLen)
+	if e.AgentStrictTextOnly {
+		msg += " agent_strict_text=true"
+	}
+	return msg
 }
 
 func newSemanticEmptyResponseError(kind string, outputTokens, outputTextLen int) *semanticEmptyResponseError {
@@ -101,6 +106,27 @@ func semanticEmptyErrorForResponse(body []byte, outputTokens int) *semanticEmpty
 		return nil
 	}
 	return newSemanticEmptyResponseError(inspection.EmptyKind, outputTokens, inspection.OutputTextLen)
+}
+
+func semanticEmptyErrorForResponseWithTextRequirement(body []byte, outputTokens int, requireTextOutput bool) *semanticEmptyResponseError {
+	if !requireTextOutput {
+		return semanticEmptyErrorForResponse(body, outputTokens)
+	}
+	inspection := inspectSemanticResponse(body)
+	if !inspection.Recognized {
+		return nil
+	}
+	outputTextLen := len(extractResponseOutputText(body))
+	if outputTextLen > 0 {
+		return nil
+	}
+	emptyKind := inspection.EmptyKind
+	if emptyKind == "" {
+		emptyKind = emptyKindResponsesEmpty
+	}
+	err := newSemanticEmptyResponseError(emptyKind, outputTokens, outputTextLen)
+	err.AgentStrictTextOnly = hasSuccessfulOutputTokens(outputTokens)
+	return err
 }
 
 func inspectSemanticStreamEvent(eventData []byte) semanticStreamInspection {
