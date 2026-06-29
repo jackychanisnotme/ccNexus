@@ -10,6 +10,35 @@ import (
 	"github.com/lich0821/ccNexus/internal/config"
 )
 
+func TestHandleProxyHeadRootIsLightweightProbe(t *testing.T) {
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-upstream","usage":{"input_tokens":1,"output_tokens":1},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+
+	req := httptest.NewRequest(http.MethodHead, "/", nil)
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected HEAD / probe status 204, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("expected HEAD / probe to skip upstream endpoints, got hits=%d", upstreamHits)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("expected HEAD / probe to return no body, got %q", rec.Body.String())
+	}
+}
+
 func TestHandleProxyRejectsInvalidJSONBeforeEndpointAttempt(t *testing.T) {
 	upstreamHits := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

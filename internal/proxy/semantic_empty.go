@@ -64,6 +64,7 @@ type semanticResponseInspection struct {
 	HasOutput     bool
 	EmptyKind     string
 	OutputTextLen int
+	ClaudeShape   bool
 }
 
 type semanticStreamInspection struct {
@@ -98,11 +99,11 @@ func inspectSemanticResponse(body []byte) semanticResponseInspection {
 }
 
 func semanticEmptyErrorForResponse(body []byte, outputTokens int) *semanticEmptyResponseError {
-	if hasSuccessfulOutputTokens(outputTokens) {
-		return nil
-	}
 	inspection := inspectSemanticResponse(body)
 	if !inspection.Recognized || inspection.HasOutput {
+		return nil
+	}
+	if hasSuccessfulOutputTokens(outputTokens) && !inspection.ClaudeShape {
 		return nil
 	}
 	return newSemanticEmptyResponseError(inspection.EmptyKind, outputTokens, inspection.OutputTextLen)
@@ -210,12 +211,16 @@ func inspectSemanticStreamJSON(event map[string]interface{}) semanticStreamInspe
 		if block, ok := event["content_block"].(map[string]interface{}); ok {
 			if hasValidClaudeContentBlock(block) {
 				result.HasOutput = true
+			} else if isClaudeReasoningBlock(block) && hasReasoningContent(block["thinking"]) {
+				result.HasProgress = true
 			}
 		}
 	case "content_block_delta":
 		if delta, ok := event["delta"].(map[string]interface{}); ok {
 			if hasNonEmptyString(delta["text"]) || hasNonEmptyString(delta["partial_json"]) {
 				result.HasOutput = true
+			} else if isClaudeReasoningDelta(delta) {
+				result.HasProgress = true
 			}
 		}
 	case "message_stop":
@@ -372,7 +377,7 @@ func hasClaudeShape(payload map[string]interface{}) bool {
 }
 
 func inspectClaudePayload(payload map[string]interface{}) semanticResponseInspection {
-	inspection := semanticResponseInspection{Recognized: true, EmptyKind: emptyKindClaudeEmpty}
+	inspection := semanticResponseInspection{Recognized: true, EmptyKind: emptyKindClaudeEmpty, ClaudeShape: true}
 	if hasNonEmptyString(payload["content"]) {
 		inspection.HasOutput = true
 		inspection.OutputTextLen = len(stringFromInterface(payload["content"]))
@@ -503,6 +508,25 @@ func hasValidClaudeContentBlock(block map[string]interface{}) bool {
 		return hasValidClaudeToolUse(block)
 	}
 	return blockType == "text" && hasNonEmptyString(block["text"])
+}
+
+func isClaudeReasoningBlock(block map[string]interface{}) bool {
+	if block == nil {
+		return false
+	}
+	blockType := strings.ToLower(strings.TrimSpace(stringFromInterface(block["type"])))
+	return blockType == "thinking" || blockType == "reasoning"
+}
+
+func isClaudeReasoningDelta(delta map[string]interface{}) bool {
+	if delta == nil {
+		return false
+	}
+	deltaType := strings.ToLower(strings.TrimSpace(stringFromInterface(delta["type"])))
+	if deltaType != "thinking_delta" && deltaType != "reasoning_delta" {
+		return false
+	}
+	return hasReasoningContent(delta["thinking"]) || hasReasoningContent(delta["text"]) || hasReasoningContent(delta["reasoning"])
 }
 
 func hasValidClaudeToolUse(block map[string]interface{}) bool {

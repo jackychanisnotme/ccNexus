@@ -342,12 +342,16 @@ func TestAgentOpenAIChatPositiveOutputTokensEmptyTextRetriesBeforeWriting(t *tes
 	}
 }
 
-func TestClaudeEmptyMessagePositiveOutputTokensDoesNotRetry(t *testing.T) {
+func TestClaudeEmptyMessagePositiveOutputTokensRetriesBeforeWriting(t *testing.T) {
 	var hits int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg-empty","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`))
+		if hits == 1 {
+			_, _ = w.Write([]byte(`{"id":"msg-empty","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"msg-ok","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"claude-test","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`))
 	}))
 	defer upstream.Close()
 
@@ -361,13 +365,13 @@ func TestClaudeEmptyMessagePositiveOutputTokensDoesNotRetry(t *testing.T) {
 	p.handleProxy(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected positive-token empty Claude message to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+		t.Fatalf("expected retry to return final success, got status=%d body=%q", rec.Code, rec.Body.String())
 	}
-	if hits != 1 {
-		t.Fatalf("expected positive-token empty Claude message not to retry, got hits=%d", hits)
+	if hits != 2 {
+		t.Fatalf("expected positive-token empty Claude message to be retried once, got hits=%d", hits)
 	}
-	if !strings.Contains(rec.Body.String(), "msg-empty") {
-		t.Fatalf("expected original positive-token empty Claude response to reach client, got %q", rec.Body.String())
+	if strings.Contains(rec.Body.String(), "msg-empty") || !strings.Contains(rec.Body.String(), "msg-ok") {
+		t.Fatalf("expected only final non-empty Claude response to reach client, got %q", rec.Body.String())
 	}
 }
 
@@ -887,6 +891,124 @@ func TestAgentStrictSemanticEmptyDoesNotCoolSingleTokenPoolCredential(t *testing
 
 func validResponsesBody(id, text string) string {
 	return `{"id":"` + id + `","object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + text + `"}]}]}`
+}
+
+func TestStreamingClaudeEmptyPositiveOutputTokensRetriesBeforeWriting(t *testing.T) {
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`event: message_start`,
+			`data: {"type":"message_start","message":{"id":"msg-empty","type":"message","role":"assistant","content":[],"usage":{"input_tokens":3,"output_tokens":0}}}`,
+			"",
+			`event: message_delta`,
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":24}}`,
+			"",
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			"",
+		}, "\n")))
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`event: message_start`,
+			`data: {"type":"message_start","message":{"id":"msg-ok","type":"message","role":"assistant","content":[],"usage":{"input_tokens":3,"output_tokens":0}}}`,
+			"",
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			"",
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`,
+			"",
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":0}`,
+			"",
+			`event: message_delta`,
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}`,
+			"",
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			"",
+		}, "\n")))
+	}))
+	defer fallback.Close()
+
+	primaryEndpoint := failoverPolicyTestEndpoint("Primary", primary.URL)
+	primaryEndpoint.Transformer = "claude"
+	fallbackEndpoint := failoverPolicyTestEndpoint("Fallback", fallback.URL)
+	fallbackEndpoint.Transformer = "claude"
+	p := newFailoverPolicyTestProxy([]config.Endpoint{primaryEndpoint, fallbackEndpoint}, primary.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-test","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected fallback Claude stream to succeed, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != endpointSlowFailoverAttempts || fallbackHits != 1 {
+		t.Fatalf("expected %d primary semantic-empty attempts then fallback once, got primary=%d fallback=%d", endpointSlowFailoverAttempts, primaryHits, fallbackHits)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "msg-empty") || !strings.Contains(body, "msg-ok") || !strings.Contains(body, "ok") {
+		t.Fatalf("expected only fallback semantic stream to reach client, got %q", body)
+	}
+}
+
+func TestStreamingClaudeThinkingOnlyPositiveOutputTokensEndsWithError(t *testing.T) {
+	var hits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`event: message_start`,
+			`data: {"type":"message_start","message":{"id":"msg-thinking","type":"message","role":"assistant","content":[],"usage":{"input_tokens":3,"output_tokens":0}}}`,
+			"",
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+			"",
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"pondering"}}`,
+			"",
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":0}`,
+			"",
+			`event: message_delta`,
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":24}}`,
+			"",
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	endpoint := failoverPolicyTestEndpoint("Primary", upstream.URL)
+	endpoint.Transformer = "claude"
+	p := newFailoverPolicyTestProxy([]config.Endpoint{endpoint}, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-test","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if hits != 1 {
+		t.Fatalf("expected no silent retry after Claude thinking was streamed, got hits=%d", hits)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "pondering") {
+		t.Fatalf("expected thinking progress to reach client, got %q", body)
+	}
+	if !strings.Contains(body, "event: error") || !strings.Contains(body, retryReasonSemanticEmptyResponse) {
+		t.Fatalf("expected stream to close with semantic-empty error, got %q", body)
+	}
 }
 
 func TestStreamingClaudeKeepAliveUsesPingEvent(t *testing.T) {

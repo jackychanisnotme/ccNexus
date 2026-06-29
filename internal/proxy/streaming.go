@@ -1449,7 +1449,8 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 	result.OutputText = finalOutputText
 	result.ResponsesCompletionSafe = responsesCompletion
 	if result.Err == nil && result.Completed && !result.WroteSemanticData {
-		if hasSuccessfulOutputTokens(outputTokens) {
+		isClaudeClientStream := streamSession != nil && streamSession.clientFormat == ClientFormatClaude
+		if hasSuccessfulOutputTokens(outputTokens) && !isClaudeClientStream {
 			if pendingWrites.Len() > 0 {
 				if writeErr := writeData(pendingWrites.Bytes()); writeErr != nil {
 					result.Reason = streamFinishDownstreamWriteFailed
@@ -1467,6 +1468,9 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 				outputText.Len(),
 			)
 			return result
+		}
+		if emptyKind == "" && isClaudeClientStream {
+			emptyKind = emptyKindClaudeEmpty
 		}
 		result.Reason = retryReasonSemanticEmptyResponse
 		result.Completed = false

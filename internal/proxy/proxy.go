@@ -754,6 +754,11 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	obs := newRequestObservability(r)
 	applyRequestObservabilityHeaders(w, obs, "", 0)
 
+	if r.Method == http.MethodHead && r.URL.Path == "/" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		logger.Error("Failed to read request body: %v", err)
