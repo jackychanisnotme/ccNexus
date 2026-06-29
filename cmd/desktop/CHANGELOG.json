@@ -1,6 +1,6 @@
 [
   {
-    "version": "v6.6.2",
+    "version": "v6.6.3",
     "date": "2026-03-11",
     "changes": [
       "Added per-credential Token Pool usage stats (requests/errors/tokens) with quick view",
