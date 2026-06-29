@@ -889,6 +889,16 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		endpointAttempts = 0
 	}
+	advanceForSemanticEmpty := func(current config.Endpoint, semanticErr *semanticEmptyResponseError, attemptNumber int) {
+		if semanticErr != nil && semanticErr.AgentStrictTextOnly {
+			if !useSpecificEndpoint {
+				p.advanceRequestEndpoint(requestPlan, current, obs, attemptNumber, retryReasonSemanticEmptyResponse)
+			}
+			endpointAttempts = 0
+			return
+		}
+		advanceForFailure(current, retryReasonSemanticEmptyResponse, attemptNumber, nil)
+	}
 	refreshedCredentialAttempts := make(map[int64]bool)
 
 	for retry := 0; retry < maxRetries; retry++ {
@@ -1199,8 +1209,8 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				semanticEmptyExhausted := endpointAttempts >= endpointSlowFailoverAttempts || p.isEndpointInActiveCooldown(endpoint.Name)
 				p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, obs.ClientIP, semanticErr, semanticEmptyExhausted)
 				p.markRequestInactive(endpoint.Name)
-				if semanticEmptyExhausted && !semanticErr.AgentStrictTextOnly {
-					advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
+				if semanticEmptyExhausted {
+					advanceForSemanticEmpty(endpoint, semanticErr, attemptNumber)
 				}
 				continue
 			}
@@ -1550,8 +1560,8 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 						}
 						return
 					}
-					if semanticEmptyExhausted && !semanticErr.AgentStrictTextOnly {
-						advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
+					if semanticEmptyExhausted {
+						advanceForSemanticEmpty(endpoint, semanticErr, attemptNumber)
 					}
 					continue
 				}
@@ -1662,8 +1672,8 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 				semanticEmptyExhausted := endpointAttempts >= endpointSlowFailoverAttempts || p.isEndpointInActiveCooldown(endpoint.Name)
 				p.recordSemanticEmptyResponseFailure(endpoint.Name, credentialID, obs.ClientIP, semanticErr, semanticEmptyExhausted)
 				p.markRequestInactive(endpoint.Name)
-				if semanticEmptyExhausted && !semanticErr.AgentStrictTextOnly {
-					advanceForFailure(endpoint, retryReasonSemanticEmptyResponse, attemptNumber, nil)
+				if semanticEmptyExhausted {
+					advanceForSemanticEmpty(endpoint, semanticErr, attemptNumber)
 				}
 				continue
 			}

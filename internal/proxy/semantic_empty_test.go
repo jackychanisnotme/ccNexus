@@ -458,6 +458,48 @@ func TestAgentForceStreamAggregationPositiveOutputTokensEmptyTextRetriesBeforeWr
 	}
 }
 
+func TestAgentStrictSemanticEmptyFailsOverWithoutCoolingEndpoint(t *testing.T) {
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-empty","object":"response","status":"completed","usage":{"input_tokens":58,"output_tokens":41,"total_tokens":99},"output":[]}`))
+	}))
+	defer primary.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(validResponsesBody("resp-fallback", "fallback ok")))
+	}))
+	defer fallback.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("openai官方", primary.URL),
+		failoverPolicyTestEndpoint("1052-1st", fallback.URL),
+	}, primary.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(AgentNoEndpointThinkingHeader, "1")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected request-local fallback to recover, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if primaryHits != endpointSlowFailoverAttempts || fallbackHits != 1 {
+		t.Fatalf("expected %d primary attempts then one fallback, got primary=%d fallback=%d", endpointSlowFailoverAttempts, primaryHits, fallbackHits)
+	}
+	if p.isEndpointInActiveCooldown("openai官方") {
+		t.Fatal("did not expect agent strict semantic empty to globally cool the primary endpoint")
+	}
+	if got := p.GetCurrentEndpointName(); got != "openai官方" {
+		t.Fatalf("expected global current endpoint to remain openai官方, got %q", got)
+	}
+}
+
 func TestStreamingSemanticEmptyRetriesAfterDownstreamHeartbeat(t *testing.T) {
 	var hits int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
