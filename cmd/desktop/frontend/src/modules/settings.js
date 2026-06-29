@@ -335,8 +335,8 @@ export async function showSettingsModal() {
     const modal = document.getElementById('settingsModal');
     if (!modal) return;
 
-    // Load current config
-    await loadCurrentSettings();
+    // Show modal immediately; backend reads such as license refresh must not block opening.
+    modal.classList.add('active');
 
     // Clear confirmed flag when opening settings
     const themeAutoCheckbox = document.getElementById('settingsThemeAuto');
@@ -344,8 +344,7 @@ export async function showSettingsModal() {
         delete themeAutoCheckbox.dataset.confirmed;
     }
 
-    // Show modal
-    modal.classList.add('active');
+    loadCurrentSettings();
 }
 
 // Close settings modal
@@ -425,7 +424,7 @@ async function loadCurrentSettings() {
         }
 
         setFailoverControlValues(config);
-        await refreshLicenseStatus();
+        await refreshLicenseStatus('license', false);
     } catch (error) {
         console.error('Failed to load settings:', error);
     }

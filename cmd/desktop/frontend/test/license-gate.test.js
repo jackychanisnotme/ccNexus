@@ -74,4 +74,30 @@ describe('startup license gate', () => {
         assert.ok(endpointViewIndex < configIndex, 'endpoint view mode should be ready before rendering endpoints');
         assert.ok(configIndex < statsIndex, 'endpoint config should render before startup stats load');
     });
+
+    it('opens settings before loading current settings', () => {
+        const start = settingsSource.indexOf('export async function showSettingsModal()');
+        const end = settingsSource.indexOf('export function closeSettingsModal()', start);
+        assert.notEqual(start, -1);
+        assert.notEqual(end, -1);
+
+        const functionSource = settingsSource.slice(start, end);
+        const showIndex = functionSource.indexOf("modal.classList.add('active')");
+        const loadIndex = functionSource.indexOf('loadCurrentSettings()');
+
+        assert.notEqual(showIndex, -1);
+        assert.notEqual(loadIndex, -1);
+        assert.ok(showIndex < loadIndex, 'settings modal should become active before settings load starts');
+        assert.doesNotMatch(functionSource, /await\s+loadCurrentSettings\(\)/);
+    });
+
+    it('uses cached local license status when opening settings', () => {
+        const start = settingsSource.indexOf('async function loadCurrentSettings()');
+        const end = settingsSource.indexOf('export async function showAutoThemeConfigModal()', start);
+        assert.notEqual(start, -1);
+        assert.notEqual(end, -1);
+
+        const functionSource = settingsSource.slice(start, end);
+        assert.match(functionSource, /refreshLicenseStatus\('license',\s*false\)/);
+    });
 });
