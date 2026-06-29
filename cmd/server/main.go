@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -142,6 +143,9 @@ func main() {
 	if _, err := licenseService.PollRemoteOnce(); err != nil {
 		logger.Warn("Remote management poll failed: %v", err)
 	}
+	ctx, cancelRemote := context.WithCancel(context.Background())
+	defer cancelRemote()
+	go runRemoteManagementLoop(ctx, licenseService)
 
 	// Create HTTP mux
 	mux := http.NewServeMux()
@@ -166,11 +170,13 @@ func main() {
 
 	select {
 	case sig := <-sigCh:
+		cancelRemote()
 		logger.Info("Received signal %s, shutting down", sig.String())
 		if err := p.Stop(); err != nil {
 			logger.Warn("Graceful shutdown failed: %v", err)
 		}
 	case err := <-errCh:
+		cancelRemote()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("Proxy server stopped with error: %v", err)
 			os.Exit(1)
@@ -181,6 +187,58 @@ func main() {
 }
 
 var timeNow = func() time.Time { return time.Now().UTC() }
+
+const (
+	serverRemotePollInterval     = 3 * time.Second
+	serverRemotePollMaxBackoff   = 30 * time.Second
+	serverRemoteSnapshotInterval = 60 * time.Second
+)
+
+func runRemoteManagementLoop(ctx context.Context, licenseService *onlinelicense.ClientService) {
+	if licenseService == nil {
+		return
+	}
+	interval := serverRemotePollInterval
+	lastSnapshot := time.Now()
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			fullSnapshot := time.Since(lastSnapshot) >= serverRemoteSnapshotInterval
+			var outcome *onlinelicense.RemotePollOutcome
+			var err error
+			if fullSnapshot {
+				outcome, err = licenseService.PollRemoteOnce()
+			} else {
+				outcome, err = licenseService.PollRemoteCommandsOnly()
+			}
+			if err != nil {
+				logger.Warn("Remote management poll failed: %v", err)
+				interval = nextServerRemotePollInterval(interval)
+			} else {
+				interval = serverRemotePollInterval
+				if fullSnapshot || (outcome != nil && outcome.SnapshotUpdated) {
+					lastSnapshot = time.Now()
+				}
+			}
+			timer.Reset(interval)
+		}
+	}
+}
+
+func nextServerRemotePollInterval(current time.Duration) time.Duration {
+	switch {
+	case current < 5*time.Second:
+		return 5 * time.Second
+	case current < 10*time.Second:
+		return 10 * time.Second
+	default:
+		return serverRemotePollMaxBackoff
+	}
+}
 
 func printJSON(v interface{}) {
 	data, err := json.MarshalIndent(v, "", "  ")

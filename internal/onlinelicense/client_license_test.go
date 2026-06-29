@@ -1,6 +1,8 @@
 package onlinelicense
 
 import (
+	"bytes"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -29,6 +31,21 @@ func (s *memoryConfigStore) GetConfig(key string) (string, error) {
 func (s *memoryConfigStore) SetConfig(key, value string) error {
 	s.values[key] = value
 	return nil
+}
+
+type testRemoteExecutor struct {
+	snapshotCalls int
+	executed      []RemoteCommandPayload
+}
+
+func (e *testRemoteExecutor) Snapshot() (RemoteSnapshot, error) {
+	e.snapshotCalls++
+	return RemoteSnapshot{Endpoints: []RemoteEndpointSnapshot{{Name: "Primary"}}}, nil
+}
+
+func (e *testRemoteExecutor) ExecuteRemoteCommand(command RemoteCommandPayload) (*RemoteExecutionOutcome, error) {
+	e.executed = append(e.executed, command)
+	return &RemoteExecutionOutcome{Message: "ok"}, nil
 }
 
 func TestClientActivateRequiresVerifierBeforeContactingServer(t *testing.T) {
@@ -263,6 +280,130 @@ func TestClientRefreshRecordsRemoteDisabledWithoutDroppingTicket(t *testing.T) {
 	if status.Message != ErrActivationBlocked.Error() {
 		t.Fatalf("Status message = %q, want %q", status.Message, ErrActivationBlocked.Error())
 	}
+}
+
+func TestPollRemoteCommandsOnlyDoesNotSubmitSnapshotWhenIdle(t *testing.T) {
+	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate server key: %v", err)
+	}
+	service := NewService(newTestStore(t), privateKey, Options{Now: func() time.Time { return now }})
+	card := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanMonthly, Count: 1, MaxDevices: 1})
+	resultPosts := 0
+	handler := NewHTTPHandler(service, AdminConfig{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/license/remote/result" {
+			resultPosts++
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	store := newMemoryConfigStore()
+	client := NewClientService(store, "device-a", ClientOptions{
+		ServerURL: server.URL,
+		PublicKey: privateKey.Public().(ed25519.PublicKey),
+		Now:       func() time.Time { return now },
+	})
+	executor := &testRemoteExecutor{}
+	client.SetRemoteExecutor(executor)
+	if _, err := client.Activate(card.CardKey, time.Time{}); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+
+	outcome, err := client.PollRemoteCommandsOnly()
+	if err != nil {
+		t.Fatalf("light poll: %v", err)
+	}
+	if outcome.CommandCount != 0 {
+		t.Fatalf("command count = %d, want 0", outcome.CommandCount)
+	}
+	if resultPosts != 0 {
+		t.Fatalf("light idle poll submitted %d result posts, want 0", resultPosts)
+	}
+	if executor.snapshotCalls != 0 {
+		t.Fatalf("light idle poll took %d snapshots, want 0", executor.snapshotCalls)
+	}
+}
+
+func TestPollRemoteCommandsOnlyExecutesDeliveredCommand(t *testing.T) {
+	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate server key: %v", err)
+	}
+	store := newTestStore(t)
+	service := NewService(store, privateKey, Options{Now: func() time.Time { return now }})
+	card := mustGenerateOne(t, service, GenerateCardsRequest{Plan: PlanMonthly, Count: 1, MaxDevices: 1})
+	server := httptest.NewServer(NewHTTPHandler(service, AdminConfig{}))
+	t.Cleanup(server.Close)
+
+	deviceKey, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate device key: %v", err)
+	}
+	configStore := newMemoryConfigStore()
+	configStore.values[clientRemoteKeyConfigKey] = base64.RawURLEncoding.EncodeToString(deviceKey.Bytes())
+	client := NewClientService(configStore, "device-a", ClientOptions{
+		ServerURL: server.URL,
+		PublicKey: privateKey.Public().(ed25519.PublicKey),
+		Now:       func() time.Time { return now },
+	})
+	executor := &testRemoteExecutor{}
+	client.SetRemoteExecutor(executor)
+	if _, err := client.Activate(card.CardKey, time.Time{}); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+
+	plain, err := json.Marshal(RemoteCommandPayload{CommandType: "endpoint.update", Payload: json.RawMessage(`{"endpointName":"Primary"}`)})
+	if err != nil {
+		t.Fatalf("marshal command: %v", err)
+	}
+	envelope, err := EncryptRemoteEnvelope(EncodeRemotePublicKey(deviceKey.PublicKey()), plain)
+	if err != nil {
+		t.Fatalf("encrypt command: %v", err)
+	}
+	if err := store.CreateRemoteCommand(&RemoteCommandRecord{
+		DeviceID:    "device-a",
+		CommandType: "endpoint.update",
+		Status:      "queued",
+		Envelope:    envelope,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}, 0); err != nil {
+		t.Fatalf("create command: %v", err)
+	}
+
+	outcome, err := client.PollRemoteCommandsOnly()
+	if err != nil {
+		t.Fatalf("light poll: %v", err)
+	}
+	if outcome.CommandCount != 1 {
+		t.Fatalf("command count = %d, want 1", outcome.CommandCount)
+	}
+	if len(executor.executed) != 1 || executor.executed[0].CommandType != "endpoint.update" {
+		t.Fatalf("executed commands = %#v", executor.executed)
+	}
+	commands, err := store.ListRemoteCommands("device-a", 10)
+	if err != nil {
+		t.Fatalf("list commands: %v", err)
+	}
+	if len(commands) != 1 || commands[0].Status != "applied" {
+		t.Fatalf("command status = %#v, want applied", commands)
+	}
+	if bytes.Contains([]byte(mustJSONClient(t, commands[0])), []byte("Primary")) {
+		t.Fatalf("command result leaked plaintext payload: %s", mustJSONClient(t, commands[0]))
+	}
+}
+
+func mustJSONClient(t *testing.T, v interface{}) string {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal json: %v", err)
+	}
+	return string(data)
 }
 
 func TestClientRefreshPreservesCachedTicketWhenServerUnavailable(t *testing.T) {

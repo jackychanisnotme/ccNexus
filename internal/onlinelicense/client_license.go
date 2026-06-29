@@ -228,6 +228,14 @@ func (s *ClientService) MaybeRefresh(now time.Time) {
 }
 
 func (s *ClientService) PollRemoteOnce() (*RemotePollOutcome, error) {
+	return s.pollRemote(false)
+}
+
+func (s *ClientService) PollRemoteCommandsOnly() (*RemotePollOutcome, error) {
+	return s.pollRemote(true)
+}
+
+func (s *ClientService) pollRemote(commandsOnly bool) (*RemotePollOutcome, error) {
 	outcome := &RemotePollOutcome{}
 	if s == nil || s.remote == nil {
 		return outcome, nil
@@ -245,6 +253,9 @@ func (s *ClientService) PollRemoteOnce() (*RemotePollOutcome, error) {
 	}
 	outcome.CommandCount = len(response.Commands)
 	if len(response.Commands) == 0 {
+		if commandsOnly {
+			return outcome, nil
+		}
 		snapshot, err := s.remote.Snapshot()
 		if err != nil {
 			return outcome, err
@@ -266,7 +277,7 @@ func (s *ClientService) PollRemoteOnce() (*RemotePollOutcome, error) {
 	}
 	for _, command := range response.Commands {
 		plain, err := DecryptRemoteEnvelope(key, command.Envelope)
-		status := "failed"
+		status := RemoteCommandStatusFailed
 		var snapshot *RemoteSnapshot
 		var result *RemoteCommandResult
 		var secretReveal *RemoteSecretRevealResult
@@ -278,7 +289,7 @@ func (s *ClientService) PollRemoteOnce() (*RemotePollOutcome, error) {
 				commandOutcome, execErr := s.remote.ExecuteRemoteCommand(payload)
 				err = execErr
 				if err == nil {
-					status = "applied"
+					status = RemoteCommandStatusApplied
 					if commandOutcome != nil {
 						snapshot = commandOutcome.Snapshot
 						result = &RemoteCommandResult{

@@ -110,6 +110,11 @@ func (e *RemoteManagementExecutor) ExecuteRemoteCommand(command onlinelicense.Re
 			return nil, err
 		}
 		outcome.ConfigChanged = true
+	case "endpoint.reorder":
+		if err := e.executeEndpointReorder(command.Payload); err != nil {
+			return nil, err
+		}
+		outcome.ConfigChanged = true
 	case "credential.setEnabled":
 		if err := e.executeCredentialEnabled(command.Payload); err != nil {
 			return nil, err
@@ -333,6 +338,23 @@ func (e *RemoteManagementExecutor) executeEndpointDelete(raw json.RawMessage) er
 		return fmt.Errorf("endpoint service unavailable")
 	}
 	return e.Endpoints.RemoveEndpoint(index)
+}
+
+func (e *RemoteManagementExecutor) executeEndpointReorder(raw json.RawMessage) error {
+	var req struct {
+		Names []string `json:"names"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return err
+	}
+	if e.Endpoints == nil {
+		return fmt.Errorf("endpoint service unavailable")
+	}
+	names := make([]string, 0, len(req.Names))
+	for _, name := range req.Names {
+		names = append(names, strings.TrimSpace(name))
+	}
+	return e.Endpoints.ReorderEndpoints(names)
 }
 
 func (e *RemoteManagementExecutor) executeCredentialEnabled(raw json.RawMessage) error {

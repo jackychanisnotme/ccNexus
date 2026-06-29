@@ -23,7 +23,8 @@ const (
 	cardPrefix            = "CCNX-ONL-"
 	nextCheckInterval     = 24 * time.Hour
 	offlineGracePeriod    = 30 * 24 * time.Hour
-	remoteSecretRevealTTL = time.Minute
+	remoteSecretRevealTTL = 2 * time.Minute
+	remoteCommandTTL      = 5 * time.Minute
 )
 
 var (
@@ -73,6 +74,7 @@ type Store interface {
 	ListRemoteCommands(deviceID string, limit int) ([]RemoteCommandRecord, error)
 	ListQueuedRemoteCommands(deviceID string, limit int) ([]RemoteCommandRecord, error)
 	GetRemoteCommand(deviceID string, commandID int64) (*RemoteCommandRecord, error)
+	MarkRemoteCommandsDelivered(deviceID string, commandIDs []int64, now time.Time) error
 	UpdateRemoteCommandResult(deviceID string, commandID int64, status, resultText, errorText string, resultJSON *RemoteCommandResult, expiresAt time.Time, now time.Time) error
 }
 
@@ -853,14 +855,18 @@ func (s *Service) queueRemoteCommandFor(actor *AdminAccount, deviceID string, re
 		return nil, err
 	}
 	now := s.currentTime()
+	expiresAt := req.ExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = now.UTC().Add(remoteCommandTTL)
+	}
 	command := &RemoteCommandRecord{
 		DeviceID:    strings.TrimSpace(deviceID),
 		CommandType: commandType,
-		Status:      "queued",
+		Status:      RemoteCommandStatusQueued,
 		ActorID:     actor.ID,
 		ActorName:   actor.Username,
 		Envelope:    envelope,
-		ExpiresAt:   req.ExpiresAt,
+		ExpiresAt:   expiresAt,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -925,8 +931,14 @@ func (s *Service) RemoteCommandFor(actor *AdminAccount, deviceID string, command
 	if command.CommandType != "secret.reveal" && !hasPermission(actor, PermissionDevicesRemoteView) && !hasPermission(actor, PermissionDevicesRemoteWrite) {
 		return nil, ErrForbidden
 	}
-	if !command.ExpiresAt.IsZero() && !s.currentTime().Before(command.ExpiresAt) {
-		return nil, ErrRemoteResultExpired
+	if !command.ExpiresAt.IsZero() && !s.currentTime().Before(command.ExpiresAt) &&
+		(command.Status == RemoteCommandStatusQueued || command.Status == RemoteCommandStatusDelivered) {
+		now := s.currentTime()
+		_ = s.store.UpdateRemoteCommandResult(strings.TrimSpace(deviceID), command.ID, RemoteCommandStatusExpired, "", "remote command expired", nil, time.Time{}, now)
+		command.Status = RemoteCommandStatusExpired
+		command.Error = "remote command expired"
+		command.UpdatedAt = now.UTC()
+		return command, nil
 	}
 	if command.ResultJSON != nil && command.ResultJSON.SecretReveal != nil {
 		expiresAt := command.ResultJSON.SecretReveal.ExpiresAt
@@ -945,7 +957,23 @@ func (s *Service) PollRemoteCommands(req RemotePollRequest) (*RemotePollResponse
 	if err != nil {
 		return nil, err
 	}
-	return &RemotePollResponse{Commands: commands}, nil
+	now := s.currentTime()
+	deliverable := make([]RemoteCommandRecord, 0, len(commands))
+	deliveredIDs := make([]int64, 0, len(commands))
+	for _, command := range commands {
+		if !command.ExpiresAt.IsZero() && !now.Before(command.ExpiresAt) {
+			_ = s.store.UpdateRemoteCommandResult(strings.TrimSpace(req.DeviceID), command.ID, RemoteCommandStatusExpired, "", "remote command expired", nil, time.Time{}, now)
+			continue
+		}
+		command.Status = RemoteCommandStatusDelivered
+		command.UpdatedAt = now.UTC()
+		deliverable = append(deliverable, command)
+		deliveredIDs = append(deliveredIDs, command.ID)
+	}
+	if err := s.store.MarkRemoteCommandsDelivered(strings.TrimSpace(req.DeviceID), deliveredIDs, now); err != nil {
+		return nil, err
+	}
+	return &RemotePollResponse{Commands: deliverable}, nil
 }
 
 func (s *Service) SubmitRemoteResult(req RemoteResultRequest) error {
@@ -954,7 +982,7 @@ func (s *Service) SubmitRemoteResult(req RemoteResultRequest) error {
 	}
 	status := strings.TrimSpace(req.Status)
 	if status == "" {
-		status = "applied"
+		status = RemoteCommandStatusApplied
 	}
 	now := s.currentTime()
 	resultText := ""

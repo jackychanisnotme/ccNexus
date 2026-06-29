@@ -62,7 +62,12 @@ type desktopImportCredentialsRequest struct {
 	Remark string                        `json:"remark"`
 }
 
-const desktopLicenseRefreshInterval = 5 * time.Minute
+const (
+	desktopLicenseRefreshInterval = 5 * time.Minute
+	desktopRemotePollInterval     = 3 * time.Second
+	desktopRemotePollMaxBackoff   = 30 * time.Second
+	desktopRemoteSnapshotInterval = 60 * time.Second
+)
 
 // App struct
 type App struct {
@@ -216,6 +221,7 @@ func (a *App) startup(ctx context.Context) {
 	if a.license != nil {
 		go a.refreshLicenseFromServer("startup")
 		go a.runLicenseRefreshLoop(ctx)
+		go a.runRemoteManagementLoop(ctx)
 	}
 	go a.runLANDiscoveryLoop(ctx)
 	a.startProxyIfLicensed()
@@ -256,6 +262,56 @@ func (a *App) runLicenseRefreshLoop(ctx context.Context) {
 			_, _ = a.refreshLicenseFromServer("scheduled")
 		}
 	}
+}
+
+func (a *App) runRemoteManagementLoop(ctx context.Context) {
+	interval := desktopRemotePollInterval
+	lastSnapshot := time.Now()
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			fullSnapshot := time.Since(lastSnapshot) >= desktopRemoteSnapshotInterval
+			outcome, err := a.pollRemoteManagement(fullSnapshot)
+			if err != nil {
+				logger.Warn("Remote management poll failed: %v", err)
+				interval = nextDesktopRemotePollInterval(interval)
+			} else {
+				interval = desktopRemotePollInterval
+				if fullSnapshot || (outcome != nil && outcome.SnapshotUpdated) {
+					lastSnapshot = time.Now()
+				}
+				a.emitRemoteOutcome(outcome)
+			}
+			timer.Reset(interval)
+		}
+	}
+}
+
+func nextDesktopRemotePollInterval(current time.Duration) time.Duration {
+	switch {
+	case current < 5*time.Second:
+		return 5 * time.Second
+	case current < 10*time.Second:
+		return 10 * time.Second
+	default:
+		return desktopRemotePollMaxBackoff
+	}
+}
+
+func (a *App) pollRemoteManagement(fullSnapshot bool) (*onlinelicense.RemotePollOutcome, error) {
+	if a.license == nil {
+		return nil, fmt.Errorf("license service unavailable")
+	}
+	a.licenseRefreshMu.Lock()
+	defer a.licenseRefreshMu.Unlock()
+	if fullSnapshot {
+		return a.license.PollRemoteOnce()
+	}
+	return a.license.PollRemoteCommandsOnly()
 }
 
 func (a *App) runLANDiscoveryLoop(ctx context.Context) {
@@ -364,15 +420,7 @@ func (a *App) refreshLicenseFromServer(reason string) (*onlinelicense.Status, er
 	if remoteOutcome, err := a.license.PollRemoteOnce(); err != nil {
 		logger.Warn("Remote management poll failed (%s): %v", reason, err)
 	} else if remoteOutcome != nil {
-		a.ctxMutex.RLock()
-		ctx := a.ctx
-		a.ctxMutex.RUnlock()
-		if ctx != nil && remoteOutcome.ConfigChanged {
-			runtime.EventsEmit(ctx, "remote:config-updated", remoteOutcome)
-		}
-		if ctx != nil && remoteOutcome.SnapshotUpdated {
-			runtime.EventsEmit(ctx, "remote:snapshot-updated", remoteOutcome)
-		}
+		a.emitRemoteOutcome(remoteOutcome)
 	}
 	status, err := a.license.Status(time.Now())
 	if err != nil {
@@ -380,6 +428,21 @@ func (a *App) refreshLicenseFromServer(reason string) (*onlinelicense.Status, er
 	}
 	a.applyLicenseStatus(status, reason)
 	return status, nil
+}
+
+func (a *App) emitRemoteOutcome(remoteOutcome *onlinelicense.RemotePollOutcome) {
+	if remoteOutcome == nil {
+		return
+	}
+	a.ctxMutex.RLock()
+	ctx := a.ctx
+	a.ctxMutex.RUnlock()
+	if ctx != nil && remoteOutcome.ConfigChanged {
+		runtime.EventsEmit(ctx, "remote:config-updated", remoteOutcome)
+	}
+	if ctx != nil && remoteOutcome.SnapshotUpdated {
+		runtime.EventsEmit(ctx, "remote:snapshot-updated", remoteOutcome)
+	}
 }
 
 func (a *App) applyLicenseStatus(status *onlinelicense.Status, reason string) {

@@ -180,6 +180,148 @@ func TestRemoteCommandPayloadIsEncryptedAndTamperRejected(t *testing.T) {
 	}
 }
 
+func TestRemotePollMarksCommandsDeliveredAndDoesNotRedeliver(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	rootCookie := loginAdmin(t, handler)
+	cardKey := generateHTTPCard(t, handler, 1)
+	activated := activateHTTPCardWithRemote(t, handler, cardKey, "device-a")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/devices/device-a/remote/commands", strings.NewReader(`{"commandType":"endpoint.update","payload":{"endpointName":"OpenAI","apiUrl":"https://example.test/v1"}}`))
+	req.AddCookie(rootCookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("queue command status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var queued struct {
+		Data RemoteCommandRecord `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode queued command: %v", err)
+	}
+
+	pollBody := `{"ticket":"` + activated.Ticket + `","deviceId":"device-a"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/license/remote/poll", strings.NewReader(pollBody))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first poll status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var poll struct {
+		Data RemotePollResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &poll); err != nil {
+		t.Fatalf("decode first poll: %v", err)
+	}
+	if len(poll.Data.Commands) != 1 {
+		t.Fatalf("first poll commands = %#v, want one", poll.Data.Commands)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/devices/device-a/remote/commands/"+strconv.FormatInt(queued.Data.ID, 10), nil)
+	req.AddCookie(rootCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("command status after poll = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var status struct {
+		Data RemoteCommandRecord `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode command status: %v", err)
+	}
+	if status.Data.Status != "delivered" {
+		t.Fatalf("status after poll = %q, want delivered", status.Data.Status)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/license/remote/poll", strings.NewReader(pollBody))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second poll status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &poll); err != nil {
+		t.Fatalf("decode second poll: %v", err)
+	}
+	if len(poll.Data.Commands) != 0 {
+		t.Fatalf("second poll redelivered commands = %#v, want none", poll.Data.Commands)
+	}
+}
+
+func TestRemoteCommandExpiryOnlyAppliesBeforeResult(t *testing.T) {
+	handler := newTestHTTPHandler(t).(*HTTPHandler)
+	rootCookie := loginAdmin(t, handler)
+	cardKey := generateHTTPCard(t, handler, 1)
+	activateHTTPCardWithRemote(t, handler, cardKey, "device-a")
+
+	now := time.Date(2026, 6, 19, 8, 10, 0, 0, time.UTC)
+	handler.service.now = func() time.Time { return now }
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/devices/device-a/remote/commands", strings.NewReader(`{"commandType":"endpoint.update","payload":{"endpointName":"OpenAI","apiUrl":"https://example.test/v1"}}`))
+	req.AddCookie(rootCookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("queue command status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var queued struct {
+		Data RemoteCommandRecord `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode queued command: %v", err)
+	}
+
+	now = now.Add(remoteCommandTTL + time.Second)
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/devices/device-a/remote/commands/"+strconv.FormatInt(queued.Data.ID, 10), nil)
+	req.AddCookie(rootCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expired waiting command status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var expired struct {
+		Data RemoteCommandRecord `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &expired); err != nil {
+		t.Fatalf("decode expired command: %v", err)
+	}
+	if expired.Data.Status != RemoteCommandStatusExpired {
+		t.Fatalf("waiting command status = %q, want expired", expired.Data.Status)
+	}
+
+	now = time.Date(2026, 6, 19, 9, 0, 0, 0, time.UTC)
+	req = httptest.NewRequest(http.MethodPost, "/api/admin/devices/device-a/remote/commands", strings.NewReader(`{"commandType":"endpoint.update","payload":{"endpointName":"OpenAI","apiUrl":"https://example2.test/v1"}}`))
+	req.AddCookie(rootCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("queue applied command status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode applied command: %v", err)
+	}
+	if err := handler.service.store.UpdateRemoteCommandResult("device-a", queued.Data.ID, RemoteCommandStatusApplied, "ok", "", nil, time.Time{}, now); err != nil {
+		t.Fatalf("mark applied command: %v", err)
+	}
+
+	now = now.Add(remoteCommandTTL + time.Second)
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/devices/device-a/remote/commands/"+strconv.FormatInt(queued.Data.ID, 10), nil)
+	req.AddCookie(rootCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("applied command after ttl status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var applied struct {
+		Data RemoteCommandRecord `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("decode applied command: %v", err)
+	}
+	if applied.Data.Status != RemoteCommandStatusApplied {
+		t.Fatalf("applied command status after ttl = %q, want applied", applied.Data.Status)
+	}
+}
+
 func TestRemoteSnapshotResultWithoutCommandUpdatesDeviceDetail(t *testing.T) {
 	handler := newTestHTTPHandler(t)
 	rootCookie := loginAdmin(t, handler)

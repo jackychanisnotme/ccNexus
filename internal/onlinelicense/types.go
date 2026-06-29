@@ -14,6 +14,12 @@ const (
 	ActivationStatusActive   = "active"
 	ActivationStatusDisabled = "disabled"
 
+	RemoteCommandStatusQueued    = "queued"
+	RemoteCommandStatusDelivered = "delivered"
+	RemoteCommandStatusApplied   = "applied"
+	RemoteCommandStatusFailed    = "failed"
+	RemoteCommandStatusExpired   = "expired"
+
 	DefaultLicenseServerURL = "http://207.57.134.147:24220"
 )
 

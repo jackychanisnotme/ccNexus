@@ -148,6 +148,96 @@ func TestRemoteManagementExecutorDeletesEndpoint(t *testing.T) {
 	}
 }
 
+func TestRemoteManagementExecutorReordersEndpoints(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{
+		{
+			Name:        "A",
+			APIUrl:      "https://a.example.com/v1",
+			APIKey:      "a-key",
+			AuthMode:    config.AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "openai",
+			Model:       "gpt-5",
+		},
+		{
+			Name:        "B",
+			APIUrl:      "https://b.example.com/v1",
+			APIKey:      "b-key",
+			AuthMode:    config.AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "openai",
+			Model:       "gpt-5",
+		},
+		{
+			Name:        "C",
+			APIUrl:      "https://c.example.com/v1",
+			APIKey:      "c-key",
+			AuthMode:    config.AuthModeAPIKey,
+			Enabled:     true,
+			Transformer: "openai",
+			Model:       "gpt-5",
+		},
+	})
+	p := proxy.New(cfg, nil, nil, "remote-test-device")
+	endpoints := NewEndpointService(cfg, p, nil)
+	executor := NewRemoteManagementExecutor(cfg, nil, endpoints)
+
+	outcome, err := executor.ExecuteRemoteCommand(onlinelicense.RemoteCommandPayload{
+		CommandType: "endpoint.reorder",
+		Payload:     json.RawMessage(`{"names":["B","A","C"]}`),
+	})
+	if err != nil {
+		t.Fatalf("execute endpoint.reorder: %v", err)
+	}
+	if outcome == nil || !outcome.ConfigChanged {
+		t.Fatalf("endpoint.reorder outcome = %#v, want configChanged", outcome)
+	}
+
+	got := cfg.GetEndpoints()
+	if len(got) != 3 || got[0].Name != "B" || got[1].Name != "A" || got[2].Name != "C" {
+		t.Fatalf("reordered endpoints = %#v", got)
+	}
+	if outcome.Snapshot == nil || len(outcome.Snapshot.Endpoints) != 3 ||
+		outcome.Snapshot.Endpoints[0].Name != "B" || outcome.Snapshot.Endpoints[1].Name != "A" || outcome.Snapshot.Endpoints[2].Name != "C" {
+		t.Fatalf("snapshot after reorder = %#v", outcome.Snapshot)
+	}
+}
+
+func TestRemoteManagementExecutorRejectsInvalidReorderWithoutChangingConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{
+		{Name: "A", APIUrl: "https://a.example.com/v1", APIKey: "a-key", AuthMode: config.AuthModeAPIKey, Enabled: true, Transformer: "openai", Model: "gpt-5"},
+		{Name: "B", APIUrl: "https://b.example.com/v1", APIKey: "b-key", AuthMode: config.AuthModeAPIKey, Enabled: true, Transformer: "openai", Model: "gpt-5"},
+	})
+	p := proxy.New(cfg, nil, nil, "remote-test-device")
+	endpoints := NewEndpointService(cfg, p, nil)
+	executor := NewRemoteManagementExecutor(cfg, nil, endpoints)
+
+	cases := []struct {
+		name    string
+		payload json.RawMessage
+	}{
+		{name: "missing endpoint", payload: json.RawMessage(`{"names":["B"]}`)},
+		{name: "duplicate endpoint", payload: json.RawMessage(`{"names":["A","A"]}`)},
+		{name: "unknown endpoint", payload: json.RawMessage(`{"names":["A","C"]}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := executor.ExecuteRemoteCommand(onlinelicense.RemoteCommandPayload{
+				CommandType: "endpoint.reorder",
+				Payload:     tc.payload,
+			}); err == nil {
+				t.Fatalf("execute endpoint.reorder succeeded, want error")
+			}
+			got := cfg.GetEndpoints()
+			if len(got) != 2 || got[0].Name != "A" || got[1].Name != "B" {
+				t.Fatalf("config changed after invalid reorder: %#v", got)
+			}
+		})
+	}
+}
+
 func TestRemoteManagementExecutorSecretRevealEncryptsAPIKey(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.UpdateEndpoints([]config.Endpoint{{

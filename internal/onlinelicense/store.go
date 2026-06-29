@@ -318,7 +318,7 @@ func (s *SQLiteStore) CreateRemoteCommand(command *RemoteCommandRecord, ownerAcc
 	command.CreatedAt = now.UTC()
 	command.UpdatedAt = now.UTC()
 	if command.Status == "" {
-		command.Status = "queued"
+		command.Status = RemoteCommandStatusQueued
 	}
 	envelope, err := json.Marshal(command.Envelope)
 	if err != nil {
@@ -383,10 +383,10 @@ func (s *SQLiteStore) ListQueuedRemoteCommands(deviceID string, limit int) ([]Re
 		SELECT id, device_id, command_type, status, actor_account_id, COALESCE(actor_username,''),
 			envelope_json, COALESCE(result,''), COALESCE(result_json,''), COALESCE(error,''), expires_at, created_at, updated_at
 		FROM license_remote_commands
-		WHERE device_id=? AND status='queued'
+		WHERE device_id=? AND status=?
 		ORDER BY id ASC
 		LIMIT ?
-	`, strings.TrimSpace(deviceID), limit)
+	`, strings.TrimSpace(deviceID), RemoteCommandStatusQueued, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -400,6 +400,50 @@ func (s *SQLiteStore) ListQueuedRemoteCommands(deviceID string, limit int) ([]Re
 		result = append(result, *command)
 	}
 	return result, rows.Err()
+}
+
+func (s *SQLiteStore) MarkRemoteCommandsDelivered(deviceID string, commandIDs []int64, now time.Time) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || len(commandIDs) == 0 {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	for _, id := range commandIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, err := tx.Exec(`
+			UPDATE license_remote_commands
+			SET status=?, updated_at=?
+			WHERE id=? AND device_id=? AND status=?
+		`, RemoteCommandStatusDelivered, formatTime(now), id, deviceID, RemoteCommandStatusQueued); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`
+		UPDATE license_device_remote_state
+		SET last_command_status=?, last_command_updated_at=?, updated_at=?
+		WHERE device_id=?
+	`, RemoteCommandStatusDelivered, formatTime(now), formatTime(now), deviceID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (s *SQLiteStore) GetRemoteCommand(deviceID string, commandID int64) (*RemoteCommandRecord, error) {

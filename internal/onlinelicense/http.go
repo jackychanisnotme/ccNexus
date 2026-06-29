@@ -99,12 +99,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.handleRefresh(w, r)
 	case path == "/api/license/remote/poll":
-		if !h.allowRate(w, r, "license_remote", 240, time.Minute) {
+		if !h.allowRate(w, r, "license_remote", 2400, time.Minute) {
 			return
 		}
 		h.handleRemotePoll(w, r)
 	case path == "/api/license/remote/result":
-		if !h.allowRate(w, r, "license_remote", 240, time.Minute) {
+		if !h.allowRate(w, r, "license_remote", 2400, time.Minute) {
 			return
 		}
 		h.handleRemoteResult(w, r)
