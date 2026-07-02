@@ -949,12 +949,14 @@ func isRecoverableOpenAIResponsesCompletedToolItem(itemState *openAIResponsesOut
 	case "custom_tool_call":
 		return itemState.InputDone && isRecoverableCustomToolCallItem(itemState.Item)
 	default:
-		return false
+		return isRecoverableProviderNativeToolCallItem(itemState.Item)
 	}
 }
 
 func isRecoverableOpenAIResponsesToolItem(item map[string]interface{}) bool {
-	return isRecoverableFunctionCallItem(item) || isRecoverableCustomToolCallItem(item)
+	return isRecoverableFunctionCallItem(item) ||
+		isRecoverableCustomToolCallItem(item) ||
+		isRecoverableProviderNativeToolCallItem(item)
 }
 
 func isRecoverableFunctionCallItem(item map[string]interface{}) bool {
@@ -986,6 +988,28 @@ func isRecoverableCustomToolCallItem(item map[string]interface{}) bool {
 		return false
 	}
 	return hasNonEmptyString(item["call_id"]) || hasNonEmptyString(item["id"])
+}
+
+func isRecoverableProviderNativeToolCallItem(item map[string]interface{}) bool {
+	if item == nil {
+		return false
+	}
+	itemType := strings.ToLower(strings.TrimSpace(stringFromInterface(item["type"])))
+	if itemType == "function_call" || itemType == "custom_tool_call" || !isProviderNativeOpenAIResponsesToolCallType(itemType) {
+		return false
+	}
+	return hasValidResponsesToolLikeOutputItem(item)
+}
+
+func isProviderNativeOpenAIResponsesToolCallType(itemType string) bool {
+	itemType = strings.ToLower(strings.TrimSpace(itemType))
+	switch itemType {
+	case "local_shell_call", "computer_call", "file_search_call", "web_search_call",
+		"mcp_call", "code_interpreter_call", "image_generation_call", "tool_search_call":
+		return true
+	default:
+		return strings.HasSuffix(itemType, "_call")
+	}
 }
 
 func openAIResponsesOutputItemText(item map[string]interface{}) string {

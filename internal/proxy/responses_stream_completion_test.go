@@ -750,6 +750,151 @@ func TestResponsesStreamMissingCompletedWithOutputDoneCustomToolCallCompletesOpe
 	}
 }
 
+func TestResponsesStreamMissingCompletedWithDoneWebSearchCallCompletesCodexClient(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-web-search-done","object":"response","status":"in_progress","created_at":0,"model":"gpt-5.5","output":[]}}`,
+			"",
+			`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"id":"ws-1","call_id":"call-web-1","type":"web_search_call","status":"completed","action":{"type":"search","query":"AINexus missing response completed"}}}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("备用，香港2", upstream.URL),
+	}, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Codex_Desktop/0.142.0-alpha.1")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"response.completed"`) {
+		t.Fatalf("expected synthetic response.completed for completed web_search_call, got %q", body)
+	}
+	if !strings.Contains(body, `"type":"web_search_call"`) || !strings.Contains(body, `"call_id":"call-web-1"`) {
+		t.Fatalf("expected synthetic completion to preserve web_search_call output item, got %q", body)
+	}
+	if strings.Contains(body, "event: error") || strings.Contains(body, "missing_response_completed") {
+		t.Fatalf("did not expect missing completion error for completed web_search_call, got %q", body)
+	}
+
+	p.cooldownMu.RLock()
+	_, cooled := p.endpointCooldowns["备用，香港2"]
+	p.cooldownMu.RUnlock()
+	if cooled {
+		t.Fatal("expected completed web_search_call recovery not to cool endpoint")
+	}
+
+	logs := joinedProxyLogs()
+	for _, want := range []string{
+		"Completing OpenAI Responses web_search_call stream missing response.completed",
+		"responses_tool_recoverable=true",
+		"responses_tool_pending=false",
+		"responses_output_items=1",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected logs to contain %q; logs:\n%s", want, logs)
+		}
+	}
+}
+
+func TestResponsesStreamMissingCompletedWithDoneProviderNativeToolCallsComplete(t *testing.T) {
+	tests := []struct {
+		name     string
+		itemType string
+		itemJSON string
+	}{
+		{
+			name:     "file search",
+			itemType: "file_search_call",
+			itemJSON: `{"id":"fs-1","call_id":"call-file-1","type":"file_search_call","status":"completed","results":[{"file_id":"file-1","text":"match"}]}`,
+		},
+		{
+			name:     "tool search",
+			itemType: "tool_search_call",
+			itemJSON: `{"id":"ts-1","call_id":"call-tool-1","type":"tool_search_call","status":"completed","arguments":"{\"query\":\"logs\"}"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte(strings.Join([]string{
+					`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-native-tool-done","object":"response","status":"in_progress","created_at":0,"model":"gpt-5.5","output":[]}}`,
+					"",
+					`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":` + tt.itemJSON + `}`,
+					"",
+					"",
+				}, "\n")))
+			}))
+			defer upstream.Close()
+
+			p := newFailoverPolicyTestProxy([]config.Endpoint{
+				failoverPolicyTestEndpoint("Primary", upstream.URL),
+			}, upstream.Client())
+			req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("User-Agent", "OpenAI/Python_2.31.0")
+			rec := httptest.NewRecorder()
+
+			p.handleProxy(rec, req)
+
+			body := rec.Body.String()
+			if !strings.Contains(body, `"type":"response.completed"`) {
+				t.Fatalf("expected synthetic response.completed for completed %s, got %q", tt.itemType, body)
+			}
+			if !strings.Contains(body, `"type":"`+tt.itemType+`"`) {
+				t.Fatalf("expected synthetic completion to preserve %s item, got %q", tt.itemType, body)
+			}
+			if strings.Contains(body, "event: error") || strings.Contains(body, "missing_response_completed") {
+				t.Fatalf("did not expect missing completion error for completed %s, got %q", tt.itemType, body)
+			}
+		})
+	}
+}
+
+func TestResponsesStreamMissingCompletedWithOnlyWebSearchCallAddedStaysStrict(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-web-search-added","object":"response","status":"in_progress","created_at":0,"model":"gpt-5.5","output":[]}}`,
+			"",
+			`data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"ws-1","call_id":"call-web-1","type":"web_search_call","status":"in_progress","action":{"type":"search","query":"AINexus"}}}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Codex_Desktop/0.142.0-alpha.1")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if strings.Contains(body, `"type":"response.completed"`) {
+		t.Fatalf("did not expect synthetic response.completed for added-only web_search_call, got %q", body)
+	}
+	if !strings.Contains(body, "event: error") || !strings.Contains(body, "missing_response_completed") {
+		t.Fatalf("expected strict missing completed error for added-only web_search_call, got %q", body)
+	}
+}
+
 func TestResponsesStreamMissingCompletedWithCustomToolInputDeltaCompletesCodexClient(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
