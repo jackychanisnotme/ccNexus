@@ -33,13 +33,14 @@ func (e *RemoteManagementExecutor) Snapshot() (onlinelicense.RemoteSnapshot, err
 	}
 	for _, endpoint := range endpoints {
 		item := onlinelicense.RemoteEndpointSnapshot{
-			Name:         endpoint.Name,
-			APIUrl:       endpoint.APIUrl,
-			APIKeyMasked: maskRemoteSecret(endpoint.APIKey),
-			AuthMode:     endpoint.AuthMode,
-			Enabled:      endpoint.Enabled,
-			Transformer:  endpoint.Transformer,
-			Model:        endpoint.Model,
+			Name:                  endpoint.Name,
+			APIUrl:                endpoint.APIUrl,
+			APIKeyMasked:          maskRemoteSecret(endpoint.APIKey),
+			AuthMode:              endpoint.AuthMode,
+			Enabled:               endpoint.Enabled,
+			Transformer:           endpoint.Transformer,
+			Model:                 endpoint.Model,
+			MaxConcurrentRequests: endpoint.MaxConcurrentRequests,
 		}
 		if e.Storage != nil {
 			if stats, err := e.Storage.GetEndpointTotalStats(endpoint.Name); err == nil && stats != nil {
@@ -152,17 +153,18 @@ func (e *RemoteManagementExecutor) ExecuteRemoteCommand(command onlinelicense.Re
 
 func (e *RemoteManagementExecutor) executeEndpointCreate(raw json.RawMessage) error {
 	var req struct {
-		Name        string `json:"name"`
-		APIUrl      string `json:"apiUrl"`
-		APIKey      string `json:"apiKey"`
-		AuthMode    string `json:"authMode"`
-		Transformer string `json:"transformer"`
-		Model       string `json:"model"`
-		Thinking    string `json:"thinking"`
-		ProxyURL    string `json:"proxyUrl"`
-		ForceStream *bool  `json:"forceStream"`
-		Remark      string `json:"remark"`
-		Enabled     *bool  `json:"enabled"`
+		Name                  string `json:"name"`
+		APIUrl                string `json:"apiUrl"`
+		APIKey                string `json:"apiKey"`
+		AuthMode              string `json:"authMode"`
+		Transformer           string `json:"transformer"`
+		Model                 string `json:"model"`
+		Thinking              string `json:"thinking"`
+		ProxyURL              string `json:"proxyUrl"`
+		ForceStream           *bool  `json:"forceStream"`
+		MaxConcurrentRequests *int   `json:"maxConcurrentRequests"`
+		Remark                string `json:"remark"`
+		Enabled               *bool  `json:"enabled"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return err
@@ -174,7 +176,11 @@ func (e *RemoteManagementExecutor) executeEndpointCreate(raw json.RawMessage) er
 	if req.ForceStream != nil {
 		forceStream = *req.ForceStream
 	}
-	if err := e.Endpoints.AddEndpoint(req.Name, req.APIUrl, req.APIKey, req.AuthMode, req.Transformer, req.Model, req.Thinking, req.ProxyURL, forceStream, req.Remark); err != nil {
+	maxConcurrentRequests := 0
+	if req.MaxConcurrentRequests != nil {
+		maxConcurrentRequests = config.NormalizeEndpointMaxConcurrentRequests(*req.MaxConcurrentRequests)
+	}
+	if err := e.Endpoints.AddEndpoint(req.Name, req.APIUrl, req.APIKey, req.AuthMode, req.Transformer, req.Model, req.Thinking, req.ProxyURL, forceStream, maxConcurrentRequests, req.Remark); err != nil {
 		return err
 	}
 	if req.Enabled != nil && !*req.Enabled {
@@ -189,18 +195,19 @@ func (e *RemoteManagementExecutor) executeEndpointCreate(raw json.RawMessage) er
 
 func (e *RemoteManagementExecutor) executeEndpointUpdate(raw json.RawMessage) error {
 	var req struct {
-		EndpointName string  `json:"endpointName"`
-		Name         *string `json:"name"`
-		APIUrl       *string `json:"apiUrl"`
-		APIKey       *string `json:"apiKey"`
-		AuthMode     *string `json:"authMode"`
-		Transformer  *string `json:"transformer"`
-		Model        *string `json:"model"`
-		Thinking     *string `json:"thinking"`
-		ProxyURL     *string `json:"proxyUrl"`
-		ForceStream  *bool   `json:"forceStream"`
-		Remark       *string `json:"remark"`
-		Enabled      *bool   `json:"enabled"`
+		EndpointName          string  `json:"endpointName"`
+		Name                  *string `json:"name"`
+		APIUrl                *string `json:"apiUrl"`
+		APIKey                *string `json:"apiKey"`
+		AuthMode              *string `json:"authMode"`
+		Transformer           *string `json:"transformer"`
+		Model                 *string `json:"model"`
+		Thinking              *string `json:"thinking"`
+		ProxyURL              *string `json:"proxyUrl"`
+		ForceStream           *bool   `json:"forceStream"`
+		MaxConcurrentRequests *int    `json:"maxConcurrentRequests"`
+		Remark                *string `json:"remark"`
+		Enabled               *bool   `json:"enabled"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return err
@@ -249,6 +256,10 @@ func (e *RemoteManagementExecutor) executeEndpointUpdate(raw json.RawMessage) er
 	if req.ForceStream != nil {
 		forceStream = *req.ForceStream
 	}
+	maxConcurrentRequests := endpoint.MaxConcurrentRequests
+	if req.MaxConcurrentRequests != nil {
+		maxConcurrentRequests = config.NormalizeEndpointMaxConcurrentRequests(*req.MaxConcurrentRequests)
+	}
 	enabled := endpoint.Enabled
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -256,7 +267,7 @@ func (e *RemoteManagementExecutor) executeEndpointUpdate(raw json.RawMessage) er
 	if e.Endpoints == nil {
 		return fmt.Errorf("endpoint service unavailable")
 	}
-	if err := e.Endpoints.UpdateEndpoint(index, name, apiURL, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, remark); err != nil {
+	if err := e.Endpoints.UpdateEndpoint(index, name, apiURL, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, maxConcurrentRequests, remark); err != nil {
 		return err
 	}
 	return e.Endpoints.ToggleEndpoint(index, enabled)

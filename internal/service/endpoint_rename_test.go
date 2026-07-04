@@ -46,6 +46,7 @@ func TestUpdateEndpointRejectsNormalizedDuplicateName(t *testing.T) {
 		"",
 		"",
 		false,
+		0,
 		"renamed",
 	)
 	if err == nil || err.Error() != "endpoint name 'Destination' already exists" {
@@ -89,6 +90,7 @@ func TestUpdateEndpointAllowsTrimmingCurrentLegacyName(t *testing.T) {
 		"",
 		"",
 		false,
+		0,
 		"",
 	); err != nil {
 		t.Fatalf("UpdateEndpoint() error = %v, want legacy self-trim to succeed", err)
@@ -166,6 +168,7 @@ func TestUpdateEndpointRenamePreservesTokenPool(t *testing.T) {
 		config.ThinkingHigh,
 		proxyURL,
 		true,
+		0,
 		remark,
 	); err != nil {
 		t.Fatalf("rename endpoint: %v", err)
@@ -273,6 +276,7 @@ func TestUpdateEndpointRenameFailureLeavesLiveConfigAndProxyUnchanged(t *testing
 		config.ThinkingHigh,
 		"",
 		true,
+		0,
 		updatedRemark,
 	)
 	if !errors.Is(err, storage.ErrEndpointNotFound) {

@@ -712,12 +712,12 @@ func (a *App) GetStatsFilters() string { return a.stats.GetStatsFilters() }
 
 // ========== Endpoint Bindings ==========
 
-func (a *App) AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, remark string) error {
-	return a.endpoint.AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, remark)
+func (a *App) AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, maxConcurrentRequests int, remark string) error {
+	return a.endpoint.AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, maxConcurrentRequests, remark)
 }
 func (a *App) RemoveEndpoint(index int) error { return a.endpoint.RemoveEndpoint(index) }
-func (a *App) UpdateEndpoint(index int, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, remark string) error {
-	return a.endpoint.UpdateEndpoint(index, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, remark)
+func (a *App) UpdateEndpoint(index int, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, maxConcurrentRequests int, remark string) error {
+	return a.endpoint.UpdateEndpoint(index, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, maxConcurrentRequests, remark)
 }
 func (a *App) ToggleEndpoint(index int, enabled bool) error {
 	return a.endpoint.ToggleEndpoint(index, enabled)
@@ -1474,7 +1474,7 @@ func (a *App) AddDiscoveredLANEndpoint(candidateJSON string) string {
 			})
 		}
 	}
-	if err := a.endpoint.AddEndpoint(newEndpoint.Name, newEndpoint.APIUrl, newEndpoint.APIKey, newEndpoint.AuthMode, newEndpoint.Transformer, newEndpoint.Model, newEndpoint.Thinking, newEndpoint.ProxyURL, newEndpoint.ForceStream, newEndpoint.Remark); err != nil {
+	if err := a.endpoint.AddEndpoint(newEndpoint.Name, newEndpoint.APIUrl, newEndpoint.APIKey, newEndpoint.AuthMode, newEndpoint.Transformer, newEndpoint.Model, newEndpoint.Thinking, newEndpoint.ProxyURL, newEndpoint.ForceStream, newEndpoint.MaxConcurrentRequests, newEndpoint.Remark); err != nil {
 		return desktopErrorJSON(err)
 	}
 	candidates := []landiscovery.Candidate{}

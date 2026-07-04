@@ -782,6 +782,82 @@ func TestMigrateEndpointProxyURLRunsOnce(t *testing.T) {
 	}
 }
 
+func TestMigrateEndpointMaxConcurrentRequestsDefaultsToUnlimited(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE endpoints (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL,
+			api_url TEXT NOT NULL,
+			api_key TEXT NOT NULL,
+			auth_mode TEXT NOT NULL DEFAULT 'api_key',
+			enabled BOOLEAN DEFAULT TRUE,
+			transformer TEXT DEFAULT 'claude',
+			model TEXT,
+			thinking TEXT DEFAULT '',
+			force_stream BOOLEAN DEFAULT FALSE,
+			proxy_url TEXT DEFAULT '',
+			remark TEXT,
+			sort_order INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE app_config (
+			key TEXT PRIMARY KEY,
+			value TEXT,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO endpoints (name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, proxy_url, remark)
+		VALUES ('Primary', 'https://api.example.com', 'key', 'api_key', TRUE, 'claude', '', '', '', '');
+	`)
+	if err != nil {
+		t.Fatalf("seed database: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seed database: %v", err)
+	}
+
+	store, err := NewSQLiteStorage(dbPath)
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	endpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get endpoints: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected one endpoint, got %d", len(endpoints))
+	}
+	if got := endpoints[0].MaxConcurrentRequests; got != 0 {
+		t.Fatalf("expected migrated max concurrent requests to default to 0, got %d", got)
+	}
+
+	endpoints[0].MaxConcurrentRequests = 2
+	if err := store.UpdateEndpoint(&endpoints[0]); err != nil {
+		t.Fatalf("update endpoint max concurrent requests: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close migrated storage: %v", err)
+	}
+
+	store, err = NewSQLiteStorage(dbPath)
+	if err != nil {
+		t.Fatalf("reopen storage: %v", err)
+	}
+	defer store.Close()
+	endpoints, err = store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("reload endpoints: %v", err)
+	}
+	if got := endpoints[0].MaxConcurrentRequests; got != 2 {
+		t.Fatalf("expected max concurrent requests to persist, got %d", got)
+	}
+}
+
 func TestDailyStatsClientIPDimensionAndFilters(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	store, err := NewSQLiteStorage(dbPath)

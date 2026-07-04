@@ -113,18 +113,19 @@ func (h *Handler) getEndpoint(w http.ResponseWriter, r *http.Request, name strin
 // createEndpoint creates a new endpoint
 func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"name"`
-		APIUrl      string `json:"apiUrl"`
-		APIKey      string `json:"apiKey"`
-		AuthMode    string `json:"authMode"`
-		Enabled     bool   `json:"enabled"`
-		Transformer string `json:"transformer"`
-		Model       string `json:"model"`
-		Thinking    string `json:"thinking"`
-		ForceStream *bool  `json:"forceStream"`
-		Remark      string `json:"remark"`
-		ProxyURL    string `json:"proxyUrl"`
-		CloneFrom   string `json:"cloneFrom"` // Clone from existing endpoint name
+		Name                  string `json:"name"`
+		APIUrl                string `json:"apiUrl"`
+		APIKey                string `json:"apiKey"`
+		AuthMode              string `json:"authMode"`
+		Enabled               bool   `json:"enabled"`
+		Transformer           string `json:"transformer"`
+		Model                 string `json:"model"`
+		Thinking              string `json:"thinking"`
+		ForceStream           *bool  `json:"forceStream"`
+		MaxConcurrentRequests *int   `json:"maxConcurrentRequests"`
+		Remark                string `json:"remark"`
+		ProxyURL              string `json:"proxyUrl"`
+		CloneFrom             string `json:"cloneFrom"` // Clone from existing endpoint name
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -132,19 +133,25 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If cloning, get API key from source endpoint
-	if req.CloneFrom != "" && req.APIKey == "" {
+	// If cloning, inherit omitted fields from source endpoint.
+	if req.CloneFrom != "" {
 		endpoints, err := h.storage.GetEndpoints()
 		if err == nil {
 			for _, ep := range endpoints {
 				if ep.Name == req.CloneFrom {
-					req.APIKey = ep.APIKey
+					if req.APIKey == "" {
+						req.APIKey = ep.APIKey
+					}
 					if req.Thinking == "" {
 						req.Thinking = ep.Thinking
 					}
 					if req.ForceStream == nil {
 						forceStream := ep.ForceStream
 						req.ForceStream = &forceStream
+					}
+					if req.MaxConcurrentRequests == nil {
+						maxConcurrentRequests := ep.MaxConcurrentRequests
+						req.MaxConcurrentRequests = &maxConcurrentRequests
 					}
 					if strings.TrimSpace(req.Model) == "" {
 						req.Model = ep.Model
@@ -163,16 +170,21 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	if req.ForceStream != nil {
 		forceStream = *req.ForceStream
 	}
+	maxConcurrentRequests := 0
+	if req.MaxConcurrentRequests != nil {
+		maxConcurrentRequests = config.NormalizeEndpointMaxConcurrentRequests(*req.MaxConcurrentRequests)
+	}
 	normalizedEndpoint := config.Endpoint{
-		APIUrl:      normalizeAPIUrl(req.APIUrl),
-		APIKey:      req.APIKey,
-		AuthMode:    authMode,
-		Transformer: req.Transformer,
-		Model:       req.Model,
-		Thinking:    req.Thinking,
-		ForceStream: forceStream,
-		Remark:      req.Remark,
-		ProxyURL:    strings.TrimSpace(req.ProxyURL),
+		APIUrl:                normalizeAPIUrl(req.APIUrl),
+		APIKey:                req.APIKey,
+		AuthMode:              authMode,
+		Transformer:           req.Transformer,
+		Model:                 req.Model,
+		Thinking:              req.Thinking,
+		ForceStream:           forceStream,
+		Remark:                req.Remark,
+		ProxyURL:              strings.TrimSpace(req.ProxyURL),
+		MaxConcurrentRequests: maxConcurrentRequests,
 	}
 	if normalizedEndpoint.Transformer == "" {
 		normalizedEndpoint.Transformer = "claude"
@@ -186,6 +198,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	req.Thinking = normalizedEndpoint.Thinking
 	req.ProxyURL = normalizedEndpoint.ProxyURL
 	forceStream = normalizedEndpoint.ForceStream
+	maxConcurrentRequests = normalizedEndpoint.MaxConcurrentRequests
 
 	// Validate required fields
 	if req.Name == "" || req.APIUrl == "" {
@@ -218,20 +231,21 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 
 	// Create new endpoint
 	endpoint := &storage.Endpoint{
-		Name:        req.Name,
-		APIUrl:      normalizeAPIUrl(req.APIUrl),
-		APIKey:      req.APIKey,
-		AuthMode:    authMode,
-		Enabled:     req.Enabled,
-		Transformer: req.Transformer,
-		Model:       req.Model,
-		Thinking:    req.Thinking,
-		ForceStream: forceStream,
-		Remark:      req.Remark,
-		ProxyURL:    strings.TrimSpace(req.ProxyURL),
-		SortOrder:   len(endpoints),
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		Name:                  req.Name,
+		APIUrl:                normalizeAPIUrl(req.APIUrl),
+		APIKey:                req.APIKey,
+		AuthMode:              authMode,
+		Enabled:               req.Enabled,
+		Transformer:           req.Transformer,
+		Model:                 req.Model,
+		Thinking:              req.Thinking,
+		ForceStream:           forceStream,
+		MaxConcurrentRequests: maxConcurrentRequests,
+		Remark:                req.Remark,
+		ProxyURL:              strings.TrimSpace(req.ProxyURL),
+		SortOrder:             len(endpoints),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
 	}
 
 	if err := validateEndpointCandidate(h.config, endpoints, storageEndpointToConfig(endpoint), ""); err != nil {
@@ -257,17 +271,18 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 // updateEndpoint updates an existing endpoint
 func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name string) {
 	var req struct {
-		Name        string `json:"name"`
-		APIUrl      string `json:"apiUrl"`
-		APIKey      string `json:"apiKey"`
-		AuthMode    string `json:"authMode"`
-		Enabled     bool   `json:"enabled"`
-		Transformer string `json:"transformer"`
-		Model       string `json:"model"`
-		Thinking    string `json:"thinking"`
-		ForceStream *bool  `json:"forceStream"`
-		Remark      string `json:"remark"`
-		ProxyURL    string `json:"proxyUrl"`
+		Name                  string `json:"name"`
+		APIUrl                string `json:"apiUrl"`
+		APIKey                string `json:"apiKey"`
+		AuthMode              string `json:"authMode"`
+		Enabled               bool   `json:"enabled"`
+		Transformer           string `json:"transformer"`
+		Model                 string `json:"model"`
+		Thinking              string `json:"thinking"`
+		ForceStream           *bool  `json:"forceStream"`
+		MaxConcurrentRequests *int   `json:"maxConcurrentRequests"`
+		Remark                string `json:"remark"`
+		ProxyURL              string `json:"proxyUrl"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -321,20 +336,24 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 		existing.AuthMode = config.AuthModeAPIKey
 	}
 	normalizedEndpoint := config.Endpoint{
-		Name:        existing.Name,
-		APIUrl:      existing.APIUrl,
-		APIKey:      existing.APIKey,
-		AuthMode:    existing.AuthMode,
-		Enabled:     existing.Enabled,
-		Transformer: existing.Transformer,
-		Model:       existing.Model,
-		Thinking:    existing.Thinking,
-		ForceStream: existing.ForceStream,
-		Remark:      existing.Remark,
-		ProxyURL:    existing.ProxyURL,
+		Name:                  existing.Name,
+		APIUrl:                existing.APIUrl,
+		APIKey:                existing.APIKey,
+		AuthMode:              existing.AuthMode,
+		Enabled:               existing.Enabled,
+		Transformer:           existing.Transformer,
+		Model:                 existing.Model,
+		Thinking:              existing.Thinking,
+		ForceStream:           existing.ForceStream,
+		Remark:                existing.Remark,
+		ProxyURL:              existing.ProxyURL,
+		MaxConcurrentRequests: existing.MaxConcurrentRequests,
 	}
 	if req.ForceStream != nil {
 		normalizedEndpoint.ForceStream = *req.ForceStream
+	}
+	if req.MaxConcurrentRequests != nil {
+		normalizedEndpoint.MaxConcurrentRequests = *req.MaxConcurrentRequests
 	}
 	if normalizedEndpoint.Transformer == "" {
 		normalizedEndpoint.Transformer = "claude"
@@ -349,6 +368,7 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	existing.Transformer = normalizedEndpoint.Transformer
 	existing.Thinking = normalizedEndpoint.Thinking
 	existing.ForceStream = normalizedEndpoint.ForceStream
+	existing.MaxConcurrentRequests = normalizedEndpoint.MaxConcurrentRequests
 	if existing.AuthMode == config.AuthModeAPIKey && existing.APIKey == "" {
 		WriteError(w, http.StatusBadRequest, "apiKey is required in api_key mode")
 		return

@@ -164,7 +164,7 @@ func credentialProviderTypeForAuthMode(authMode string) string {
 }
 
 // AddEndpoint adds a new endpoint
-func (e *EndpointService) AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, remark string) error {
+func (e *EndpointService) AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, maxConcurrentRequests int, remark string) error {
 	endpoints := e.config.GetEndpoints()
 	for _, ep := range endpoints {
 		if ep.Name == name {
@@ -184,17 +184,18 @@ func (e *EndpointService) AddEndpoint(name, apiUrl, apiKey, authMode, transforme
 	apiUrl = normalizeAPIUrl(apiUrl)
 
 	newEndpoint := config.Endpoint{
-		Name:        name,
-		APIUrl:      apiUrl,
-		APIKey:      apiKey,
-		AuthMode:    authMode,
-		Enabled:     true,
-		Transformer: transformer,
-		Model:       model,
-		Thinking:    thinking,
-		ForceStream: forceStream,
-		ProxyURL:    strings.TrimSpace(proxyURL),
-		Remark:      remark,
+		Name:                  name,
+		APIUrl:                apiUrl,
+		APIKey:                apiKey,
+		AuthMode:              authMode,
+		Enabled:               true,
+		Transformer:           transformer,
+		Model:                 model,
+		Thinking:              thinking,
+		ForceStream:           forceStream,
+		ProxyURL:              strings.TrimSpace(proxyURL),
+		Remark:                remark,
+		MaxConcurrentRequests: maxConcurrentRequests,
 	}
 	config.ApplyEndpointAuthModeRules(&newEndpoint)
 	endpoints = append(endpoints, newEndpoint)
@@ -261,7 +262,7 @@ func (e *EndpointService) RemoveEndpoint(index int) error {
 }
 
 // UpdateEndpoint updates an endpoint by index
-func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, remark string) error {
+func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, maxConcurrentRequests int, remark string) error {
 	endpoints := e.config.GetEndpoints()
 
 	if index < 0 || index >= len(endpoints) {
@@ -293,17 +294,18 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 	apiUrl = normalizeAPIUrl(apiUrl)
 
 	updatedEndpoint := config.Endpoint{
-		Name:        name,
-		APIUrl:      apiUrl,
-		APIKey:      apiKey,
-		AuthMode:    authMode,
-		Enabled:     enabled,
-		Transformer: transformer,
-		Model:       model,
-		Thinking:    thinking,
-		ForceStream: forceStream,
-		ProxyURL:    strings.TrimSpace(proxyURL),
-		Remark:      remark,
+		Name:                  name,
+		APIUrl:                apiUrl,
+		APIKey:                apiKey,
+		AuthMode:              authMode,
+		Enabled:               enabled,
+		Transformer:           transformer,
+		Model:                 model,
+		Thinking:              thinking,
+		ForceStream:           forceStream,
+		ProxyURL:              strings.TrimSpace(proxyURL),
+		Remark:                remark,
+		MaxConcurrentRequests: maxConcurrentRequests,
 	}
 	config.ApplyEndpointAuthModeRules(&updatedEndpoint)
 	endpoints[index] = updatedEndpoint
@@ -321,18 +323,19 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 		configAdapter := storage.NewConfigStorageAdapter(e.storage)
 		if oldName != updatedEndpoint.Name {
 			if err := configAdapter.RenameEndpoint(oldName, &config.StorageEndpoint{
-				Name:        updatedEndpoint.Name,
-				APIUrl:      updatedEndpoint.APIUrl,
-				APIKey:      updatedEndpoint.APIKey,
-				AuthMode:    updatedEndpoint.AuthMode,
-				Enabled:     updatedEndpoint.Enabled,
-				Transformer: updatedEndpoint.Transformer,
-				Model:       updatedEndpoint.Model,
-				Thinking:    updatedEndpoint.Thinking,
-				ForceStream: updatedEndpoint.ForceStream,
-				ProxyURL:    updatedEndpoint.ProxyURL,
-				Remark:      updatedEndpoint.Remark,
-				SortOrder:   index,
+				Name:                  updatedEndpoint.Name,
+				APIUrl:                updatedEndpoint.APIUrl,
+				APIKey:                updatedEndpoint.APIKey,
+				AuthMode:              updatedEndpoint.AuthMode,
+				Enabled:               updatedEndpoint.Enabled,
+				Transformer:           updatedEndpoint.Transformer,
+				Model:                 updatedEndpoint.Model,
+				Thinking:              updatedEndpoint.Thinking,
+				ForceStream:           updatedEndpoint.ForceStream,
+				ProxyURL:              updatedEndpoint.ProxyURL,
+				Remark:                updatedEndpoint.Remark,
+				MaxConcurrentRequests: updatedEndpoint.MaxConcurrentRequests,
+				SortOrder:             index,
 			}); err != nil {
 				return fmt.Errorf("failed to rename endpoint: %w", err)
 			}

@@ -874,6 +874,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	planCurrentEndpointName := currentEndpointName
 	if !useSpecificEndpoint {
 		requestEndpoints = p.getRequestPlanEndpoints(endpoints, obs)
+		requestEndpoints = p.filterConcurrencyLimitedEndpoints(requestEndpoints, obs)
 		requestEndpoints, planCurrentEndpointName = prioritizeRequestEndpointsForClientFormat(requestEndpoints, clientFormat, currentEndpointName, obs)
 	}
 	skipCurrentEndpoint := !useSpecificEndpoint && planCurrentEndpointName == currentEndpointName && p.isEndpointDeprioritized(currentEndpointName)

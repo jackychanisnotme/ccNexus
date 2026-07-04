@@ -87,6 +87,13 @@ func NormalizeThinkingEffort(effort string) string {
 	}
 }
 
+func NormalizeEndpointMaxConcurrentRequests(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
 func ApplyEndpointAuthModeRules(ep *Endpoint) {
 	if ep == nil {
 		return
@@ -94,6 +101,7 @@ func ApplyEndpointAuthModeRules(ep *Endpoint) {
 
 	ep.AuthMode = NormalizeAuthMode(ep.AuthMode)
 	ep.Thinking = NormalizeThinkingEffort(ep.Thinking)
+	ep.MaxConcurrentRequests = NormalizeEndpointMaxConcurrentRequests(ep.MaxConcurrentRequests)
 	ep.APIUrl = strings.TrimSuffix(strings.TrimSpace(ep.APIUrl), "/")
 	ep.Transformer = providercompat.NormalizeTransformer(ep.Transformer)
 
@@ -171,17 +179,18 @@ func isCodexBackendAPIURL(raw string) bool {
 
 // Endpoint represents a single API endpoint configuration
 type Endpoint struct {
-	Name        string `json:"name"`
-	APIUrl      string `json:"apiUrl"`
-	APIKey      string `json:"apiKey"`
-	AuthMode    string `json:"authMode,omitempty"`
-	Enabled     bool   `json:"enabled"`
-	Transformer string `json:"transformer,omitempty"` // Transformer type: claude, openai, openai2, gemini, deepseek, kimi
-	Model       string `json:"model,omitempty"`       // Target model name for non-Claude APIs
-	Thinking    string `json:"thinking,omitempty"`    // Reasoning effort: off, low, medium, high, xhigh
-	ForceStream bool   `json:"forceStream,omitempty"`
-	ProxyURL    string `json:"proxyUrl,omitempty"` // Optional endpoint-specific proxy URL
-	Remark      string `json:"remark,omitempty"`   // Optional remark for the endpoint
+	Name                  string `json:"name"`
+	APIUrl                string `json:"apiUrl"`
+	APIKey                string `json:"apiKey"`
+	AuthMode              string `json:"authMode,omitempty"`
+	Enabled               bool   `json:"enabled"`
+	Transformer           string `json:"transformer,omitempty"` // Transformer type: claude, openai, openai2, gemini, deepseek, kimi
+	Model                 string `json:"model,omitempty"`       // Target model name for non-Claude APIs
+	Thinking              string `json:"thinking,omitempty"`    // Reasoning effort: off, low, medium, high, xhigh
+	ForceStream           bool   `json:"forceStream,omitempty"`
+	ProxyURL              string `json:"proxyUrl,omitempty"`              // Optional endpoint-specific proxy URL
+	Remark                string `json:"remark,omitempty"`                // Optional remark for the endpoint
+	MaxConcurrentRequests int    `json:"maxConcurrentRequests,omitempty"` // 0 means unlimited
 }
 
 // WebDAVConfig represents WebDAV synchronization configuration
@@ -909,18 +918,19 @@ type StorageAdapter interface {
 
 // StorageEndpoint represents an endpoint in storage
 type StorageEndpoint struct {
-	Name        string
-	APIUrl      string
-	APIKey      string
-	AuthMode    string
-	Enabled     bool
-	Transformer string
-	Model       string
-	Thinking    string
-	ForceStream bool
-	ProxyURL    string
-	Remark      string
-	SortOrder   int
+	Name                  string
+	APIUrl                string
+	APIKey                string
+	AuthMode              string
+	Enabled               bool
+	Transformer           string
+	Model                 string
+	Thinking              string
+	ForceStream           bool
+	ProxyURL              string
+	Remark                string
+	MaxConcurrentRequests int
+	SortOrder             int
 }
 
 // LoadFromStorage loads configuration from SQLite storage
@@ -936,17 +946,18 @@ func LoadFromStorage(storage StorageAdapter) (*Config, error) {
 
 	for _, ep := range endpoints {
 		endpoint := Endpoint{
-			Name:        ep.Name,
-			APIUrl:      ep.APIUrl,
-			APIKey:      ep.APIKey,
-			AuthMode:    NormalizeAuthMode(ep.AuthMode),
-			Enabled:     ep.Enabled,
-			Transformer: ep.Transformer,
-			Model:       ep.Model,
-			Thinking:    ep.Thinking,
-			ForceStream: ep.ForceStream,
-			ProxyURL:    strings.TrimSpace(ep.ProxyURL),
-			Remark:      ep.Remark,
+			Name:                  ep.Name,
+			APIUrl:                ep.APIUrl,
+			APIKey:                ep.APIKey,
+			AuthMode:              NormalizeAuthMode(ep.AuthMode),
+			Enabled:               ep.Enabled,
+			Transformer:           ep.Transformer,
+			Model:                 ep.Model,
+			Thinking:              ep.Thinking,
+			ForceStream:           ep.ForceStream,
+			ProxyURL:              strings.TrimSpace(ep.ProxyURL),
+			Remark:                ep.Remark,
+			MaxConcurrentRequests: ep.MaxConcurrentRequests,
 		}
 		if endpoint.Transformer == "" {
 			endpoint.Transformer = "claude"
@@ -1252,17 +1263,18 @@ func (c *Config) SaveToStorage(storage StorageAdapter) error {
 			SortOrder: i, // Use array index as sort order
 		}
 		normalizedEndpoint := Endpoint{
-			Name:        ep.Name,
-			APIUrl:      ep.APIUrl,
-			APIKey:      ep.APIKey,
-			AuthMode:    ep.AuthMode,
-			Enabled:     ep.Enabled,
-			Transformer: ep.Transformer,
-			Model:       ep.Model,
-			Thinking:    ep.Thinking,
-			ForceStream: ep.ForceStream,
-			ProxyURL:    ep.ProxyURL,
-			Remark:      ep.Remark,
+			Name:                  ep.Name,
+			APIUrl:                ep.APIUrl,
+			APIKey:                ep.APIKey,
+			AuthMode:              ep.AuthMode,
+			Enabled:               ep.Enabled,
+			Transformer:           ep.Transformer,
+			Model:                 ep.Model,
+			Thinking:              ep.Thinking,
+			ForceStream:           ep.ForceStream,
+			ProxyURL:              ep.ProxyURL,
+			Remark:                ep.Remark,
+			MaxConcurrentRequests: ep.MaxConcurrentRequests,
 		}
 		if normalizedEndpoint.Transformer == "" {
 			normalizedEndpoint.Transformer = "claude"
@@ -1278,6 +1290,7 @@ func (c *Config) SaveToStorage(storage StorageAdapter) error {
 		endpoint.ForceStream = normalizedEndpoint.ForceStream
 		endpoint.ProxyURL = normalizedEndpoint.ProxyURL
 		endpoint.Remark = normalizedEndpoint.Remark
+		endpoint.MaxConcurrentRequests = normalizedEndpoint.MaxConcurrentRequests
 		endpoint.SortOrder = i
 
 		if existingNames[ep.Name] {

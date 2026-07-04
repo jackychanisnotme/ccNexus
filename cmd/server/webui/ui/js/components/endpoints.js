@@ -413,6 +413,11 @@ class Endpoints {
                                 <small class="text-muted">${t('endpoints.forceStreamHint')}</small>
                             </div>
                             <div class="form-group">
+                                <label class="form-label">${t('endpoints.maxConcurrentRequests')}</label>
+                                <input type="number" class="form-input" name="maxConcurrentRequests" min="0" step="1" inputmode="numeric" value="${endpoint ? Number(endpoint.maxConcurrentRequests || 0) : 0}" placeholder="0">
+                                <small class="text-muted">${t('endpoints.maxConcurrentRequestsHint')}</small>
+                            </div>
+                            <div class="form-group">
                                 <label class="form-label">${t('endpoints.remark')}</label>
                                 <textarea class="form-textarea" name="remark">${endpoint ? this.escapeHtml(endpoint.remark || '') : ''}</textarea>
                             </div>
@@ -566,6 +571,12 @@ class Endpoints {
     async saveEndpoint(isEdit, originalName, isClone = false) {
         const form = document.getElementById('endpoint-form');
         const formData = new FormData(form);
+        const maxConcurrentRequestsValue = String(formData.get('maxConcurrentRequests') || '').trim();
+        const maxConcurrentRequests = maxConcurrentRequestsValue === '' ? 0 : Number(maxConcurrentRequestsValue);
+        if (!Number.isInteger(maxConcurrentRequests) || maxConcurrentRequests < 0) {
+            notifications.error(t('endpoints.invalidMaxConcurrentRequests'));
+            return;
+        }
 
         const data = {
             name: formData.get('name'),
@@ -576,6 +587,7 @@ class Endpoints {
             transformer: formData.get('transformer'),
             model: formData.get('model'),
             forceStream: formData.get('forceStream') === 'on',
+            maxConcurrentRequests,
             remark: formData.get('remark'),
             enabled: formData.get('enabled') === 'on'
         };
@@ -725,6 +737,7 @@ class Endpoints {
             model: endpoint.model,
             thinking: endpoint.thinking,
             forceStream: !!endpoint.forceStream,
+            maxConcurrentRequests: endpoint.maxConcurrentRequests || 0,
             remark: endpoint.remark,
             enabled: endpoint.enabled,
             cloneFrom: name  // Reference to source endpoint

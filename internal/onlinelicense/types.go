@@ -278,14 +278,15 @@ type RemoteSnapshot struct {
 }
 
 type RemoteEndpointSnapshot struct {
-	Name         string           `json:"name"`
-	APIUrl       string           `json:"apiUrl"`
-	APIKeyMasked string           `json:"apiKeyMasked,omitempty"`
-	AuthMode     string           `json:"authMode"`
-	Enabled      bool             `json:"enabled"`
-	Transformer  string           `json:"transformer,omitempty"`
-	Model        string           `json:"model,omitempty"`
-	Stats        RemoteUsageStats `json:"stats"`
+	Name                  string           `json:"name"`
+	APIUrl                string           `json:"apiUrl"`
+	APIKeyMasked          string           `json:"apiKeyMasked,omitempty"`
+	AuthMode              string           `json:"authMode"`
+	Enabled               bool             `json:"enabled"`
+	Transformer           string           `json:"transformer,omitempty"`
+	Model                 string           `json:"model,omitempty"`
+	MaxConcurrentRequests int              `json:"maxConcurrentRequests,omitempty"`
+	Stats                 RemoteUsageStats `json:"stats"`
 }
 
 type RemoteTokenPoolSnapshot struct {

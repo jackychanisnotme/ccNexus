@@ -162,17 +162,18 @@ func storageEndpointToConfig(endpoint *storage.Endpoint) config.Endpoint {
 		return config.Endpoint{}
 	}
 	return config.Endpoint{
-		Name:        endpoint.Name,
-		APIUrl:      endpoint.APIUrl,
-		APIKey:      endpoint.APIKey,
-		AuthMode:    endpoint.AuthMode,
-		Enabled:     endpoint.Enabled,
-		Transformer: endpoint.Transformer,
-		Model:       endpoint.Model,
-		Thinking:    endpoint.Thinking,
-		ForceStream: endpoint.ForceStream,
-		Remark:      endpoint.Remark,
-		ProxyURL:    endpoint.ProxyURL,
+		Name:                  endpoint.Name,
+		APIUrl:                endpoint.APIUrl,
+		APIKey:                endpoint.APIKey,
+		AuthMode:              endpoint.AuthMode,
+		Enabled:               endpoint.Enabled,
+		Transformer:           endpoint.Transformer,
+		Model:                 endpoint.Model,
+		Thinking:              endpoint.Thinking,
+		ForceStream:           endpoint.ForceStream,
+		Remark:                endpoint.Remark,
+		ProxyURL:              endpoint.ProxyURL,
+		MaxConcurrentRequests: endpoint.MaxConcurrentRequests,
 	}
 }
 

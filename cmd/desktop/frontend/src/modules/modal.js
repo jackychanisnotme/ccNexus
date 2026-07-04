@@ -220,12 +220,25 @@ function isClaudeOAuthTokenPoolMode(mode) {
     return mode === AUTH_MODE_CLAUDE_OAUTH_TOKEN_POOL;
 }
 
+function readEndpointMaxConcurrentRequests() {
+    const raw = document.getElementById('endpointMaxConcurrentRequests')?.value?.trim() || '';
+    if (raw === '') {
+        return 0;
+    }
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 0) {
+        return null;
+    }
+    return value;
+}
+
 function readEndpointDraftFromModal() {
     const authMode = getEndpointAuthMode();
     let url = document.getElementById('endpointUrl')?.value?.trim() || '';
     let key = document.getElementById('endpointKey')?.value?.trim() || '';
     let transformer = document.getElementById('endpointTransformer')?.value || 'claude';
     const model = document.getElementById('endpointModel')?.value?.trim() || '';
+    const maxConcurrentRequests = readEndpointMaxConcurrentRequests();
     const isCodexTokenPool = isCodexTokenPoolMode(authMode);
     const isClaudeOAuthTokenPool = isClaudeOAuthTokenPoolMode(authMode);
 
@@ -249,6 +262,7 @@ function readEndpointDraftFromModal() {
         thinking: getThinkingControlValue(),
         proxyUrl: document.getElementById('endpointProxyUrl')?.value?.trim() || '',
         forceStream: !!document.getElementById('endpointForceStream')?.checked,
+        maxConcurrentRequests,
         remark: document.getElementById('endpointRemark')?.value?.trim() || ''
     };
 }
@@ -280,6 +294,7 @@ function endpointDraftHasUnsavedChanges(draft) {
         draftValue(saved.thinking) !== draft.thinking ||
         draftValue(saved.proxyUrl) !== draft.proxyUrl ||
         !!saved.forceStream !== draft.forceStream ||
+        (saved.maxConcurrentRequests || 0) !== (draft.maxConcurrentRequests || 0) ||
         draftValue(saved.remark) !== draft.remark
     );
 }
@@ -298,6 +313,10 @@ function validateEndpointDraft(draft, config) {
     }
     if (draft.authMode === AUTH_MODE_API_KEY && !draft.key) {
         showError(t('modal.requiredApiKey'));
+        return false;
+    }
+    if (!Number.isInteger(draft.maxConcurrentRequests) || draft.maxConcurrentRequests < 0) {
+        showError(t('modal.invalidMaxConcurrentRequests'));
         return false;
     }
 
@@ -321,9 +340,9 @@ async function persistEndpointDraftFromModal() {
 
     try {
         if (currentEditIndex === -1) {
-            await addEndpoint(draft.name, draft.url, draft.key, draft.authMode, draft.transformer, draft.model, draft.thinking, draft.proxyUrl, draft.forceStream, draft.remark);
+            await addEndpoint(draft.name, draft.url, draft.key, draft.authMode, draft.transformer, draft.model, draft.thinking, draft.proxyUrl, draft.forceStream, draft.maxConcurrentRequests, draft.remark);
         } else {
-            await updateEndpoint(currentEditIndex, draft.name, draft.url, draft.key, draft.authMode, draft.transformer, draft.model, draft.thinking, draft.proxyUrl, draft.forceStream, draft.remark);
+            await updateEndpoint(currentEditIndex, draft.name, draft.url, draft.key, draft.authMode, draft.transformer, draft.model, draft.thinking, draft.proxyUrl, draft.forceStream, draft.maxConcurrentRequests, draft.remark);
         }
 
         const freshConfig = await loadFreshEndpointConfig();
@@ -400,6 +419,7 @@ function bindEndpointDraftChangeHandlers() {
         'endpointTransformer',
         'endpointModel',
         'endpointForceStream',
+        'endpointMaxConcurrentRequests',
         'endpointRemark'
     ];
 
@@ -491,6 +511,7 @@ export function showAddEndpointModal() {
     document.getElementById('endpointTransformer').value = 'claude';
     document.getElementById('endpointModel').value = '';
     document.getElementById('endpointForceStream').checked = false;
+    document.getElementById('endpointMaxConcurrentRequests').value = '0';
     document.getElementById('endpointRemark').value = '';
     handleAuthModeChange();
     updateManageTokenPoolButton();
@@ -515,6 +536,7 @@ export function showAddEndpointModalWithPreset(presetData) {
 	document.getElementById('endpointTransformer').value = presetData.transformer || 'claude';
 	document.getElementById('endpointModel').value = presetData.model || '';
 	document.getElementById('endpointForceStream').checked = !!presetData.forceStream;
+	document.getElementById('endpointMaxConcurrentRequests').value = String(presetData.maxConcurrentRequests || 0);
 	document.getElementById('endpointRemark').value = presetData.remark || '';
 	handleAuthModeChange();
 	updateManageTokenPoolButton();
@@ -543,6 +565,7 @@ export async function editEndpoint(index) {
     document.getElementById('endpointTransformer').value = ep.transformer || 'claude';
     document.getElementById('endpointModel').value = ep.model || '';
     document.getElementById('endpointForceStream').checked = !!ep.forceStream;
+    document.getElementById('endpointMaxConcurrentRequests').value = String(ep.maxConcurrentRequests || 0);
     document.getElementById('endpointRemark').value = ep.remark || '';
 
     handleAuthModeChange();

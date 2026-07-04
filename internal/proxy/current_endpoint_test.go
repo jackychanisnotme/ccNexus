@@ -156,6 +156,79 @@ func TestRequestPlanStartsAtNextEndpointWhenCurrentIsCooled(t *testing.T) {
 	}
 }
 
+func TestRequestPlanSkipsEndpointAtConcurrencyLimit(t *testing.T) {
+	endpoints := []config.Endpoint{
+		failoverPolicyTestEndpoint("A", "https://a.example"),
+		failoverPolicyTestEndpoint("B", "https://b.example"),
+		failoverPolicyTestEndpoint("C", "https://c.example"),
+	}
+	endpoints[0].MaxConcurrentRequests = 1
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints(endpoints)
+	p := New(cfg, &noopStatsStorage{}, nil, "test-device")
+	if err := p.SetCurrentEndpoint("A"); err != nil {
+		t.Fatalf("set current endpoint: %v", err)
+	}
+	p.markRequestActive("A")
+	defer p.markRequestInactive("A")
+
+	available := p.filterConcurrencyLimitedEndpoints(endpoints, requestObservability{RequestID: "req-concurrency"})
+	plan := newRequestEndpointPlanForCurrent(available, endpoints, p.GetCurrentEndpointName())
+	if got := plan.Current().Name; got != "B" {
+		t.Fatalf("expected request plan to skip saturated endpoint A and start at B, got %q", got)
+	}
+	if p.isEndpointInActiveCooldown("A") {
+		t.Fatal("concurrency skip must not put endpoint A in cooldown")
+	}
+	if got := p.GetCurrentEndpointName(); got != "A" {
+		t.Fatalf("concurrency skip must not change global current endpoint, got %q", got)
+	}
+}
+
+func TestRequestPlanDoesNotFilterUnlimitedEndpoint(t *testing.T) {
+	endpoints := []config.Endpoint{
+		failoverPolicyTestEndpoint("A", "https://a.example"),
+		failoverPolicyTestEndpoint("B", "https://b.example"),
+	}
+	endpoints[0].MaxConcurrentRequests = 0
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints(endpoints)
+	p := New(cfg, &noopStatsStorage{}, nil, "test-device")
+	p.markRequestActive("A")
+	defer p.markRequestInactive("A")
+
+	available := p.filterConcurrencyLimitedEndpoints(endpoints, requestObservability{RequestID: "req-unlimited"})
+	plan := newRequestEndpointPlanForCurrent(available, endpoints, p.GetCurrentEndpointName())
+	if got := plan.Current().Name; got != "A" {
+		t.Fatalf("expected unlimited endpoint A to remain first, got %q", got)
+	}
+}
+
+func TestRequestPlanFallsBackToOriginalListWhenAllEndpointsAtConcurrencyLimit(t *testing.T) {
+	endpoints := []config.Endpoint{
+		failoverPolicyTestEndpoint("A", "https://a.example"),
+		failoverPolicyTestEndpoint("B", "https://b.example"),
+	}
+	endpoints[0].MaxConcurrentRequests = 1
+	endpoints[1].MaxConcurrentRequests = 1
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints(endpoints)
+	p := New(cfg, &noopStatsStorage{}, nil, "test-device")
+	p.markRequestActive("A")
+	p.markRequestActive("B")
+	defer p.markRequestInactive("A")
+	defer p.markRequestInactive("B")
+
+	available := p.filterConcurrencyLimitedEndpoints(endpoints, requestObservability{RequestID: "req-all-saturated"})
+	if len(available) != len(endpoints) {
+		t.Fatalf("expected all-saturated fallback to keep original list length %d, got %d", len(endpoints), len(available))
+	}
+	plan := newRequestEndpointPlanForCurrent(available, endpoints, p.GetCurrentEndpointName())
+	if got := plan.Current().Name; got != "A" {
+		t.Fatalf("expected all-saturated fallback to keep original current endpoint A, got %q", got)
+	}
+}
+
 func TestRequestPlanDeprioritizesRecoveredCurrentEndpoint(t *testing.T) {
 	endpoints := []config.Endpoint{
 		failoverPolicyTestEndpoint("A", "https://a.example"),

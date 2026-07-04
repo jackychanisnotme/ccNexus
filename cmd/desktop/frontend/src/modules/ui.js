@@ -542,6 +542,13 @@ export function initUI() {
                         </p>
                     </div>
                     <div class="form-group">
+                        <label>${t('modal.maxConcurrentRequests')}</label>
+                        <input type="number" id="endpointMaxConcurrentRequests" min="0" step="1" inputmode="numeric" placeholder="0">
+                        <p style="color: #666; font-size: 12px; margin-top: 5px;">
+                            ${t('modal.maxConcurrentRequestsHelp')}
+                        </p>
+                    </div>
+                    <div class="form-group">
                         <label>${t('modal.remark')}</label>
                         <input type="text" id="endpointRemark" placeholder="${t('modal.remarkHelp')}">
                     </div>

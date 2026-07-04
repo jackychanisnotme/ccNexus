@@ -33,11 +33,12 @@ func TestRemoteManagementExecutorCreatesEndpoint(t *testing.T) {
 		"apiUrl":"https://remote-added.example.com/v1",
 		"apiKey":"remote-secret",
 		"authMode":"api_key",
-		"transformer":"openai",
-		"model":"gpt-5",
-		"enabled":true,
-		"remark":"created remotely"
-	}`)
+			"transformer":"openai",
+			"model":"gpt-5",
+			"maxConcurrentRequests":2,
+			"enabled":true,
+			"remark":"created remotely"
+		}`)
 	outcome, err := executor.ExecuteRemoteCommand(onlinelicense.RemoteCommandPayload{
 		CommandType: "endpoint.create",
 		Payload:     payload,
@@ -50,10 +51,10 @@ func TestRemoteManagementExecutorCreatesEndpoint(t *testing.T) {
 	}
 
 	got := cfg.GetEndpoints()
-	if len(got) != 2 || got[1].Name != "Remote Added" || got[1].APIUrl != "https://remote-added.example.com/v1" || got[1].APIKey != "remote-secret" {
+	if len(got) != 2 || got[1].Name != "Remote Added" || got[1].APIUrl != "https://remote-added.example.com/v1" || got[1].APIKey != "remote-secret" || got[1].MaxConcurrentRequests != 2 {
 		t.Fatalf("created endpoints = %#v", got)
 	}
-	if outcome.Snapshot == nil || len(outcome.Snapshot.Endpoints) != 2 || outcome.Snapshot.Endpoints[1].APIKeyMasked == "remote-secret" {
+	if outcome.Snapshot == nil || len(outcome.Snapshot.Endpoints) != 2 || outcome.Snapshot.Endpoints[1].APIKeyMasked == "remote-secret" || outcome.Snapshot.Endpoints[1].MaxConcurrentRequests != 2 {
 		t.Fatalf("snapshot after create = %#v", outcome.Snapshot)
 	}
 }
@@ -61,17 +62,18 @@ func TestRemoteManagementExecutorCreatesEndpoint(t *testing.T) {
 func TestRemoteManagementExecutorUpdatePreservesOmittedFields(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.UpdateEndpoints([]config.Endpoint{{
-		Name:        "Existing",
-		APIUrl:      "https://existing.example.com/v1",
-		APIKey:      "existing-key",
-		AuthMode:    config.AuthModeAPIKey,
-		Enabled:     true,
-		Transformer: "openai",
-		Model:       "gpt-5",
-		Thinking:    config.ThinkingHigh,
-		ForceStream: true,
-		ProxyURL:    "http://127.0.0.1:7890",
-		Remark:      "keep remark",
+		Name:                  "Existing",
+		APIUrl:                "https://existing.example.com/v1",
+		APIKey:                "existing-key",
+		AuthMode:              config.AuthModeAPIKey,
+		Enabled:               true,
+		Transformer:           "openai",
+		Model:                 "gpt-5",
+		Thinking:              config.ThinkingHigh,
+		ForceStream:           true,
+		ProxyURL:              "http://127.0.0.1:7890",
+		Remark:                "keep remark",
+		MaxConcurrentRequests: 4,
 	}})
 	p := proxy.New(cfg, nil, nil, "remote-test-device")
 	endpoints := NewEndpointService(cfg, p, nil)
@@ -97,8 +99,44 @@ func TestRemoteManagementExecutorUpdatePreservesOmittedFields(t *testing.T) {
 		t.Fatalf("apiUrl = %q", updated.APIUrl)
 	}
 	if updated.APIKey != "existing-key" || updated.Model != "gpt-5" || updated.Thinking != config.ThinkingHigh ||
-		!updated.ForceStream || updated.ProxyURL != "http://127.0.0.1:7890" || updated.Remark != "keep remark" || !updated.Enabled {
+		!updated.ForceStream || updated.ProxyURL != "http://127.0.0.1:7890" || updated.Remark != "keep remark" || updated.MaxConcurrentRequests != 4 || !updated.Enabled {
 		t.Fatalf("endpoint update did not preserve omitted fields: %#v", updated)
+	}
+}
+
+func TestRemoteManagementExecutorUpdatesMaxConcurrentRequests(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:                  "Existing",
+		APIUrl:                "https://existing.example.com/v1",
+		APIKey:                "existing-key",
+		AuthMode:              config.AuthModeAPIKey,
+		Enabled:               true,
+		Transformer:           "openai",
+		Model:                 "gpt-5",
+		MaxConcurrentRequests: 1,
+	}})
+	p := proxy.New(cfg, nil, nil, "remote-test-device")
+	endpoints := NewEndpointService(cfg, p, nil)
+	executor := NewRemoteManagementExecutor(cfg, nil, endpoints)
+
+	outcome, err := executor.ExecuteRemoteCommand(onlinelicense.RemoteCommandPayload{
+		CommandType: "endpoint.update",
+		Payload:     json.RawMessage(`{"endpointName":"Existing","maxConcurrentRequests":3}`),
+	})
+	if err != nil {
+		t.Fatalf("execute endpoint.update: %v", err)
+	}
+	if outcome == nil || outcome.Snapshot == nil || len(outcome.Snapshot.Endpoints) != 1 {
+		t.Fatalf("endpoint.update outcome = %#v", outcome)
+	}
+
+	got := cfg.GetEndpoints()
+	if len(got) != 1 || got[0].MaxConcurrentRequests != 3 {
+		t.Fatalf("updated endpoints = %#v, want max concurrent requests 3", got)
+	}
+	if outcome.Snapshot.Endpoints[0].MaxConcurrentRequests != 3 {
+		t.Fatalf("snapshot max concurrent requests = %d, want 3", outcome.Snapshot.Endpoints[0].MaxConcurrentRequests)
 	}
 }
 

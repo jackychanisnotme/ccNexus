@@ -388,6 +388,63 @@ func TestEndpointAPIProxyURLPersistsThroughCreateUpdateAndClone(t *testing.T) {
 	}
 }
 
+func TestEndpointAPIMaxConcurrentRequestsPersistsThroughCreateUpdateAndList(t *testing.T) {
+	store := newAPITestStorage(t)
+	cfg := config.DefaultConfig()
+	cfg.BasicAuthEnabled = false
+	proxyInstance := proxy.New(cfg, nil, store, "test-device")
+	handler := NewHandler(cfg, proxyInstance, store)
+
+	postJSON(t, handler, http.MethodPost, "/api/endpoints", map[string]any{
+		"name":                  "Limited",
+		"apiUrl":                "https://api.example.com",
+		"apiKey":                "source-key",
+		"authMode":              config.AuthModeAPIKey,
+		"enabled":               true,
+		"transformer":           "openai",
+		"model":                 "limited-model",
+		"maxConcurrentRequests": 2,
+	})
+
+	source := mustGetStoredEndpoint(t, store, "Limited")
+	if source.MaxConcurrentRequests != 2 {
+		t.Fatalf("expected created endpoint max concurrent requests to persist, got %d", source.MaxConcurrentRequests)
+	}
+
+	postJSON(t, handler, http.MethodPut, "/api/endpoints/Limited", map[string]any{
+		"name":                  "Limited",
+		"apiUrl":                "https://api.example.com",
+		"authMode":              config.AuthModeAPIKey,
+		"enabled":               true,
+		"transformer":           "openai",
+		"model":                 "limited-model",
+		"maxConcurrentRequests": 4,
+	})
+
+	source = mustGetStoredEndpoint(t, store, "Limited")
+	if source.MaxConcurrentRequests != 4 {
+		t.Fatalf("expected updated endpoint max concurrent requests to persist, got %d", source.MaxConcurrentRequests)
+	}
+
+	rec := requestJSON(t, handler, http.MethodGet, "/api/endpoints", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/endpoints status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp SuccessResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := resp.Data.(map[string]any)
+	endpoints := data["endpoints"].([]any)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected one listed endpoint, got %#v", endpoints)
+	}
+	listed := endpoints[0].(map[string]any)
+	if got := int(listed["maxConcurrentRequests"].(float64)); got != 4 {
+		t.Fatalf("listed max concurrent requests = %d, want 4", got)
+	}
+}
+
 func TestFetchModelsUsesProxyURLFromRequest(t *testing.T) {
 	store := newAPITestStorage(t)
 	cfg := config.DefaultConfig()

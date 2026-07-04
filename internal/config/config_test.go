@@ -255,6 +255,58 @@ func TestEndpointProxyURLPersistsThroughStorageRoundTrip(t *testing.T) {
 	}
 }
 
+func TestEndpointMaxConcurrentRequestsPersistsThroughStorageRoundTrip(t *testing.T) {
+	store := newFakeConfigStorage()
+	cfg := DefaultConfig()
+	cfg.UpdateEndpoints([]Endpoint{
+		{
+			Name:                  "Primary",
+			APIUrl:                "https://api.example.com",
+			APIKey:                "key",
+			AuthMode:              AuthModeAPIKey,
+			Enabled:               true,
+			Transformer:           "claude",
+			MaxConcurrentRequests: 3,
+		},
+	})
+
+	if err := cfg.SaveToStorage(store); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	reloaded, err := LoadFromStorage(store)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if len(reloaded.Endpoints) != 1 {
+		t.Fatalf("expected one endpoint, got %d", len(reloaded.Endpoints))
+	}
+	if got := reloaded.Endpoints[0].MaxConcurrentRequests; got != 3 {
+		t.Fatalf("expected max concurrent requests to round-trip, got %d", got)
+	}
+}
+
+func TestEndpointMaxConcurrentRequestsNormalizesNegativeToUnlimited(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.UpdateEndpoints([]Endpoint{
+		{
+			Name:                  "Primary",
+			APIUrl:                "https://api.example.com",
+			APIKey:                "key",
+			AuthMode:              AuthModeAPIKey,
+			Enabled:               true,
+			Transformer:           "claude",
+			MaxConcurrentRequests: -5,
+		},
+	})
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+	if got := cfg.GetEndpoints()[0].MaxConcurrentRequests; got != 0 {
+		t.Fatalf("expected negative max concurrent requests to normalize to 0, got %d", got)
+	}
+}
+
 func TestListenModeDefaultsToLocalAndBuildsListenAddr(t *testing.T) {
 	cfg := DefaultConfig()
 

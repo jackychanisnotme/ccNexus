@@ -127,6 +127,48 @@ func endpointCooldownIdentityChanged(oldEndpoint config.Endpoint, newEndpoint co
 		oldEndpoint.ForceStream != newEndpoint.ForceStream
 }
 
+func (p *Proxy) isEndpointAtConcurrencyLimit(endpoint config.Endpoint) bool {
+	limit := config.NormalizeEndpointMaxConcurrentRequests(endpoint.MaxConcurrentRequests)
+	if limit <= 0 {
+		return false
+	}
+	return p.getActiveRequestCount(endpoint.Name) >= limit
+}
+
+func (p *Proxy) filterConcurrencyLimitedEndpoints(endpoints []config.Endpoint, obs requestObservability) []config.Endpoint {
+	if len(endpoints) <= 1 {
+		return endpoints
+	}
+
+	available := make([]config.Endpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		limit := config.NormalizeEndpointMaxConcurrentRequests(endpoint.MaxConcurrentRequests)
+		if limit <= 0 {
+			available = append(available, endpoint)
+			continue
+		}
+		active := p.getActiveRequestCount(endpoint.Name)
+		if active < limit {
+			available = append(available, endpoint)
+			continue
+		}
+		logger.Debug("[CONCURRENCY] Skipping saturated endpoint for request plan: %s active=%d limit=%d %s",
+			endpoint.Name,
+			active,
+			limit,
+			requestLogFields(obs, endpoint.Name, 0, 0, "endpoint_concurrency_saturated"),
+		)
+	}
+
+	if len(available) == 0 {
+		logger.Debug("[CONCURRENCY] All candidate endpoints are saturated; using original endpoint list %s",
+			requestLogFields(obs, "", 0, 0, "all_endpoints_concurrency_saturated"),
+		)
+		return endpoints
+	}
+	return available
+}
+
 func (p *Proxy) getRequestPlanEndpoints(endpoints []config.Endpoint, obs requestObservability) []config.Endpoint {
 	if len(endpoints) <= 1 {
 		return endpoints

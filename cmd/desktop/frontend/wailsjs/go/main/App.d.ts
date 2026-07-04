@@ -5,7 +5,7 @@ export function ActivateEndpointCredential(arg1:number,arg2:number):Promise<void
 
 export function ActivateLicense(arg1:string):Promise<string>;
 
-export function AddEndpoint(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:boolean,arg10:string):Promise<void>;
+export function AddEndpoint(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:boolean,arg10:number,arg11:string):Promise<void>;
 
 export function AddProjectDir(arg1:string):Promise<void>;
 
@@ -267,7 +267,7 @@ export function UpdateBackupProvider(arg1:string):Promise<void>;
 
 export function UpdateConfig(arg1:string):Promise<void>;
 
-export function UpdateEndpoint(arg1:number,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:string,arg10:boolean,arg11:string):Promise<void>;
+export function UpdateEndpoint(arg1:number,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:string,arg10:boolean,arg11:number,arg12:string):Promise<void>;
 
 export function UpdateEndpointCredentialToken(arg1:number,arg2:number,arg3:string,arg4:string):Promise<void>;
 
