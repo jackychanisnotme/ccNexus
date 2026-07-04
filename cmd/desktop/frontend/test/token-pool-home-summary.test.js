@@ -48,7 +48,7 @@ const isFilterActive = () => false;
 const updateFilterStats = () => {};
 `;
 const endpointsSource = readFileSync(endpointsPath, 'utf8').replace(/^import .*;\s*$/gm, '')
-    + '\nexport { renderEndpointPoolHomeSummary, renderCompactEndpointPoolHomeSummary, setEndpointPoolHomeSummariesForTest };\n';
+    + '\nexport { renderEndpointPoolHomeSummary, renderCompactEndpointPoolHomeSummary, setEndpointPoolHomeSummariesForTest, scheduleEndpointPoolHomeAutoRefreshes, setEndpointPoolHomeRefreshStateForTest, waitForEndpointPoolHomeRefreshesForTest };\n';
 const endpointsModule = await import(`data:text/javascript;base64,${Buffer.from(dependencyStubs + endpointsSource).toString('base64')}`);
 
 after(() => {
@@ -109,5 +109,104 @@ describe('token pool homepage summary helpers', () => {
         assert.match(html, /endpoint-pool-home/);
         assert.match(html, /stale/);
         assert.doesNotMatch(html, /load failed/);
+    });
+
+    it('schedules a quiet background refresh when enabled accounts have no quota snapshot', async () => {
+        const {
+            scheduleEndpointPoolHomeAutoRefreshes,
+            setEndpointPoolHomeRefreshStateForTest,
+            waitForEndpointPoolHomeRefreshesForTest
+        } = endpointsModule;
+        const calls = [];
+        let summaryReloads = 0;
+        globalThis.window.go = { main: { App: {
+            FetchCodexRateLimitsForEndpoint: async (endpointName) => {
+                calls.push(endpointName);
+                return JSON.stringify({ success: true, data: { updated: 1, failed: 0, skipped: 0 } });
+            },
+            GetCodexTokenPoolHomeSummaries: async () => {
+                summaryReloads += 1;
+                return JSON.stringify({ success: true, data: [] });
+            }
+        } } };
+        setEndpointPoolHomeRefreshStateForTest(Date.parse('2026-06-28T10:00:00Z'));
+
+        const scheduled = scheduleEndpointPoolHomeAutoRefreshes([{
+            endpointName: 'Codex Pool',
+            endpointIndex: 1,
+            latestQuotaUpdatedAt: '2026-06-28T09:55:00Z',
+            accounts: [
+                { label: 'acct-a', enabled: true, status: 'active' }
+            ]
+        }]);
+
+        assert.deepEqual(scheduled, ['Codex Pool']);
+        await waitForEndpointPoolHomeRefreshesForTest();
+        assert.deepEqual(calls, ['Codex Pool']);
+        assert.equal(summaryReloads, 1);
+    });
+
+    it('does not refresh fresh quota snapshots', () => {
+        const {
+            scheduleEndpointPoolHomeAutoRefreshes,
+            setEndpointPoolHomeRefreshStateForTest
+        } = endpointsModule;
+        const calls = [];
+        globalThis.window.go = { main: { App: {
+            FetchCodexRateLimitsForEndpoint: async (endpointName) => {
+                calls.push(endpointName);
+                return JSON.stringify({ success: true, data: {} });
+            }
+        } } };
+        setEndpointPoolHomeRefreshStateForTest(Date.parse('2026-06-28T10:00:00Z'));
+
+        const scheduled = scheduleEndpointPoolHomeAutoRefreshes([{
+            endpointName: 'Codex Pool',
+            endpointIndex: 1,
+            latestQuotaUpdatedAt: '2026-06-28T09:50:01Z',
+            accounts: [
+                { label: 'acct-a', enabled: true, status: 'active', rateLimitStatus: 'ok' }
+            ]
+        }]);
+
+        assert.deepEqual(scheduled, []);
+        assert.deepEqual(calls, []);
+    });
+
+    it('throttles duplicate background refresh attempts while one is running or recently attempted', async () => {
+        const {
+            scheduleEndpointPoolHomeAutoRefreshes,
+            setEndpointPoolHomeRefreshStateForTest,
+            waitForEndpointPoolHomeRefreshesForTest
+        } = endpointsModule;
+        const calls = [];
+        let releaseRefresh;
+        globalThis.window.go = { main: { App: {
+            FetchCodexRateLimitsForEndpoint: async (endpointName) => {
+                calls.push(endpointName);
+                await new Promise((resolve) => { releaseRefresh = resolve; });
+                return JSON.stringify({ success: true, data: {} });
+            },
+            GetCodexTokenPoolHomeSummaries: async () => JSON.stringify({ success: true, data: [] })
+        } } };
+        const now = Date.parse('2026-06-28T10:00:00Z');
+        const staleSummary = {
+            endpointName: 'Codex Pool',
+            endpointIndex: 1,
+            latestQuotaUpdatedAt: '2026-06-28T09:00:00Z',
+            accounts: [
+                { label: 'acct-a', enabled: true, status: 'active', rateLimitStatus: 'ok' }
+            ]
+        };
+
+        setEndpointPoolHomeRefreshStateForTest(now);
+        assert.deepEqual(scheduleEndpointPoolHomeAutoRefreshes([staleSummary]), ['Codex Pool']);
+        assert.deepEqual(scheduleEndpointPoolHomeAutoRefreshes([staleSummary]), []);
+        assert.deepEqual(calls, ['Codex Pool']);
+        releaseRefresh();
+        await waitForEndpointPoolHomeRefreshesForTest();
+
+        setEndpointPoolHomeRefreshStateForTest(now, { 'Codex Pool': now - 60_000 });
+        assert.deepEqual(scheduleEndpointPoolHomeAutoRefreshes([staleSummary]), []);
     });
 });

@@ -110,6 +110,11 @@ let endpointPoolHomeLoadError = '';
 let endpointPoolHomeRotation = 0;
 let endpointPoolHomePollTimer = null;
 let endpointPoolHomeRotateTimer = null;
+const ENDPOINT_POOL_HOME_STALE_MS = 15 * 60 * 1000;
+const ENDPOINT_POOL_HOME_RETRY_MS = 5 * 60 * 1000;
+let endpointPoolHomeRefreshNow = () => Date.now();
+let endpointPoolHomeRefreshLastAttempt = new Map();
+let endpointPoolHomeRefreshInFlight = new Map();
 
 function getLocalizedModal(id) {
     const modal = document.getElementById(id);
@@ -373,10 +378,83 @@ function updateEndpointPoolHomeSlots() {
     });
 }
 
-async function refreshEndpointPoolHomeSummaries() {
+function endpointPoolHomeSummaryNeedsRefresh(summary = {}) {
+    const endpointName = String(summary.endpointName || '').trim();
+    if (!endpointName) {
+        return false;
+    }
+    const enabledAccounts = (Array.isArray(summary.accounts) ? summary.accounts : [])
+        .filter((account) => account?.enabled !== false);
+    if (enabledAccounts.length === 0) {
+        return false;
+    }
+    if (enabledAccounts.some((account) => !String(account?.rateLimitStatus || '').trim())) {
+        return true;
+    }
+
+    const updatedAt = Date.parse(summary.latestQuotaUpdatedAt || '');
+    if (!Number.isFinite(updatedAt)) {
+        return true;
+    }
+    return endpointPoolHomeRefreshNow() - updatedAt >= ENDPOINT_POOL_HOME_STALE_MS;
+}
+
+function scheduleEndpointPoolHomeAutoRefreshes(summaries = []) {
+    const scheduled = [];
+    (Array.isArray(summaries) ? summaries : []).forEach((summary) => {
+        const endpointName = String(summary?.endpointName || '').trim();
+        if (!endpointName || !endpointPoolHomeSummaryNeedsRefresh(summary)) {
+            return;
+        }
+        if (endpointPoolHomeRefreshInFlight.has(endpointName)) {
+            return;
+        }
+        const now = endpointPoolHomeRefreshNow();
+        const lastAttempt = endpointPoolHomeRefreshLastAttempt.get(endpointName) || 0;
+        if (lastAttempt > 0 && now - lastAttempt < ENDPOINT_POOL_HOME_RETRY_MS) {
+            return;
+        }
+
+        endpointPoolHomeRefreshLastAttempt.set(endpointName, now);
+        const promise = refreshEndpointPoolHomeRateLimits(summary)
+            .catch((error) => {
+                console.warn('Failed to refresh Codex token pool home quota:', error);
+            })
+            .finally(() => {
+                endpointPoolHomeRefreshInFlight.delete(endpointName);
+            });
+        endpointPoolHomeRefreshInFlight.set(endpointName, promise);
+        scheduled.push(endpointName);
+    });
+    return scheduled;
+}
+
+async function refreshEndpointPoolHomeRateLimits(summary = {}) {
+    const app = window.go?.main?.App;
+    if (!app) {
+        return;
+    }
+    const endpointName = String(summary.endpointName || '').trim();
+    let raw = '';
+    if (app.FetchCodexRateLimitsForEndpoint && endpointName) {
+        raw = await app.FetchCodexRateLimitsForEndpoint(endpointName);
+    } else if (app.FetchCodexRateLimits && Number.isInteger(summary.endpointIndex) && summary.endpointIndex >= 0) {
+        raw = await app.FetchCodexRateLimits(summary.endpointIndex);
+    } else {
+        return;
+    }
+    const result = parseAppJSON(raw);
+    if (!result.success) {
+        throw new Error(result.error || t('tokenPool.rateLimitsFetchFailedFallback'));
+    }
+    await refreshEndpointPoolHomeSummaries({ skipAutoRefresh: true });
+}
+
+async function refreshEndpointPoolHomeSummaries(options = {}) {
     if (!window.go?.main?.App?.GetCodexTokenPoolHomeSummaries) {
         return;
     }
+    let summaries = [];
     try {
         const raw = await window.go.main.App.GetCodexTokenPoolHomeSummaries();
         const result = parseAppJSON(raw);
@@ -384,7 +462,8 @@ async function refreshEndpointPoolHomeSummaries() {
             throw new Error(result.error || t('tokenPool.homeLoadFailed'));
         }
         endpointPoolHomeSummaries = {};
-        (Array.isArray(result.data) ? result.data : []).forEach((summary) => {
+        summaries = Array.isArray(result.data) ? result.data : [];
+        summaries.forEach((summary) => {
             if (summary?.endpointName) {
                 endpointPoolHomeSummaries[summary.endpointName] = summary;
             }
@@ -395,6 +474,9 @@ async function refreshEndpointPoolHomeSummaries() {
         endpointPoolHomeLoadError = error?.message || String(error);
     }
     updateEndpointPoolHomeSlots();
+    if (!options.skipAutoRefresh && !endpointPoolHomeLoadError) {
+        scheduleEndpointPoolHomeAutoRefreshes(summaries);
+    }
 }
 
 function ensureEndpointPoolHomeTimers() {
@@ -418,6 +500,16 @@ function setEndpointPoolHomeSummariesForTest(summaries = {}, rotation = 0, error
     endpointPoolHomeSummaries = summaries;
     endpointPoolHomeRotation = rotation;
     endpointPoolHomeLoadError = error;
+}
+
+function setEndpointPoolHomeRefreshStateForTest(nowMs = Date.now(), lastAttempts = {}) {
+    endpointPoolHomeRefreshNow = () => nowMs;
+    endpointPoolHomeRefreshLastAttempt = new Map(Object.entries(lastAttempts));
+    endpointPoolHomeRefreshInFlight = new Map();
+}
+
+async function waitForEndpointPoolHomeRefreshesForTest() {
+    await Promise.all(Array.from(endpointPoolHomeRefreshInFlight.values()));
 }
 
 function updateRuntimeStatusSlot(endpointName) {

@@ -110,6 +110,10 @@ export function FetchCodexRateLimits(arg1) {
   return window['go']['main']['App']['FetchCodexRateLimits'](arg1);
 }
 
+export function FetchCodexRateLimitsForEndpoint(arg1) {
+  return window['go']['main']['App']['FetchCodexRateLimitsForEndpoint'](arg1);
+}
+
 export function FetchCodexRateLimitsForCredential(arg1, arg2) {
   return window['go']['main']['App']['FetchCodexRateLimitsForCredential'](arg1, arg2);
 }

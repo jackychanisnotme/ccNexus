@@ -101,6 +101,44 @@ func TestCodexResetCreditBindingsReturnJSONErrors(t *testing.T) {
 	}
 }
 
+func TestFetchCodexRateLimitsForEndpointReturnsJSONErrors(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:     "OpenAI",
+		APIUrl:   "https://api.openai.com",
+		AuthMode: config.AuthModeAPIKey,
+		Enabled:  true,
+	}, {
+		Name:        "Codex Pool",
+		APIUrl:      config.CodexTokenPoolAPIURL,
+		AuthMode:    config.AuthModeCodexTokenPool,
+		Enabled:     true,
+		Transformer: config.CodexTokenPoolTransformer,
+		Model:       config.CodexTokenPoolDefaultModel,
+	}})
+	app := NewApp(nil)
+	app.config = cfg
+
+	cases := map[string]string{
+		"empty":    app.FetchCodexRateLimitsForEndpoint(" "),
+		"notFound": app.FetchCodexRateLimitsForEndpoint("Missing Pool"),
+		"nonCodex": app.FetchCodexRateLimitsForEndpoint("OpenAI"),
+		"noProxy":  app.FetchCodexRateLimitsForEndpoint("Codex Pool"),
+	}
+	for name, raw := range cases {
+		var result map[string]any
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			t.Fatalf("%s invalid json: %v raw=%s", name, err, raw)
+		}
+		if result["success"] != false {
+			t.Fatalf("%s expected failure, got %#v", name, result)
+		}
+		if result["error"] == "" {
+			t.Fatalf("%s expected error message, got %#v", name, result)
+		}
+	}
+}
+
 func TestAddDiscoveredLANEndpointCreatesEnabledCompatibleEndpoint(t *testing.T) {
 	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
 	if err != nil {

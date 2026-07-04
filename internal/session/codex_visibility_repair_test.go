@@ -92,6 +92,35 @@ func TestCodexVisibilityDeepRepairsAllReferencedRolloutSessionMeta(t *testing.T)
 	}
 }
 
+func TestCodexVisibilityQuickRepairHandlesLargeRolloutLines(t *testing.T) {
+	_, dataDir := setupCodexVisibilityHome(t, `model_provider = "AINexus"`+"\n")
+	officialDB := filepath.Join(dataDir, "sqlite", "state_5.sqlite")
+	rolloutPath := filepath.Join(dataDir, "sessions", "2026", "06", "17", "rollout-thread-1.jsonl")
+	rolloutRel := mustRel(t, dataDir, rolloutPath)
+	largeMessage := strings.Repeat("x", 2*1024*1024)
+
+	createVisibilityDB(t, officialDB)
+	insertVisibilityThread(t, officialDB, "thread-1", rolloutRel, "old", 0, "hello", "")
+	writeFile(t, rolloutPath,
+		`{"type":"session_meta","payload":{"id":"thread-1","model_provider":"old"}}`+"\n"+
+			`{"type":"event_msg","payload":{"type":"user_message","message":"`+largeMessage+`"}}`+"\n")
+
+	summary, err := RepairCodexSessionVisibility(CodexVisibilityRepairRequest{Mode: CodexVisibilityRepairModeQuick})
+	if err != nil {
+		t.Fatalf("repair visibility with large rollout line: %v", err)
+	}
+	if summary.ChangedRolloutFileCount != 1 {
+		t.Fatalf("changed rollout files = %d, want 1", summary.ChangedRolloutFileCount)
+	}
+	rollout := readFile(t, rolloutPath)
+	if !strings.Contains(rollout, `"model_provider":"AINexus"`) {
+		t.Fatalf("quick repair did not update rollout meta")
+	}
+	if !strings.Contains(rollout, largeMessage) {
+		t.Fatalf("quick repair did not preserve large rollout line")
+	}
+}
+
 func TestCodexVisibilityRepairSelectedSessionsOnly(t *testing.T) {
 	_, dataDir := setupCodexVisibilityHome(t, `model_provider = "AINexus"`+"\n")
 	officialDB := filepath.Join(dataDir, "sqlite", "state_5.sqlite")

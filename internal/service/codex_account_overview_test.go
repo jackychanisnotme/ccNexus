@@ -210,6 +210,9 @@ func TestBuildCodexTokenPoolHomeSummariesSkipsNonCodexAndMasksSecrets(t *testing
 	if summary.HighestPrimaryUsedPercent != 67 || summary.HighestSecondaryUsedPercent != 24 {
 		t.Fatalf("unexpected quota maxima: %#v", summary)
 	}
+	if summary.QuotaSnapshotAvailableCount != 1 || summary.QuotaSnapshotProblemCount != 1 || summary.QuotaSnapshotUnsupportedCount != 1 {
+		t.Fatalf("unexpected quota snapshot counts: %#v", summary)
+	}
 	if summary.NextResetAt == nil || !summary.NextResetAt.Equal(time.Unix(primaryReset, 0).UTC()) {
 		t.Fatalf("unexpected next reset: %#v", summary.NextResetAt)
 	}

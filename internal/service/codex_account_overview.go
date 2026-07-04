@@ -51,18 +51,21 @@ type CodexTokenPoolHomeAccount struct {
 }
 
 type CodexTokenPoolHomeSummary struct {
-	EndpointName                string                      `json:"endpointName"`
-	EndpointIndex               int                         `json:"endpointIndex"`
-	TotalAccounts               int                         `json:"totalAccounts"`
-	EnabledAccounts             int                         `json:"enabledAccounts"`
-	DisabledAccounts            int                         `json:"disabledAccounts"`
-	ActiveAccounts              int                         `json:"activeAccounts"`
-	ProblemAccounts             int                         `json:"problemAccounts"`
-	HighestPrimaryUsedPercent   int                         `json:"highestPrimaryUsedPercent"`
-	HighestSecondaryUsedPercent int                         `json:"highestSecondaryUsedPercent"`
-	NextResetAt                 *time.Time                  `json:"nextResetAt,omitempty"`
-	LatestQuotaUpdatedAt        *time.Time                  `json:"latestQuotaUpdatedAt,omitempty"`
-	Accounts                    []CodexTokenPoolHomeAccount `json:"accounts"`
+	EndpointName                  string                      `json:"endpointName"`
+	EndpointIndex                 int                         `json:"endpointIndex"`
+	TotalAccounts                 int                         `json:"totalAccounts"`
+	EnabledAccounts               int                         `json:"enabledAccounts"`
+	DisabledAccounts              int                         `json:"disabledAccounts"`
+	ActiveAccounts                int                         `json:"activeAccounts"`
+	ProblemAccounts               int                         `json:"problemAccounts"`
+	HighestPrimaryUsedPercent     int                         `json:"highestPrimaryUsedPercent"`
+	HighestSecondaryUsedPercent   int                         `json:"highestSecondaryUsedPercent"`
+	NextResetAt                   *time.Time                  `json:"nextResetAt,omitempty"`
+	LatestQuotaUpdatedAt          *time.Time                  `json:"latestQuotaUpdatedAt,omitempty"`
+	QuotaSnapshotAvailableCount   int                         `json:"quotaSnapshotAvailableCount"`
+	QuotaSnapshotProblemCount     int                         `json:"quotaSnapshotProblemCount"`
+	QuotaSnapshotUnsupportedCount int                         `json:"quotaSnapshotUnsupportedCount"`
+	Accounts                      []CodexTokenPoolHomeAccount `json:"accounts"`
 }
 
 type codexAccountOverviewStore interface {
@@ -184,18 +187,21 @@ func buildCodexTokenPoolHomeSummary(endpoint config.Endpoint, index int, store c
 	}
 
 	summary := &CodexTokenPoolHomeSummary{
-		EndpointName:                endpoint.Name,
-		EndpointIndex:               index,
-		TotalAccounts:               overview.TotalAccounts,
-		EnabledAccounts:             overview.EnabledAccounts,
-		DisabledAccounts:            overview.DisabledAccounts,
-		ActiveAccounts:              overview.ActiveAccounts,
-		ProblemAccounts:             overview.ProblemAccounts,
-		HighestPrimaryUsedPercent:   overview.HighestPrimaryUsedPercent,
-		HighestSecondaryUsedPercent: overview.HighestSecondaryUsedPercent,
-		NextResetAt:                 overview.NextResetAt,
-		LatestQuotaUpdatedAt:        overview.LatestQuotaUpdatedAt,
-		Accounts:                    make([]CodexTokenPoolHomeAccount, 0, len(credentials)),
+		EndpointName:                  endpoint.Name,
+		EndpointIndex:                 index,
+		TotalAccounts:                 overview.TotalAccounts,
+		EnabledAccounts:               overview.EnabledAccounts,
+		DisabledAccounts:              overview.DisabledAccounts,
+		ActiveAccounts:                overview.ActiveAccounts,
+		ProblemAccounts:               overview.ProblemAccounts,
+		HighestPrimaryUsedPercent:     overview.HighestPrimaryUsedPercent,
+		HighestSecondaryUsedPercent:   overview.HighestSecondaryUsedPercent,
+		NextResetAt:                   overview.NextResetAt,
+		LatestQuotaUpdatedAt:          overview.LatestQuotaUpdatedAt,
+		QuotaSnapshotAvailableCount:   overview.QuotaSnapshotAvailableCount,
+		QuotaSnapshotProblemCount:     overview.QuotaSnapshotProblemCount,
+		QuotaSnapshotUnsupportedCount: overview.QuotaSnapshotUnsupportedCount,
+		Accounts:                      make([]CodexTokenPoolHomeAccount, 0, len(credentials)),
 	}
 
 	for _, credential := range credentials {

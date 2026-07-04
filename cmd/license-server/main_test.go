@@ -52,6 +52,49 @@ func TestAdminHTMLHasModuleNavigation(t *testing.T) {
 	if !strings.Contains(adminHTML, "<th>归属</th><th>设备ID</th>") {
 		t.Fatalf("devices table must include owner column before device id")
 	}
+	if !strings.Contains(adminHTML, "批量可视") {
+		t.Fatalf("devices page missing bulk visibility toggle")
+	}
+	if !strings.Contains(adminHTML, "toggleDevicePrivacy(") {
+		t.Fatalf("devices page missing per-row privacy toggle")
+	}
+	if !strings.Contains(adminHTML, "toggleAllDevicePrivacy(") {
+		t.Fatalf("devices page missing bulk privacy toggle handler")
+	}
+	if !strings.Contains(adminHTML, "privateValue(") {
+		t.Fatalf("devices page missing masking helper")
+	}
+	if !strings.Contains(adminHTML, "**") {
+		t.Fatalf("devices page missing default masked placeholder")
+	}
+}
+
+func TestAdminHTMLHasInvestorReadyShell(t *testing.T) {
+	for _, expected := range []string{
+		`class="admin-shell"`,
+		`class="sidebar"`,
+		`id="overview-cards"`,
+		`renderOverview()`,
+		`class="generate-grid"`,
+	} {
+		if !strings.Contains(adminHTML, expected) {
+			t.Fatalf("admin page missing redesigned shell marker %s", expected)
+		}
+	}
+}
+
+func TestLoginHTMLHasPolishedLoginCard(t *testing.T) {
+	for _, expected := range []string{
+		`class="login-page"`,
+		`class="login-card"`,
+		`id="login-form"`,
+		`id="username"`,
+		`id="password"`,
+	} {
+		if !strings.Contains(loginHTML, expected) {
+			t.Fatalf("login page missing polished login marker %s", expected)
+		}
+	}
 }
 
 func scriptFromHTML(t *testing.T, html string) string {

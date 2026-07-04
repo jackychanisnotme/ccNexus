@@ -772,6 +772,39 @@ func (a *App) FetchCodexRateLimits(index int) string {
 	return desktopSuccessJSON(result)
 }
 
+func (a *App) FetchCodexRateLimitsForEndpoint(endpointName string) string {
+	endpointName = strings.TrimSpace(endpointName)
+	if endpointName == "" {
+		return desktopErrorJSON(fmt.Errorf("endpoint name is required"))
+	}
+	if a.config == nil {
+		return desktopErrorJSON(fmt.Errorf("config unavailable"))
+	}
+	var endpoint *config.Endpoint
+	endpoints := a.config.GetEndpoints()
+	for i := range endpoints {
+		if endpoints[i].Name == endpointName {
+			ep := endpoints[i]
+			endpoint = &ep
+			break
+		}
+	}
+	if endpoint == nil {
+		return desktopErrorJSON(fmt.Errorf("endpoint not found"))
+	}
+	if config.NormalizeAuthMode(endpoint.AuthMode) != config.AuthModeCodexTokenPool {
+		return desktopErrorJSON(fmt.Errorf("Codex Token Pool endpoint required"))
+	}
+	if a.proxy == nil {
+		return desktopErrorJSON(fmt.Errorf("proxy unavailable"))
+	}
+	result, err := a.proxy.FetchCodexRateLimits(*endpoint, 0)
+	if err != nil {
+		return desktopErrorJSON(err)
+	}
+	return desktopSuccessJSON(result)
+}
+
 func (a *App) FetchCodexRateLimitsForCredential(index int, credentialID int64) string {
 	if credentialID <= 0 {
 		return desktopErrorJSON(fmt.Errorf("invalid credential id"))
