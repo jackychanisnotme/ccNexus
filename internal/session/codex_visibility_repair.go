@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bufio"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -436,59 +435,45 @@ func buildCodexVisibilityRolloutUpdate(path, targetProvider, mode string) (codex
 }
 
 func rewriteCodexVisibilityFirstSessionMeta(content, targetProvider string) (string, bool, error) {
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	var lines []string
+	lines := strings.Split(content, "\n")
 	changed := false
 	replaced := false
-	for scanner.Scan() {
-		line := scanner.Text()
+	for i, line := range lines {
 		if !replaced {
 			updated, ok, err := rewriteCodexVisibilitySessionMetaLine(line, targetProvider)
 			if err != nil {
 				return "", false, err
 			}
 			if ok {
-				line = updated
+				lines[i] = updated
 				changed = true
 				replaced = true
 			}
 		}
-		lines = append(lines, line)
-	}
-	if err := scanner.Err(); err != nil {
-		return "", false, err
 	}
 	if !changed {
 		return content, false, nil
 	}
-	return strings.Join(lines, "\n") + trailingNewline(content), true, nil
+	return strings.Join(lines, "\n"), true, nil
 }
 
 func rewriteCodexVisibilityAllSessionMeta(content, targetProvider string) (string, bool, error) {
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	var lines []string
+	lines := strings.Split(content, "\n")
 	changed := false
-	for scanner.Scan() {
-		line := scanner.Text()
+	for i, line := range lines {
 		updated, ok, err := rewriteCodexVisibilitySessionMetaLine(line, targetProvider)
 		if err != nil {
 			return "", false, err
 		}
 		if ok {
-			line = updated
+			lines[i] = updated
 			changed = true
 		}
-		lines = append(lines, line)
-	}
-	if err := scanner.Err(); err != nil {
-		return "", false, err
 	}
 	if !changed {
 		return content, false, nil
 	}
-	return strings.Join(lines, "\n") + trailingNewline(content), true, nil
+	return strings.Join(lines, "\n"), true, nil
 }
 
 func rewriteCodexVisibilitySessionMetaLine(line, targetProvider string) (string, bool, error) {
@@ -516,13 +501,6 @@ func rewriteCodexVisibilitySessionMetaLine(line, targetProvider string) (string,
 		return "", false, err
 	}
 	return string(data), true, nil
-}
-
-func trailingNewline(content string) string {
-	if strings.HasSuffix(content, "\n") {
-		return "\n"
-	}
-	return ""
 }
 
 func totalCodexVisibilityDBRows(updates []codexVisibilityDBUpdate) int {

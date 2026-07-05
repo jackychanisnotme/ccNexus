@@ -223,6 +223,8 @@ export default {
         homeHealthy: 'active {active}/{total}',
         homeProblems: 'problems {count}',
         homeQuota: 'quota {primary} / {secondary}',
+        homeResetCredits: 'resets {count}',
+        homeResetCreditsShort: 'reset {count}',
         homeUpdated: 'quota updated: {time}',
         homeReset: 'reset: {time}',
         homeNoAccounts: 'No accounts',

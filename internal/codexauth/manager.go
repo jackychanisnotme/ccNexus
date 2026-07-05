@@ -31,13 +31,18 @@ const (
 	StatusExpired  = "expired"
 )
 
-var errSessionNotPending = errors.New("login session is no longer pending")
+var (
+	errSessionNotPending = errors.New("login session is no longer pending")
+	// ErrUnsupportedOpenAIRegion marks OpenAI device-auth responses blocked by request region.
+	ErrUnsupportedOpenAIRegion = errors.New("OpenAI rejected this network region. Configure a supported network/proxy for this Codex Token Pool endpoint, then retry.")
+)
 
 const (
-	defaultSessionTTL   = 15 * time.Minute
-	defaultPollTimeout  = 15 * time.Minute
-	defaultHTTPTimeout  = 45 * time.Second
-	defaultErrorMaxSize = 1000
+	unsupportedOpenAIRegionCode = "unsupported_country_region_territory"
+	defaultSessionTTL           = 15 * time.Minute
+	defaultPollTimeout          = 15 * time.Minute
+	defaultHTTPTimeout          = 45 * time.Second
+	defaultErrorMaxSize         = 1000
 )
 
 type CredentialStore interface {
@@ -349,7 +354,7 @@ func (m *Manager) requestDeviceCode(ctx context.Context, endpoint config.Endpoin
 		return deviceCode{}, fmt.Errorf("read device code response failed: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return deviceCode{}, fmt.Errorf("device code request failed (%d): %s", resp.StatusCode, sanitizeError(string(raw), m.errorMax))
+		return deviceCode{}, deviceCodeRequestError(resp.StatusCode, raw, m.errorMax)
 	}
 
 	var payload userCodePayload
@@ -365,6 +370,27 @@ func (m *Manager) requestDeviceCode(ctx context.Context, endpoint config.Endpoin
 		DeviceAuthID:    strings.TrimSpace(payload.DeviceAuthID),
 		Interval:        payload.Interval,
 	}, nil
+}
+
+func deviceCodeRequestError(statusCode int, raw []byte, errorMax int) error {
+	if isUnsupportedOpenAIRegionResponse(raw) {
+		return fmt.Errorf("device code request failed: %w", ErrUnsupportedOpenAIRegion)
+	}
+	return fmt.Errorf("device code request failed (%d): %s", statusCode, sanitizeError(string(raw), errorMax))
+}
+
+func isUnsupportedOpenAIRegionResponse(raw []byte) bool {
+	var payload struct {
+		Code  string `json:"code"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(payload.Code), unsupportedOpenAIRegionCode) ||
+		strings.EqualFold(strings.TrimSpace(payload.Error.Code), unsupportedOpenAIRegionCode)
 }
 
 type userCodePayload struct {

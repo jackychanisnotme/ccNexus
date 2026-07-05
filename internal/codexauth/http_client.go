@@ -14,11 +14,8 @@ func HTTPClientForConfig(cfg *config.Config) *http.Client {
 
 func HTTPClientForEndpoint(cfg *config.Config, endpoint config.Endpoint) *http.Client {
 	client := &http.Client{Timeout: defaultHTTPTimeout}
-	if cfg == nil {
-		return client
-	}
 
-	proxyURL := config.ResolveEndpointProxyURL(&endpoint, config.CodexTokenPoolAPIURL, cfg.GetProxy(), cfg.GetCodexProxy())
+	proxyURL := resolveAuthProxyURL(cfg, endpoint)
 	if proxyURL == "" {
 		return client
 	}
@@ -30,4 +27,14 @@ func HTTPClientForEndpoint(cfg *config.Config, endpoint config.Endpoint) *http.C
 	}
 	client.Transport = transport
 	return client
+}
+
+func resolveAuthProxyURL(cfg *config.Config, endpoint config.Endpoint) string {
+	var globalProxy *config.ProxyConfig
+	var codexProxy *config.ProxyConfig
+	if cfg != nil {
+		globalProxy = cfg.GetProxy()
+		codexProxy = cfg.GetCodexProxy()
+	}
+	return config.ResolveEndpointProxyURL(&endpoint, config.CodexTokenPoolAPIURL, globalProxy, codexProxy)
 }

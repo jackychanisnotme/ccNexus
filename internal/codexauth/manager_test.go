@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -383,6 +384,61 @@ func TestManagerStartReportsDeviceCodeNetworkError(t *testing.T) {
 	_, err := manager.Start(context.Background(), config.Endpoint{Name: "Codex", AuthMode: config.AuthModeCodexTokenPool})
 	if err == nil || !strings.Contains(err.Error(), "device code request failed") || !strings.Contains(err.Error(), "network down") {
 		t.Fatalf("expected observable network error, got %v", err)
+	}
+}
+
+func TestManagerStartReportsUnsupportedOpenAIRegion(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/accounts/deviceauth/usercode" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}}`))
+	}))
+	defer authServer.Close()
+
+	manager := NewManager(Options{
+		Storage:    newFakeCredentialStore(),
+		HTTPClient: authServer.Client(),
+		Issuer:     authServer.URL,
+	})
+
+	_, err := manager.Start(context.Background(), config.Endpoint{Name: "Codex", AuthMode: config.AuthModeCodexTokenPool})
+	if !errors.Is(err, ErrUnsupportedOpenAIRegion) {
+		t.Fatalf("expected unsupported region sentinel, got %v", err)
+	}
+	if got := err.Error(); !strings.Contains(got, "OpenAI rejected this network region") ||
+		!strings.Contains(got, "supported network/proxy") ||
+		strings.Contains(got, "unsupported_country_region_territory") {
+		t.Fatalf("expected normalized actionable error, got %q", got)
+	}
+}
+
+func TestResolveAuthProxyURLUsesEndpointCodexGlobalPrecedence(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateProxy(&config.ProxyConfig{URL: "http://127.0.0.1:7890"})
+	cfg.UpdateCodexProxy(&config.ProxyConfig{URL: "http://127.0.0.1:7891"})
+
+	got := resolveAuthProxyURL(cfg, config.Endpoint{ProxyURL: "http://127.0.0.1:7892"})
+	if got != "http://127.0.0.1:7892" {
+		t.Fatalf("endpoint proxy should win, got %q", got)
+	}
+
+	got = resolveAuthProxyURL(cfg, config.Endpoint{})
+	if got != "http://127.0.0.1:7891" {
+		t.Fatalf("Codex proxy should win over global proxy, got %q", got)
+	}
+
+	cfg.UpdateCodexProxy(nil)
+	got = resolveAuthProxyURL(cfg, config.Endpoint{})
+	if got != "http://127.0.0.1:7890" {
+		t.Fatalf("global proxy should be used when endpoint and Codex proxies are empty, got %q", got)
+	}
+
+	cfg.UpdateProxy(nil)
+	got = resolveAuthProxyURL(cfg, config.Endpoint{})
+	if got != "" {
+		t.Fatalf("expected direct connection when no proxy is configured, got %q", got)
 	}
 }
 

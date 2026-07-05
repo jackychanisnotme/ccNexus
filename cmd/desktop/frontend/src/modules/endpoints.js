@@ -112,9 +112,12 @@ let endpointPoolHomePollTimer = null;
 let endpointPoolHomeRotateTimer = null;
 const ENDPOINT_POOL_HOME_STALE_MS = 15 * 60 * 1000;
 const ENDPOINT_POOL_HOME_RETRY_MS = 5 * 60 * 1000;
+const ENDPOINT_POOL_HOME_RESET_CREDIT_KEY = 'AINexus_codexResetCreditHome';
 let endpointPoolHomeRefreshNow = () => Date.now();
 let endpointPoolHomeRefreshLastAttempt = new Map();
 let endpointPoolHomeRefreshInFlight = new Map();
+let endpointPoolHomeResetCreditNow = () => Date.now();
+let endpointPoolHomeResetCreditInFlight = new Map();
 
 function getLocalizedModal(id) {
     const modal = document.getElementById(id);
@@ -258,17 +261,102 @@ function formatPoolHomeTime(value) {
     return formatTokenPoolTime(value);
 }
 
-function renderPoolHomeAccount(account = {}) {
+function endpointPoolHomeResetCreditDate() {
+    const date = new Date(endpointPoolHomeResetCreditNow());
+    if (Number.isNaN(date.getTime())) {
+        return '';
+    }
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function readEndpointPoolHomeResetCreditCache() {
+    try {
+        const raw = localStorage.getItem(ENDPOINT_POOL_HOME_RESET_CREDIT_KEY);
+        const data = raw ? JSON.parse(raw) : {};
+        return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    } catch {
+        return {};
+    }
+}
+
+function writeEndpointPoolHomeResetCreditCache(cache = {}) {
+    try {
+        localStorage.setItem(ENDPOINT_POOL_HOME_RESET_CREDIT_KEY, JSON.stringify(cache));
+    } catch (error) {
+        console.warn('Failed to save Codex reset credit home cache:', error);
+    }
+}
+
+function endpointPoolHomeResetCreditKey(summary = {}, account = {}) {
+    const endpointName = String(summary.endpointName || '').trim();
+    const credentialID = Number(account.id);
+    if (!endpointName || !Number.isInteger(credentialID) || credentialID <= 0) {
+        return '';
+    }
+    return `${endpointName}::${credentialID}`;
+}
+
+function getEndpointPoolHomeResetCreditEntry(summary = {}, account = {}) {
+    const key = endpointPoolHomeResetCreditKey(summary, account);
+    if (!key) {
+        return null;
+    }
+    const entry = readEndpointPoolHomeResetCreditCache()[key];
+    if (!entry || entry.date !== endpointPoolHomeResetCreditDate()) {
+        return null;
+    }
+    const count = Number(entry.count);
+    if (!Number.isFinite(count) || count < 0) {
+        return null;
+    }
+    return {
+        ...entry,
+        count: Math.floor(count)
+    };
+}
+
+function getEndpointPoolHomeResetCreditCount(summary = {}, account = {}) {
+    const entry = getEndpointPoolHomeResetCreditEntry(summary, account);
+    return entry ? entry.count : null;
+}
+
+function getEndpointPoolHomeResetCreditTotal(summary = {}) {
+    const accounts = Array.isArray(summary.accounts) ? summary.accounts : [];
+    let total = 0;
+    let hasKnownCount = false;
+    accounts.forEach((account) => {
+        if (account?.enabled === false) {
+            return;
+        }
+        const count = getEndpointPoolHomeResetCreditCount(summary, account);
+        if (count === null) {
+            return;
+        }
+        total += count;
+        hasKnownCount = true;
+    });
+    return hasKnownCount ? total : null;
+}
+
+function renderPoolHomeAccount(account = {}, summary = {}) {
     const status = account.enabled === false ? t('tokenPool.statusLabels.disabled') : tokenPoolStatusLabel(account.status || 'active');
     const quota = [
         formatPoolHomePercent(account.primaryUsedPercent),
         formatPoolHomePercent(account.secondaryUsedPercent)
     ].join(' / ');
+    const resetCreditCount = getEndpointPoolHomeResetCreditCount(summary, account);
+    const resetCreditText = resetCreditCount === null ? '' : tt('tokenPool.homeResetCreditsShort', { count: resetCreditCount });
     const titleParts = [
         account.email || '',
         tt('tokenPool.homeStatus', { status }),
         tt('tokenPool.homeQuota', { primary: formatPoolHomePercent(account.primaryUsedPercent), secondary: formatPoolHomePercent(account.secondaryUsedPercent) })
     ];
+    if (resetCreditText) {
+        titleParts.push(resetCreditText);
+    }
     if (account.resetAt) {
         titleParts.push(tt('tokenPool.homeReset', { time: formatPoolHomeTime(account.resetAt) }));
     }
@@ -279,7 +367,7 @@ function renderPoolHomeAccount(account = {}) {
         <span class="endpoint-pool-home-account${account.hasError ? ' endpoint-pool-home-account-error' : ''}" title="${escapeHtml(titleParts.filter(Boolean).join(' · '))}">
             <strong>${escapeHtml(account.label || account.accountId || '-')}</strong>
             <span>${escapeHtml(status)}</span>
-            <small>${escapeHtml(quota)}</small>
+            <small>${escapeHtml(resetCreditText ? `${quota} · ${resetCreditText}` : quota)}</small>
         </span>
     `;
 }
@@ -311,8 +399,12 @@ function renderEndpointPoolHomeSummary(endpoint = {}) {
     }
     const accounts = getRotatedPoolHomeAccounts(summary.accounts, 2);
     const accountHTML = accounts.length
-        ? accounts.map(renderPoolHomeAccount).join('')
+        ? accounts.map((account) => renderPoolHomeAccount(account, summary)).join('')
         : `<span class="endpoint-pool-home-empty">${t('tokenPool.homeNoAccounts')}</span>`;
+    const resetCreditTotal = getEndpointPoolHomeResetCreditTotal(summary);
+    const resetCreditHTML = resetCreditTotal === null
+        ? ''
+        : `<span class="endpoint-pool-home-badge">${tt('tokenPool.homeResetCredits', { count: resetCreditTotal })}</span>`;
     const problemHTML = (summary.problemAccounts || 0) > 0
         ? `<span class="endpoint-pool-home-badge endpoint-pool-home-badge-warn">${tt('tokenPool.homeProblems', { count: summary.problemAccounts || 0 })}</span>`
         : '';
@@ -333,6 +425,7 @@ function renderEndpointPoolHomeSummary(endpoint = {}) {
                     primary: formatPoolHomePercent(summary.highestPrimaryUsedPercent),
                     secondary: formatPoolHomePercent(summary.highestSecondaryUsedPercent)
                 })}</span>
+                ${resetCreditHTML}
             </div>
             <div class="endpoint-pool-home-meta">
                 <span>${tt('tokenPool.homeUpdated', { time: formatPoolHomeTime(summary.latestQuotaUpdatedAt) })}</span>
@@ -357,13 +450,15 @@ function renderCompactEndpointPoolHomeSummary(endpoint = {}) {
     const staleClass = endpointPoolHomeLoadError ? ' compact-pool-home-stale' : '';
     const account = getRotatedPoolHomeAccounts(summary.accounts, 1)[0];
     const accountLabel = account ? ` · ${account.label || account.accountId || '-'}` : '';
+    const resetCreditTotal = getEndpointPoolHomeResetCreditTotal(summary);
+    const resetCreditText = resetCreditTotal === null ? '' : ` · ${tt('tokenPool.homeResetCreditsShort', { count: resetCreditTotal })}`;
     return `<span class="compact-pool-home${warningClass}${staleClass}" title="${escapeHtml(tt('tokenPool.homeQuota', {
         primary: formatPoolHomePercent(summary.highestPrimaryUsedPercent),
         secondary: formatPoolHomePercent(summary.highestSecondaryUsedPercent)
-    }))}">${tt('tokenPool.homeHealthy', {
+    }))}${escapeHtml(resetCreditText)}">${tt('tokenPool.homeHealthy', {
         active: summary.activeAccounts || 0,
         total: summary.totalAccounts || 0
-    })}${escapeHtml(accountLabel)}</span>`;
+    })}${escapeHtml(resetCreditText)}${escapeHtml(accountLabel)}</span>`;
 }
 
 function updateEndpointPoolHomeSlots() {
@@ -476,7 +571,102 @@ async function refreshEndpointPoolHomeSummaries(options = {}) {
     updateEndpointPoolHomeSlots();
     if (!options.skipAutoRefresh && !endpointPoolHomeLoadError) {
         scheduleEndpointPoolHomeAutoRefreshes(summaries);
+        scheduleEndpointPoolHomeResetCreditRefreshes(summaries);
     }
+}
+
+function writeEndpointPoolHomeResetCreditEntry(key, entry = {}) {
+    if (!key) {
+        return;
+    }
+    const cache = readEndpointPoolHomeResetCreditCache();
+    cache[key] = {
+        ...entry,
+        date: entry.date || endpointPoolHomeResetCreditDate()
+    };
+    writeEndpointPoolHomeResetCreditCache(cache);
+}
+
+function invalidateEndpointPoolHomeResetCreditCacheForCredential(credentialID) {
+    const id = Number(credentialID);
+    if (!Number.isInteger(id) || id <= 0) {
+        return;
+    }
+    const suffix = `::${id}`;
+    const cache = readEndpointPoolHomeResetCreditCache();
+    let changed = false;
+    Object.keys(cache).forEach((key) => {
+        if (key.endsWith(suffix)) {
+            delete cache[key];
+            changed = true;
+        }
+    });
+    if (changed) {
+        writeEndpointPoolHomeResetCreditCache(cache);
+    }
+}
+
+async function refreshEndpointPoolHomeResetCredit(summary = {}, account = {}) {
+    const app = window.go?.main?.App;
+    if (!app?.GetCodexResetCredits) {
+        return;
+    }
+    const key = endpointPoolHomeResetCreditKey(summary, account);
+    const endpointIndex = Number(summary.endpointIndex);
+    const credentialID = Number(account.id);
+    if (!key || !Number.isInteger(endpointIndex) || endpointIndex < 0 || !Number.isInteger(credentialID) || credentialID <= 0) {
+        return;
+    }
+    const raw = await app.GetCodexResetCredits(endpointIndex, credentialID);
+    const result = parseAppJSON(raw);
+    if (!result.success) {
+        throw new Error(result.error || t('tokenPool.resetCreditLoadFailedFallback'));
+    }
+    const count = Number(result.data?.availableCount ?? 0);
+    writeEndpointPoolHomeResetCreditEntry(key, {
+        count: Number.isFinite(count) && count > 0 ? Math.floor(count) : 0,
+        updatedAt: new Date(endpointPoolHomeResetCreditNow()).toISOString()
+    });
+    updateEndpointPoolHomeSlots();
+}
+
+function scheduleEndpointPoolHomeResetCreditRefreshes(summaries = []) {
+    const app = window.go?.main?.App;
+    if (!app?.GetCodexResetCredits) {
+        return [];
+    }
+    const scheduled = [];
+    (Array.isArray(summaries) ? summaries : []).forEach((summary) => {
+        const endpointIndex = Number(summary?.endpointIndex);
+        if (!Number.isInteger(endpointIndex) || endpointIndex < 0) {
+            return;
+        }
+        const accounts = Array.isArray(summary.accounts) ? summary.accounts : [];
+        accounts.forEach((account) => {
+            if (account?.enabled === false) {
+                return;
+            }
+            const key = endpointPoolHomeResetCreditKey(summary, account);
+            if (!key || endpointPoolHomeResetCreditInFlight.has(key)) {
+                return;
+            }
+            const cacheEntry = readEndpointPoolHomeResetCreditCache()[key];
+            if (cacheEntry?.date === endpointPoolHomeResetCreditDate()) {
+                return;
+            }
+
+            const promise = refreshEndpointPoolHomeResetCredit(summary, account)
+                .catch((error) => {
+                    console.warn('Failed to refresh Codex reset credit home count:', error);
+                })
+                .finally(() => {
+                    endpointPoolHomeResetCreditInFlight.delete(key);
+                });
+            endpointPoolHomeResetCreditInFlight.set(key, promise);
+            scheduled.push(key);
+        });
+    });
+    return scheduled;
 }
 
 function ensureEndpointPoolHomeTimers() {
@@ -510,6 +700,16 @@ function setEndpointPoolHomeRefreshStateForTest(nowMs = Date.now(), lastAttempts
 
 async function waitForEndpointPoolHomeRefreshesForTest() {
     await Promise.all(Array.from(endpointPoolHomeRefreshInFlight.values()));
+}
+
+function setEndpointPoolHomeResetCreditStateForTest(nowMs = Date.now(), cache = {}) {
+    endpointPoolHomeResetCreditNow = () => nowMs;
+    endpointPoolHomeResetCreditInFlight = new Map();
+    writeEndpointPoolHomeResetCreditCache(cache);
+}
+
+async function waitForEndpointPoolHomeResetCreditRefreshesForTest() {
+    await Promise.all(Array.from(endpointPoolHomeResetCreditInFlight.values()));
 }
 
 function updateRuntimeStatusSlot(endpointName) {
@@ -1326,6 +1526,7 @@ async function confirmCodexResetCreditConsume(credentialID, label) {
     if (!result.success) {
         throw new Error(result.error || t('tokenPool.resetCreditFailedFallback'));
     }
+    invalidateEndpointPoolHomeResetCreditCacheForCredential(credentialID);
     try {
         const refreshRaw = await window.go.main.App.FetchCodexRateLimitsForCredential(tokenPoolCurrentIndex, credentialID);
         const refreshResult = parseAppJSON(refreshRaw);

@@ -223,6 +223,8 @@ export default {
         homeHealthy: '可用 {active}/{total}',
         homeProblems: '异常 {count}',
         homeQuota: '额度 {primary} / {secondary}',
+        homeResetCredits: '重置次数 {count}',
+        homeResetCreditsShort: '重置 {count}',
         homeUpdated: '额度更新：{time}',
         homeReset: '重置：{time}',
         homeNoAccounts: '暂无账号',

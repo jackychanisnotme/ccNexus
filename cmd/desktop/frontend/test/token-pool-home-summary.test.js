@@ -9,14 +9,74 @@ const endpointsPath = resolve(__dirname, '../src/modules/endpoints.js');
 
 const originalDocument = globalThis.document;
 const originalWindow = globalThis.window;
+const originalLocalStorage = globalThis.localStorage;
+const originalSetTimeout = globalThis.setTimeout;
+const storage = new Map();
+function createFakeElement() {
+    const children = new Map();
+    return {
+        dataset: {},
+        style: {},
+        className: '',
+        textContent: '',
+        innerHTML: '',
+        isConnected: true,
+        classList: {
+            add() {},
+            remove() {},
+            toggle() {}
+        },
+        addEventListener() {},
+        appendChild(child) {
+            return child;
+        },
+        remove() {},
+        closest() {
+            return null;
+        },
+        querySelector(selector) {
+            if (!String(selector || '').startsWith('#')) {
+                return null;
+            }
+            if (!children.has(selector)) {
+                children.set(selector, createFakeElement());
+            }
+            return children.get(selector);
+        },
+        querySelectorAll() {
+            return [];
+        }
+    };
+}
 globalThis.document = {
     addEventListener() {},
+    createElement() {
+        return createFakeElement();
+    },
+    getElementById() {
+        return null;
+    },
     querySelectorAll() {
         return [];
-    }
+    },
+    body: createFakeElement()
 };
 globalThis.window = {
     addEventListener() {}
+};
+globalThis.localStorage = {
+    getItem(key) {
+        return storage.has(key) ? storage.get(key) : null;
+    },
+    setItem(key, value) {
+        storage.set(key, String(value));
+    },
+    removeItem(key) {
+        storage.delete(key);
+    },
+    clear() {
+        storage.clear();
+    }
 };
 
 const translations = {
@@ -24,6 +84,8 @@ const translations = {
     'tokenPool.homeHealthy': 'healthy {active}/{total}',
     'tokenPool.homeProblems': 'problems {count}',
     'tokenPool.homeQuota': 'quota {primary} / {secondary}',
+    'tokenPool.homeResetCredits': 'resets {count}',
+    'tokenPool.homeResetCreditsShort': 'reset {count}',
     'tokenPool.homeUpdated': 'updated {time}',
     'tokenPool.homeReset': 'reset {time}',
     'tokenPool.homeNoAccounts': 'no accounts',
@@ -48,21 +110,32 @@ const isFilterActive = () => false;
 const updateFilterStats = () => {};
 `;
 const endpointsSource = readFileSync(endpointsPath, 'utf8').replace(/^import .*;\s*$/gm, '')
-    + '\nexport { renderEndpointPoolHomeSummary, renderCompactEndpointPoolHomeSummary, setEndpointPoolHomeSummariesForTest, scheduleEndpointPoolHomeAutoRefreshes, setEndpointPoolHomeRefreshStateForTest, waitForEndpointPoolHomeRefreshesForTest };\n';
+    + '\nexport { renderEndpointPoolHomeSummary, renderCompactEndpointPoolHomeSummary, setEndpointPoolHomeSummariesForTest, scheduleEndpointPoolHomeAutoRefreshes, setEndpointPoolHomeRefreshStateForTest, waitForEndpointPoolHomeRefreshesForTest, scheduleEndpointPoolHomeResetCreditRefreshes, setEndpointPoolHomeResetCreditStateForTest, waitForEndpointPoolHomeResetCreditRefreshesForTest, confirmCodexResetCreditConsume };\n';
 const endpointsModule = await import(`data:text/javascript;base64,${Buffer.from(dependencyStubs + endpointsSource).toString('base64')}`);
 
 after(() => {
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;
+    globalThis.localStorage = originalLocalStorage;
+    globalThis.setTimeout = originalSetTimeout;
 });
 
 describe('token pool homepage summary helpers', () => {
+    after(() => {
+        storage.clear();
+    });
+
     it('renders Codex pool summary and rotates account previews from cache', () => {
         const {
             renderEndpointPoolHomeSummary,
-            setEndpointPoolHomeSummariesForTest
+            setEndpointPoolHomeSummariesForTest,
+            setEndpointPoolHomeResetCreditStateForTest
         } = endpointsModule;
 
+        setEndpointPoolHomeResetCreditStateForTest(Date.parse('2026-06-28T10:00:00Z'), {
+            'Codex Pool::2': { date: '2026-06-28', count: 2, updatedAt: '2026-06-28T10:00:00Z' },
+            'Codex Pool::3': { date: '2026-06-28', count: 1, updatedAt: '2026-06-28T10:00:00Z' }
+        });
         setEndpointPoolHomeSummariesForTest({
             'Codex Pool': {
                 endpointName: 'Codex Pool',
@@ -74,9 +147,9 @@ describe('token pool homepage summary helpers', () => {
                 latestQuotaUpdatedAt: '2026-06-28T09:45:00Z',
                 nextResetAt: '2026-06-28T12:00:00Z',
                 accounts: [
-                    { label: 'acct-a', status: 'active', enabled: true, primaryUsedPercent: 67, secondaryUsedPercent: 24 },
-                    { label: 'acct-b', status: 'invalid', enabled: true, hasError: true, errorText: 'unauthorized' },
-                    { label: 'acct-c', status: 'active', enabled: true }
+                    { id: 1, label: 'acct-a', status: 'active', enabled: true, primaryUsedPercent: 67, secondaryUsedPercent: 24 },
+                    { id: 2, label: 'acct-b', status: 'invalid', enabled: true, hasError: true, errorText: 'unauthorized' },
+                    { id: 3, label: 'acct-c', status: 'active', enabled: true }
                 ]
             }
         }, 1);
@@ -86,6 +159,9 @@ describe('token pool homepage summary helpers', () => {
         assert.match(html, /endpoint-pool-home/);
         assert.match(html, /healthy 1\/2/);
         assert.match(html, /quota 67% \/ 24%/);
+        assert.match(html, /resets 3/);
+        assert.match(html, /reset 2/);
+        assert.match(html, /reset 1/);
         assert.match(html, /problems 1/);
         assert.match(html, /acct-b/);
         assert.match(html, /acct-c/);
@@ -208,5 +284,119 @@ describe('token pool homepage summary helpers', () => {
 
         setEndpointPoolHomeRefreshStateForTest(now, { 'Codex Pool': now - 60_000 });
         assert.deepEqual(scheduleEndpointPoolHomeAutoRefreshes([staleSummary]), []);
+    });
+
+    it('refreshes reset credit counts at most once per day per enabled account', async () => {
+        const {
+            scheduleEndpointPoolHomeResetCreditRefreshes,
+            setEndpointPoolHomeResetCreditStateForTest,
+            waitForEndpointPoolHomeResetCreditRefreshesForTest
+        } = endpointsModule;
+        const calls = [];
+        globalThis.window.go = { main: { App: {
+            GetCodexResetCredits: async (endpointIndex, credentialID) => {
+                calls.push([endpointIndex, credentialID]);
+                return JSON.stringify({ success: true, data: { availableCount: credentialID === 11 ? 2 : 0 } });
+            }
+        } } };
+        const summary = {
+            endpointName: 'Codex Pool',
+            endpointIndex: 4,
+            accounts: [
+                { id: 11, label: 'acct-a', enabled: true },
+                { id: 12, label: 'acct-disabled', enabled: false }
+            ]
+        };
+
+        setEndpointPoolHomeResetCreditStateForTest(Date.parse('2026-06-28T10:00:00Z'));
+        assert.deepEqual(scheduleEndpointPoolHomeResetCreditRefreshes([summary]), ['Codex Pool::11']);
+        await waitForEndpointPoolHomeResetCreditRefreshesForTest();
+        assert.deepEqual(calls, [[4, 11]]);
+
+        assert.deepEqual(scheduleEndpointPoolHomeResetCreditRefreshes([summary]), []);
+
+        setEndpointPoolHomeResetCreditStateForTest(Date.parse('2026-06-29T10:00:00Z'));
+        assert.deepEqual(scheduleEndpointPoolHomeResetCreditRefreshes([summary]), ['Codex Pool::11']);
+    });
+
+    it('retries reset credit refreshes after a same-day failure', async () => {
+        const {
+            scheduleEndpointPoolHomeResetCreditRefreshes,
+            setEndpointPoolHomeResetCreditStateForTest,
+            waitForEndpointPoolHomeResetCreditRefreshesForTest
+        } = endpointsModule;
+        const calls = [];
+        globalThis.window.go = { main: { App: {
+            GetCodexResetCredits: async (endpointIndex, credentialID) => {
+                calls.push([endpointIndex, credentialID]);
+                if (calls.length === 1) {
+                    return JSON.stringify({ success: false, error: 'temporary network failure' });
+                }
+                return JSON.stringify({ success: true, data: { availableCount: 2 } });
+            }
+        } } };
+        const summary = {
+            endpointName: 'Codex Pool',
+            endpointIndex: 4,
+            accounts: [
+                { id: 11, label: 'acct-a', enabled: true }
+            ]
+        };
+
+        setEndpointPoolHomeResetCreditStateForTest(Date.parse('2026-06-28T10:00:00Z'));
+        const originalConsoleWarn = console.warn;
+        console.warn = () => {};
+        try {
+            assert.deepEqual(scheduleEndpointPoolHomeResetCreditRefreshes([summary]), ['Codex Pool::11']);
+            await waitForEndpointPoolHomeResetCreditRefreshesForTest();
+        } finally {
+            console.warn = originalConsoleWarn;
+        }
+
+        assert.deepEqual(scheduleEndpointPoolHomeResetCreditRefreshes([summary]), ['Codex Pool::11']);
+        await waitForEndpointPoolHomeResetCreditRefreshesForTest();
+        assert.deepEqual(calls, [[4, 11], [4, 11]]);
+        assert.deepEqual(scheduleEndpointPoolHomeResetCreditRefreshes([summary]), []);
+    });
+
+    it('invalidates cached reset credit counts after consuming a reset credit', async () => {
+        const {
+            confirmCodexResetCreditConsume,
+            renderEndpointPoolHomeSummary,
+            setEndpointPoolHomeResetCreditStateForTest,
+            setEndpointPoolHomeSummariesForTest
+        } = endpointsModule;
+        const consumed = [];
+        globalThis.setTimeout = (callback) => {
+            callback();
+            return 0;
+        };
+        globalThis.window.go = { main: { App: {
+            ConsumeCodexResetCredit: async (endpointIndex, credentialID) => {
+                consumed.push([endpointIndex, credentialID]);
+                return JSON.stringify({ success: true, data: { consumed: true } });
+            },
+            FetchCodexRateLimitsForCredential: async () => JSON.stringify({ success: true, data: {} })
+        } } };
+        setEndpointPoolHomeResetCreditStateForTest(Date.parse('2026-06-28T10:00:00Z'), {
+            'Codex Pool::11': { date: '2026-06-28', count: 2, updatedAt: '2026-06-28T10:00:00Z' }
+        });
+        setEndpointPoolHomeSummariesForTest({
+            'Codex Pool': {
+                endpointName: 'Codex Pool',
+                endpointIndex: 4,
+                totalAccounts: 1,
+                activeAccounts: 1,
+                accounts: [
+                    { id: 11, label: 'acct-a', status: 'active', enabled: true }
+                ]
+            }
+        });
+
+        assert.match(renderEndpointPoolHomeSummary({ name: 'Codex Pool', authMode: 'codex_token_pool' }), /reset 2/);
+        await confirmCodexResetCreditConsume(11, 'acct-a');
+
+        assert.deepEqual(consumed, [[-1, 11]]);
+        assert.doesNotMatch(renderEndpointPoolHomeSummary({ name: 'Codex Pool', authMode: 'codex_token_pool' }), /reset 2/);
     });
 });
