@@ -40,6 +40,7 @@ func (e *RemoteManagementExecutor) Snapshot() (onlinelicense.RemoteSnapshot, err
 			Enabled:               endpoint.Enabled,
 			Transformer:           endpoint.Transformer,
 			Model:                 endpoint.Model,
+			CodexFastMode:         endpoint.CodexFastMode,
 			MaxConcurrentRequests: endpoint.MaxConcurrentRequests,
 		}
 		if e.Storage != nil {
@@ -162,6 +163,7 @@ func (e *RemoteManagementExecutor) executeEndpointCreate(raw json.RawMessage) er
 		Thinking              string `json:"thinking"`
 		ProxyURL              string `json:"proxyUrl"`
 		ForceStream           *bool  `json:"forceStream"`
+		CodexFastMode         *bool  `json:"codexFastMode"`
 		MaxConcurrentRequests *int   `json:"maxConcurrentRequests"`
 		Remark                string `json:"remark"`
 		Enabled               *bool  `json:"enabled"`
@@ -176,11 +178,15 @@ func (e *RemoteManagementExecutor) executeEndpointCreate(raw json.RawMessage) er
 	if req.ForceStream != nil {
 		forceStream = *req.ForceStream
 	}
+	codexFastMode := false
+	if req.CodexFastMode != nil {
+		codexFastMode = *req.CodexFastMode
+	}
 	maxConcurrentRequests := 0
 	if req.MaxConcurrentRequests != nil {
 		maxConcurrentRequests = config.NormalizeEndpointMaxConcurrentRequests(*req.MaxConcurrentRequests)
 	}
-	if err := e.Endpoints.AddEndpoint(req.Name, req.APIUrl, req.APIKey, req.AuthMode, req.Transformer, req.Model, req.Thinking, req.ProxyURL, forceStream, maxConcurrentRequests, req.Remark); err != nil {
+	if err := e.Endpoints.AddEndpoint(req.Name, req.APIUrl, req.APIKey, req.AuthMode, req.Transformer, req.Model, req.Thinking, req.ProxyURL, forceStream, codexFastMode, maxConcurrentRequests, req.Remark); err != nil {
 		return err
 	}
 	if req.Enabled != nil && !*req.Enabled {
@@ -205,6 +211,7 @@ func (e *RemoteManagementExecutor) executeEndpointUpdate(raw json.RawMessage) er
 		Thinking              *string `json:"thinking"`
 		ProxyURL              *string `json:"proxyUrl"`
 		ForceStream           *bool   `json:"forceStream"`
+		CodexFastMode         *bool   `json:"codexFastMode"`
 		MaxConcurrentRequests *int    `json:"maxConcurrentRequests"`
 		Remark                *string `json:"remark"`
 		Enabled               *bool   `json:"enabled"`
@@ -256,6 +263,10 @@ func (e *RemoteManagementExecutor) executeEndpointUpdate(raw json.RawMessage) er
 	if req.ForceStream != nil {
 		forceStream = *req.ForceStream
 	}
+	codexFastMode := endpoint.CodexFastMode
+	if req.CodexFastMode != nil {
+		codexFastMode = *req.CodexFastMode
+	}
 	maxConcurrentRequests := endpoint.MaxConcurrentRequests
 	if req.MaxConcurrentRequests != nil {
 		maxConcurrentRequests = config.NormalizeEndpointMaxConcurrentRequests(*req.MaxConcurrentRequests)
@@ -267,7 +278,7 @@ func (e *RemoteManagementExecutor) executeEndpointUpdate(raw json.RawMessage) er
 	if e.Endpoints == nil {
 		return fmt.Errorf("endpoint service unavailable")
 	}
-	if err := e.Endpoints.UpdateEndpoint(index, name, apiURL, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, maxConcurrentRequests, remark); err != nil {
+	if err := e.Endpoints.UpdateEndpoint(index, name, apiURL, apiKey, authMode, transformer, model, thinking, proxyURL, forceStream, codexFastMode, maxConcurrentRequests, remark); err != nil {
 		return err
 	}
 	return e.Endpoints.ToggleEndpoint(index, enabled)

@@ -126,6 +126,7 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	renamed.Model = "gpt-4.1"
 	renamed.Thinking = config.ThinkingHigh
 	renamed.ForceStream = true
+	renamed.CodexFastMode = true
 	renamed.ProxyURL = "http://127.0.0.1:7891"
 	renamed.Remark = "renamed"
 	renamed.SortOrder = 7
@@ -134,6 +135,13 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	}
 	if renamed.Name != canonicalNewName {
 		t.Fatalf("renamed endpoint name = %q, want trimmed name %q", renamed.Name, canonicalNewName)
+	}
+	renamedEndpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get renamed endpoint: %v", err)
+	}
+	if len(renamedEndpoints) != 1 || !renamedEndpoints[0].CodexFastMode {
+		t.Fatalf("renamed endpoints = %#v, want codex fast mode preserved", renamedEndpoints)
 	}
 
 	credentials, err := store.GetEndpointCredentials(canonicalNewName)
@@ -858,6 +866,83 @@ func TestMigrateEndpointMaxConcurrentRequestsDefaultsToUnlimited(t *testing.T) {
 	}
 }
 
+func TestMigrateEndpointCodexFastModeDefaultsOffAndPersists(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE endpoints (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL,
+			api_url TEXT NOT NULL,
+			api_key TEXT NOT NULL,
+			auth_mode TEXT NOT NULL DEFAULT 'api_key',
+			enabled BOOLEAN DEFAULT TRUE,
+			transformer TEXT DEFAULT 'claude',
+			model TEXT,
+			thinking TEXT DEFAULT '',
+			force_stream BOOLEAN DEFAULT FALSE,
+			max_concurrent_requests INTEGER NOT NULL DEFAULT 0,
+			proxy_url TEXT DEFAULT '',
+			remark TEXT,
+			sort_order INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE app_config (
+			key TEXT PRIMARY KEY,
+			value TEXT,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO endpoints (name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, remark)
+		VALUES ('Codex Pool', 'https://chatgpt.com/backend-api/codex', '', 'codex_token_pool', TRUE, 'openai2', 'gpt-5-codex', '', '');
+	`)
+	if err != nil {
+		t.Fatalf("seed database: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seed database: %v", err)
+	}
+
+	store, err := NewSQLiteStorage(dbPath)
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	endpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get endpoints: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("expected one endpoint, got %d", len(endpoints))
+	}
+	if endpoints[0].CodexFastMode {
+		t.Fatalf("expected migrated codex fast mode to default to false")
+	}
+
+	endpoints[0].CodexFastMode = true
+	if err := store.UpdateEndpoint(&endpoints[0]); err != nil {
+		t.Fatalf("update endpoint codex fast mode: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close migrated storage: %v", err)
+	}
+
+	store, err = NewSQLiteStorage(dbPath)
+	if err != nil {
+		t.Fatalf("reopen storage: %v", err)
+	}
+	defer store.Close()
+	endpoints, err = store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("reload endpoints: %v", err)
+	}
+	if !endpoints[0].CodexFastMode {
+		t.Fatalf("expected codex fast mode to persist")
+	}
+}
+
 func TestDailyStatsClientIPDimensionAndFilters(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ainexus.db")
 	store, err := NewSQLiteStorage(dbPath)
@@ -1119,6 +1204,46 @@ func TestMergeFromBackupPreservesEndpointProxyURL(t *testing.T) {
 	}
 }
 
+func TestMergeFromBackupPreservesEndpointCodexFastMode(t *testing.T) {
+	localPath := filepath.Join(t.TempDir(), "local.db")
+	store, err := NewSQLiteStorage(localPath)
+	if err != nil {
+		t.Fatalf("open local storage: %v", err)
+	}
+	defer store.Close()
+
+	backupPath := filepath.Join(t.TempDir(), "backup.db")
+	backup, err := NewSQLiteStorage(backupPath)
+	if err != nil {
+		t.Fatalf("open backup storage: %v", err)
+	}
+	if err := backup.SaveEndpoint(&Endpoint{
+		Name:          "Codex Pool",
+		APIUrl:        config.CodexTokenPoolAPIURL,
+		AuthMode:      config.AuthModeCodexTokenPool,
+		Enabled:       true,
+		Transformer:   config.CodexTokenPoolTransformer,
+		Model:         config.CodexTokenPoolDefaultModel,
+		CodexFastMode: true,
+	}); err != nil {
+		t.Fatalf("save backup endpoint: %v", err)
+	}
+	if err := backup.Close(); err != nil {
+		t.Fatalf("close backup: %v", err)
+	}
+
+	if err := store.MergeFromBackup(backupPath, MergeStrategyKeepLocal); err != nil {
+		t.Fatalf("merge backup: %v", err)
+	}
+	endpoints, err := store.GetEndpoints()
+	if err != nil {
+		t.Fatalf("get merged endpoints: %v", err)
+	}
+	if len(endpoints) != 1 || !endpoints[0].CodexFastMode {
+		t.Fatalf("merged endpoints = %#v, want codex fast mode preserved", endpoints)
+	}
+}
+
 func TestDetectEndpointConflictsIncludesProxyURL(t *testing.T) {
 	localPath := filepath.Join(t.TempDir(), "local.db")
 	store, err := NewSQLiteStorage(localPath)
@@ -1170,6 +1295,58 @@ func TestDetectEndpointConflictsIncludesProxyURL(t *testing.T) {
 	}
 	if !containsString(conflicts[0].ConflictFields, "proxyUrl") {
 		t.Fatalf("expected proxyUrl conflict, got %#v", conflicts[0].ConflictFields)
+	}
+}
+
+func TestDetectEndpointConflictsIncludesCodexFastMode(t *testing.T) {
+	localPath := filepath.Join(t.TempDir(), "local.db")
+	store, err := NewSQLiteStorage(localPath)
+	if err != nil {
+		t.Fatalf("open local storage: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SaveEndpoint(&Endpoint{
+		Name:          "Codex Pool",
+		APIUrl:        config.CodexTokenPoolAPIURL,
+		AuthMode:      config.AuthModeCodexTokenPool,
+		Enabled:       true,
+		Transformer:   config.CodexTokenPoolTransformer,
+		Model:         config.CodexTokenPoolDefaultModel,
+		CodexFastMode: false,
+	}); err != nil {
+		t.Fatalf("save local endpoint: %v", err)
+	}
+
+	remotePath := filepath.Join(t.TempDir(), "remote.db")
+	remote, err := NewSQLiteStorage(remotePath)
+	if err != nil {
+		t.Fatalf("open remote storage: %v", err)
+	}
+	if err := remote.SaveEndpoint(&Endpoint{
+		Name:          "Codex Pool",
+		APIUrl:        config.CodexTokenPoolAPIURL,
+		AuthMode:      config.AuthModeCodexTokenPool,
+		Enabled:       true,
+		Transformer:   config.CodexTokenPoolTransformer,
+		Model:         config.CodexTokenPoolDefaultModel,
+		CodexFastMode: true,
+	}); err != nil {
+		t.Fatalf("save remote endpoint: %v", err)
+	}
+	if err := remote.Close(); err != nil {
+		t.Fatalf("close remote: %v", err)
+	}
+
+	conflicts, err := store.DetectEndpointConflicts(remotePath)
+	if err != nil {
+		t.Fatalf("detect conflicts: %v", err)
+	}
+	if len(conflicts) != 1 {
+		t.Fatalf("expected one conflict, got %#v", conflicts)
+	}
+	if !containsString(conflicts[0].ConflictFields, "codexFastMode") {
+		t.Fatalf("expected codexFastMode conflict, got %#v", conflicts[0].ConflictFields)
 	}
 }
 

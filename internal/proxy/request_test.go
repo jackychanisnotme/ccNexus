@@ -177,6 +177,20 @@ func TestBuildProxyRequestPreservesMaxOutputTokensForNonCodexResponses(t *testin
 	}
 }
 
+func readProxyRequestJSON(t *testing.T, req *http.Request) map[string]interface{} {
+	t.Helper()
+	defer req.Body.Close()
+	upstreamBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read upstream body failed: %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(upstreamBody, &payload); err != nil {
+		t.Fatalf("unmarshal upstream body failed: %v", err)
+	}
+	return payload
+}
+
 func TestEnsureCodexResponsesPayloadOverridesStoreAndStream(t *testing.T) {
 	raw := []byte(`{"model":"gpt-4.1","store":true}`)
 	out := ensureCodexResponsesPayload(raw)
@@ -691,6 +705,73 @@ func TestInjectEndpointThinkingInPayloadSkipsOff(t *testing.T) {
 	}
 	if _, ok := payload["reasoning"]; ok {
 		t.Fatalf("did not expect reasoning when thinking is off, got %#v", payload["reasoning"])
+	}
+}
+
+func TestBuildProxyRequestInjectsCodexFastServiceTierWhenEnabled(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:           "Codex Pool",
+		APIUrl:         config.CodexTokenPoolAPIURL,
+		AuthMode:       config.AuthModeCodexTokenPool,
+		Transformer:    config.CodexTokenPoolTransformer,
+		Model:          "gpt-5.5",
+		CodexFastMode:  true,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	body := []byte(`{"model":"gpt-5.5","stream":true,"input":[]}`)
+
+	proxyReq, err := buildProxyRequest(req, endpoint, "codex-token", body, "cx_resp_openai2", &storage.EndpointCredential{ProviderType: storage.ProviderTypeCodex})
+	if err != nil {
+		t.Fatalf("buildProxyRequest failed: %v", err)
+	}
+	payload := readProxyRequestJSON(t, proxyReq)
+	if payload["service_tier"] != "fast" {
+		t.Fatalf("expected service_tier=fast, got %#v in %#v", payload["service_tier"], payload)
+	}
+}
+
+func TestBuildProxyRequestPreservesClientServiceTierWhenCodexFastModeEnabled(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:           "Codex Pool",
+		APIUrl:         config.CodexTokenPoolAPIURL,
+		AuthMode:       config.AuthModeCodexTokenPool,
+		Transformer:    config.CodexTokenPoolTransformer,
+		Model:          "gpt-5.5",
+		CodexFastMode:  true,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	body := []byte(`{"model":"gpt-5.5","stream":true,"service_tier":"flex","input":[]}`)
+
+	proxyReq, err := buildProxyRequest(req, endpoint, "codex-token", body, "cx_resp_openai2", &storage.EndpointCredential{ProviderType: storage.ProviderTypeCodex})
+	if err != nil {
+		t.Fatalf("buildProxyRequest failed: %v", err)
+	}
+	payload := readProxyRequestJSON(t, proxyReq)
+	if payload["service_tier"] != "flex" {
+		t.Fatalf("expected client service_tier to be preserved, got %#v", payload["service_tier"])
+	}
+}
+
+func TestBuildProxyRequestDoesNotInjectCodexFastServiceTierForNonCodexTokenPool(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:           "API Key Codex URL",
+		APIUrl:         config.CodexTokenPoolAPIURL,
+		AuthMode:       config.AuthModeAPIKey,
+		APIKey:         "api-key",
+		Transformer:    config.CodexTokenPoolTransformer,
+		Model:          "gpt-5.5",
+		CodexFastMode:  true,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	body := []byte(`{"model":"gpt-5.5","stream":true,"input":[]}`)
+
+	proxyReq, err := buildProxyRequest(req, endpoint, "api-key", body, "cx_resp_openai2", nil)
+	if err != nil {
+		t.Fatalf("buildProxyRequest failed: %v", err)
+	}
+	payload := readProxyRequestJSON(t, proxyReq)
+	if _, ok := payload["service_tier"]; ok {
+		t.Fatalf("did not expect service_tier for non-Codex token pool, got %#v", payload["service_tier"])
 	}
 }
 

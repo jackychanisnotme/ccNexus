@@ -120,6 +120,8 @@ export default {
         thinkingHelpDeepSeek: 'DeepSeek uses provider default unless you choose High/Max; uncheck Reasoning to explicitly disable it.',
         forceStream: 'Force streaming upstream',
         forceStreamHelp: 'Use when this endpoint rejects non-streaming requests; AINexus aggregates the stream for non-streaming clients.',
+        codexFastMode: 'Fast mode',
+        codexFastModeHelp: 'Only for Codex Token Pool. Uses fast for Codex Responses requests without service_tier, which may consume more Codex usage.',
         maxConcurrentRequests: 'Concurrency limit',
         maxConcurrentRequestsHelp: '0 means unlimited; ordinary round-robin requests skip to the next endpoint when the limit is reached',
         remark: 'Remark',

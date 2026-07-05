@@ -74,6 +74,7 @@ func TestRemoteManagementExecutorUpdatePreservesOmittedFields(t *testing.T) {
 		ProxyURL:              "http://127.0.0.1:7890",
 		Remark:                "keep remark",
 		MaxConcurrentRequests: 4,
+		CodexFastMode:         true,
 	}})
 	p := proxy.New(cfg, nil, nil, "remote-test-device")
 	endpoints := NewEndpointService(cfg, p, nil)
@@ -99,8 +100,39 @@ func TestRemoteManagementExecutorUpdatePreservesOmittedFields(t *testing.T) {
 		t.Fatalf("apiUrl = %q", updated.APIUrl)
 	}
 	if updated.APIKey != "existing-key" || updated.Model != "gpt-5" || updated.Thinking != config.ThinkingHigh ||
-		!updated.ForceStream || updated.ProxyURL != "http://127.0.0.1:7890" || updated.Remark != "keep remark" || updated.MaxConcurrentRequests != 4 || !updated.Enabled {
+		!updated.ForceStream || updated.ProxyURL != "http://127.0.0.1:7890" || updated.Remark != "keep remark" || updated.MaxConcurrentRequests != 4 || !updated.CodexFastMode || !updated.Enabled {
 		t.Fatalf("endpoint update did not preserve omitted fields: %#v", updated)
+	}
+}
+
+func TestRemoteManagementExecutorUpdatesCodexFastModeAndSnapshotsIt(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:           "Codex Pool",
+		APIUrl:         config.CodexTokenPoolAPIURL,
+		AuthMode:       config.AuthModeCodexTokenPool,
+		Enabled:        true,
+		Transformer:    config.CodexTokenPoolTransformer,
+		Model:          config.CodexTokenPoolDefaultModel,
+		CodexFastMode:  false,
+	}})
+	p := proxy.New(cfg, nil, nil, "remote-test-device")
+	endpoints := NewEndpointService(cfg, p, nil)
+	executor := NewRemoteManagementExecutor(cfg, nil, endpoints)
+
+	outcome, err := executor.ExecuteRemoteCommand(onlinelicense.RemoteCommandPayload{
+		CommandType: "endpoint.update",
+		Payload:     json.RawMessage(`{"endpointName":"Codex Pool","codexFastMode":true}`),
+	})
+	if err != nil {
+		t.Fatalf("execute endpoint.update: %v", err)
+	}
+	got := cfg.GetEndpoints()
+	if len(got) != 1 || !got[0].CodexFastMode {
+		t.Fatalf("expected remote update to enable codex fast mode, got %#v", got)
+	}
+	if outcome == nil || outcome.Snapshot == nil || len(outcome.Snapshot.Endpoints) != 1 || !outcome.Snapshot.Endpoints[0].CodexFastMode {
+		t.Fatalf("expected snapshot to include enabled codex fast mode, got %#v", outcome)
 	}
 }
 

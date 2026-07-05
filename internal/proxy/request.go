@@ -180,6 +180,9 @@ func buildProxyRequest(r *http.Request, endpoint config.Endpoint, apiKey string,
 	if isCodexBackendBaseURL(normalizedAPIUrl) && isResponsesPath(targetPath) {
 		requestBody = ensureCodexResponsesPayload(requestBody)
 	}
+	if shouldInjectCodexFastServiceTier(endpoint, normalizedAPIUrl, targetPath) {
+		requestBody = injectCodexFastServiceTierInPayload(requestBody)
+	}
 	targetURL := fmt.Sprintf("%s%s", normalizedAPIUrl, targetPath)
 	if r.URL.RawQuery != "" {
 		query := r.URL.Query()
@@ -380,6 +383,37 @@ func ensureCodexResponsesPayload(payload []byte) []byte {
 	if _, ok := body["instructions"]; !ok {
 		body["instructions"] = ""
 	}
+	updated, err := json.Marshal(body)
+	if err != nil {
+		return payload
+	}
+	return updated
+}
+
+func shouldInjectCodexFastServiceTier(endpoint config.Endpoint, baseURL, targetPath string) bool {
+	return config.NormalizeAuthMode(endpoint.AuthMode) == config.AuthModeCodexTokenPool &&
+		endpoint.CodexFastMode &&
+		isCodexBackendBaseURL(baseURL) &&
+		isResponsesPath(targetPath)
+}
+
+func injectCodexFastServiceTierInPayload(payload []byte) []byte {
+	trimmed := strings.TrimSpace(string(payload))
+	if trimmed == "" || strings.HasPrefix(trimmed, "[") {
+		return payload
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return payload
+	}
+	if body == nil {
+		return payload
+	}
+	if tier, ok := body["service_tier"].(string); ok && strings.TrimSpace(tier) != "" {
+		return payload
+	}
+	body["service_tier"] = "fast"
 	updated, err := json.Marshal(body)
 	if err != nil {
 		return payload

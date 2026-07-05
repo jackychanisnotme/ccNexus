@@ -46,6 +46,7 @@ func TestUpdateEndpointRejectsNormalizedDuplicateName(t *testing.T) {
 		"",
 		"",
 		false,
+		false,
 		0,
 		"renamed",
 	)
@@ -89,6 +90,7 @@ func TestUpdateEndpointAllowsTrimmingCurrentLegacyName(t *testing.T) {
 		"legacy-model",
 		"",
 		"",
+		false,
 		false,
 		0,
 		"",
@@ -168,6 +170,7 @@ func TestUpdateEndpointRenamePreservesTokenPool(t *testing.T) {
 		config.ThinkingHigh,
 		proxyURL,
 		true,
+		false,
 		0,
 		remark,
 	); err != nil {
@@ -276,6 +279,7 @@ func TestUpdateEndpointRenameFailureLeavesLiveConfigAndProxyUnchanged(t *testing
 		config.ThinkingHigh,
 		"",
 		true,
+		false,
 		0,
 		updatedRemark,
 	)

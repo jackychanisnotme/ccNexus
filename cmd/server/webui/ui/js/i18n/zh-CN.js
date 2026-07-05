@@ -140,6 +140,8 @@ export default {
         remark: '备注',
         forceStream: '上游强制流式',
         forceStreamHint: '当端点拒绝非流式请求时启用；AINexus 会为非流式客户端聚合流式响应。',
+        codexFastMode: '快速模式',
+        codexFastModeHint: '仅 Codex Token Pool 可用；为未指定 service_tier 的 Codex Responses 请求使用 fast，可能消耗更高 Codex 额度。',
         maxConcurrentRequests: '限制并发',
         maxConcurrentRequestsHint: '0 表示不限制；达到上限时普通轮询请求会跳到下一个端点',
         invalidMaxConcurrentRequests: '限制并发必须是 0 或正整数',

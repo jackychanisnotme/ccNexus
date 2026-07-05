@@ -120,6 +120,8 @@ export default {
         thinkingHelpDeepSeek: 'DeepSeek 默认使用上游设置；选择 High/Max 可显式指定强度，取消勾选推理会显式关闭。',
         forceStream: '上游强制流式',
         forceStreamHelp: '当端点拒绝非流式请求时启用；AINexus 会为非流式客户端聚合流式响应。',
+        codexFastMode: '快速模式',
+        codexFastModeHelp: '仅 Codex Token Pool 可用；为未指定 service_tier 的 Codex Responses 请求使用 fast，可能消耗更高 Codex 额度。',
         maxConcurrentRequests: '限制并发',
         maxConcurrentRequestsHelp: '0 表示不限制；达到上限时普通轮询请求会跳到下一个端点',
         remark: '备注',

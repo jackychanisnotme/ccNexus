@@ -811,6 +811,66 @@ func TestCodexTokenPoolStreamingResponsesPreferWebSocket(t *testing.T) {
 	}
 }
 
+func TestCodexTokenPoolWebSocketRequestIncludesFastServiceTier(t *testing.T) {
+	var httpHits int
+	p := newCodexWebSocketRoutingTestProxy(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		httpHits++
+		return nil, errors.New("HTTP upstream should not be called")
+	}))
+	endpoints := p.config.GetEndpoints()
+	endpoints[0].CodexFastMode = true
+	p.config.UpdateEndpoints(endpoints)
+
+	frameCh := make(chan map[string]interface{}, 1)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, frame, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		var request map[string]interface{}
+		if err := json.Unmarshal(frame, &request); err != nil {
+			return
+		}
+		frameCh <- request
+		writeCompletedCodexWebSocketResponse(conn, "fast")
+	}))
+	defer upstream.Close()
+	localWSURL, err := codexWebSocketURL(upstream.URL + "/backend-api/codex/responses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.codexWebSocketDial = func(ctx context.Context, _ string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+		return websocket.DefaultDialer.DialContext(ctx, localWSURL, headers)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Codex_Desktop/0.142.0-alpha.1")
+	rec := httptest.NewRecorder()
+	p.handleProxy(rec, req)
+
+	if httpHits != 0 {
+		t.Fatalf("expected no HTTP upstream calls, got %d", httpHits)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	select {
+	case frame := <-frameCh:
+		if frame["service_tier"] != "fast" {
+			t.Fatalf("expected websocket frame service_tier=fast, got %#v in %#v", frame["service_tier"], frame)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for websocket request frame")
+	}
+}
+
 func TestCodexWebSocketRateLimitsAreCapturedButNotForwarded(t *testing.T) {
 	logger.GetLogger().Clear()
 	t.Cleanup(func() { logger.GetLogger().Clear() })

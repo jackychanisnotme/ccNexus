@@ -107,8 +107,9 @@ func (s *SQLiteStorage) initSchema() error {
 		enabled BOOLEAN DEFAULT TRUE,
 		transformer TEXT DEFAULT 'claude',
 		model TEXT,
-			thinking TEXT DEFAULT '',
+		thinking TEXT DEFAULT '',
 		force_stream BOOLEAN DEFAULT FALSE,
+		codex_fast_mode BOOLEAN NOT NULL DEFAULT FALSE,
 		max_concurrent_requests INTEGER NOT NULL DEFAULT 0,
 		proxy_url TEXT DEFAULT '',
 		remark TEXT,
@@ -217,6 +218,9 @@ func (s *SQLiteStorage) initSchema() error {
 		return err
 	}
 	if err := s.migrateForceStream(); err != nil {
+		return err
+	}
+	if err := s.migrateEndpointCodexFastMode(); err != nil {
 		return err
 	}
 	if err := s.migrateProxyURL(); err != nil {
@@ -338,6 +342,23 @@ func (s *SQLiteStorage) migrateForceStream() error {
 	}
 
 	_, err = s.db.Exec(`UPDATE endpoints SET force_stream=FALSE WHERE force_stream IS NULL`)
+	return err
+}
+
+func (s *SQLiteStorage) migrateEndpointCodexFastMode() error {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('endpoints') WHERE name='codex_fast_mode'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+
+	if count == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE endpoints ADD COLUMN codex_fast_mode BOOLEAN NOT NULL DEFAULT FALSE`); err != nil {
+			return err
+		}
+	}
+
+	_, err = s.db.Exec(`UPDATE endpoints SET codex_fast_mode=FALSE WHERE codex_fast_mode IS NULL`)
 	return err
 }
 
@@ -466,7 +487,7 @@ func (s *SQLiteStorage) GetEndpoints() ([]Endpoint, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query(`SELECT id, name, api_url, api_key, auth_mode, enabled, transformer, model, COALESCE(thinking, ''), force_stream, COALESCE(max_concurrent_requests, 0), COALESCE(proxy_url, ''), remark, sort_order, created_at, updated_at FROM endpoints ORDER BY sort_order ASC`)
+	rows, err := s.db.Query(`SELECT id, name, api_url, api_key, auth_mode, enabled, transformer, model, COALESCE(thinking, ''), force_stream, COALESCE(codex_fast_mode, FALSE), COALESCE(max_concurrent_requests, 0), COALESCE(proxy_url, ''), remark, sort_order, created_at, updated_at FROM endpoints ORDER BY sort_order ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -475,7 +496,7 @@ func (s *SQLiteStorage) GetEndpoints() ([]Endpoint, error) {
 	var endpoints []Endpoint
 	for rows.Next() {
 		var ep Endpoint
-		if err := rows.Scan(&ep.ID, &ep.Name, &ep.APIUrl, &ep.APIKey, &ep.AuthMode, &ep.Enabled, &ep.Transformer, &ep.Model, &ep.Thinking, &ep.ForceStream, &ep.MaxConcurrentRequests, &ep.ProxyURL, &ep.Remark, &ep.SortOrder, &ep.CreatedAt, &ep.UpdatedAt); err != nil {
+		if err := rows.Scan(&ep.ID, &ep.Name, &ep.APIUrl, &ep.APIKey, &ep.AuthMode, &ep.Enabled, &ep.Transformer, &ep.Model, &ep.Thinking, &ep.ForceStream, &ep.CodexFastMode, &ep.MaxConcurrentRequests, &ep.ProxyURL, &ep.Remark, &ep.SortOrder, &ep.CreatedAt, &ep.UpdatedAt); err != nil {
 			return nil, err
 		}
 		normalizeEndpointAuthMode(&ep)
@@ -491,8 +512,8 @@ func (s *SQLiteStorage) SaveEndpoint(ep *Endpoint) error {
 
 	normalizeEndpointAuthMode(ep)
 
-	result, err := s.db.Exec(`INSERT INTO endpoints (name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, max_concurrent_requests, proxy_url, remark, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ep.Name, ep.APIUrl, ep.APIKey, ep.AuthMode, ep.Enabled, ep.Transformer, ep.Model, ep.Thinking, ep.ForceStream, ep.MaxConcurrentRequests, ep.ProxyURL, ep.Remark, ep.SortOrder)
+	result, err := s.db.Exec(`INSERT INTO endpoints (name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, codex_fast_mode, max_concurrent_requests, proxy_url, remark, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ep.Name, ep.APIUrl, ep.APIKey, ep.AuthMode, ep.Enabled, ep.Transformer, ep.Model, ep.Thinking, ep.ForceStream, ep.CodexFastMode, ep.MaxConcurrentRequests, ep.ProxyURL, ep.Remark, ep.SortOrder)
 	if err != nil {
 		return err
 	}
@@ -511,8 +532,8 @@ func (s *SQLiteStorage) UpdateEndpoint(ep *Endpoint) error {
 
 	normalizeEndpointAuthMode(ep)
 
-	_, err := s.db.Exec(`UPDATE endpoints SET api_url=?, api_key=?, auth_mode=?, enabled=?, transformer=?, model=?, thinking=?, force_stream=?, max_concurrent_requests=?, proxy_url=?, remark=?, sort_order=?, updated_at=CURRENT_TIMESTAMP WHERE name=?`,
-		ep.APIUrl, ep.APIKey, ep.AuthMode, ep.Enabled, ep.Transformer, ep.Model, ep.Thinking, ep.ForceStream, ep.MaxConcurrentRequests, ep.ProxyURL, ep.Remark, ep.SortOrder, ep.Name)
+	_, err := s.db.Exec(`UPDATE endpoints SET api_url=?, api_key=?, auth_mode=?, enabled=?, transformer=?, model=?, thinking=?, force_stream=?, codex_fast_mode=?, max_concurrent_requests=?, proxy_url=?, remark=?, sort_order=?, updated_at=CURRENT_TIMESTAMP WHERE name=?`,
+		ep.APIUrl, ep.APIKey, ep.AuthMode, ep.Enabled, ep.Transformer, ep.Model, ep.Thinking, ep.ForceStream, ep.CodexFastMode, ep.MaxConcurrentRequests, ep.ProxyURL, ep.Remark, ep.SortOrder, ep.Name)
 	return err
 }
 
@@ -683,7 +704,7 @@ func (s *SQLiteStorage) RenameEndpoint(oldName string, ep *Endpoint) error {
 	result, err := tx.Exec(`
 		UPDATE endpoints SET
 			name=?, api_url=?, api_key=?, auth_mode=?, enabled=?, transformer=?, model=?,
-			thinking=?, force_stream=?, max_concurrent_requests=?, proxy_url=?, remark=?, sort_order=?, updated_at=CURRENT_TIMESTAMP
+			thinking=?, force_stream=?, codex_fast_mode=?, max_concurrent_requests=?, proxy_url=?, remark=?, sort_order=?, updated_at=CURRENT_TIMESTAMP
 		WHERE name=?
 	`,
 		newName,
@@ -695,6 +716,7 @@ func (s *SQLiteStorage) RenameEndpoint(oldName string, ep *Endpoint) error {
 		ep.Model,
 		ep.Thinking,
 		ep.ForceStream,
+		ep.CodexFastMode,
 		ep.MaxConcurrentRequests,
 		ep.ProxyURL,
 		ep.Remark,
@@ -1422,6 +1444,12 @@ func (s *SQLiteStorage) getEndpointsFromDB(db *sql.DB, dbName string) ([]Endpoin
 		return nil, err
 	}
 
+	var codexFastModeColumnCount int
+	columnCheck = fmt.Sprintf(`SELECT COUNT(*) FROM %s.pragma_table_info('endpoints') WHERE name='codex_fast_mode'`, dbName)
+	if err := db.QueryRow(columnCheck).Scan(&codexFastModeColumnCount); err != nil {
+		return nil, err
+	}
+
 	var proxyURLColumnCount int
 	columnCheck = fmt.Sprintf(`SELECT COUNT(*) FROM %s.pragma_table_info('endpoints') WHERE name='proxy_url'`, dbName)
 	if err := db.QueryRow(columnCheck).Scan(&proxyURLColumnCount); err != nil {
@@ -1449,6 +1477,11 @@ func (s *SQLiteStorage) getEndpointsFromDB(db *sql.DB, dbName string) ([]Endpoin
 		selectForceStream = "COALESCE(force_stream, FALSE)"
 	}
 
+	selectCodexFastMode := "FALSE"
+	if codexFastModeColumnCount > 0 {
+		selectCodexFastMode = "COALESCE(codex_fast_mode, FALSE)"
+	}
+
 	selectProxyURL := "''"
 	if proxyURLColumnCount > 0 {
 		selectProxyURL = "COALESCE(proxy_url, '')"
@@ -1459,7 +1492,7 @@ func (s *SQLiteStorage) getEndpointsFromDB(db *sql.DB, dbName string) ([]Endpoin
 		selectMaxConcurrentRequests = "COALESCE(max_concurrent_requests, 0)"
 	}
 
-	query := fmt.Sprintf(`SELECT id, name, api_url, api_key, %s as auth_mode, enabled, transformer, model, %s as thinking, %s as force_stream, %s as max_concurrent_requests, %s as proxy_url, remark, COALESCE(sort_order, 0) as sort_order, created_at, updated_at FROM %s.endpoints`, selectAuthMode, selectThinking, selectForceStream, selectMaxConcurrentRequests, selectProxyURL, dbName)
+	query := fmt.Sprintf(`SELECT id, name, api_url, api_key, %s as auth_mode, enabled, transformer, model, %s as thinking, %s as force_stream, %s as codex_fast_mode, %s as max_concurrent_requests, %s as proxy_url, remark, COALESCE(sort_order, 0) as sort_order, created_at, updated_at FROM %s.endpoints`, selectAuthMode, selectThinking, selectForceStream, selectCodexFastMode, selectMaxConcurrentRequests, selectProxyURL, dbName)
 
 	rows, err := db.Query(query)
 	if err != nil {
@@ -1470,7 +1503,7 @@ func (s *SQLiteStorage) getEndpointsFromDB(db *sql.DB, dbName string) ([]Endpoin
 	var endpoints []Endpoint
 	for rows.Next() {
 		var ep Endpoint
-		if err := rows.Scan(&ep.ID, &ep.Name, &ep.APIUrl, &ep.APIKey, &ep.AuthMode, &ep.Enabled, &ep.Transformer, &ep.Model, &ep.Thinking, &ep.ForceStream, &ep.MaxConcurrentRequests, &ep.ProxyURL, &ep.Remark, &ep.SortOrder, &ep.CreatedAt, &ep.UpdatedAt); err != nil {
+		if err := rows.Scan(&ep.ID, &ep.Name, &ep.APIUrl, &ep.APIKey, &ep.AuthMode, &ep.Enabled, &ep.Transformer, &ep.Model, &ep.Thinking, &ep.ForceStream, &ep.CodexFastMode, &ep.MaxConcurrentRequests, &ep.ProxyURL, &ep.Remark, &ep.SortOrder, &ep.CreatedAt, &ep.UpdatedAt); err != nil {
 			return nil, err
 		}
 		normalizeEndpointAuthMode(&ep)
@@ -1494,6 +1527,7 @@ func normalizeEndpointAuthMode(ep *Endpoint) {
 		Model:                 ep.Model,
 		Thinking:              ep.Thinking,
 		ForceStream:           ep.ForceStream,
+		CodexFastMode:         ep.CodexFastMode,
 		ProxyURL:              ep.ProxyURL,
 		Remark:                ep.Remark,
 		MaxConcurrentRequests: ep.MaxConcurrentRequests,
@@ -1509,6 +1543,7 @@ func normalizeEndpointAuthMode(ep *Endpoint) {
 	ep.Model = normalized.Model
 	ep.Thinking = normalized.Thinking
 	ep.ForceStream = normalized.ForceStream
+	ep.CodexFastMode = normalized.CodexFastMode
 	ep.ProxyURL = strings.TrimSpace(normalized.ProxyURL)
 	ep.Remark = normalized.Remark
 	ep.MaxConcurrentRequests = normalized.MaxConcurrentRequests
@@ -1541,6 +1576,9 @@ func compareEndpoints(local, remote Endpoint) []string {
 	}
 	if local.ForceStream != remote.ForceStream {
 		conflicts = append(conflicts, "forceStream")
+	}
+	if local.CodexFastMode != remote.CodexFastMode {
+		conflicts = append(conflicts, "codexFastMode")
 	}
 	if config.NormalizeEndpointMaxConcurrentRequests(local.MaxConcurrentRequests) != config.NormalizeEndpointMaxConcurrentRequests(remote.MaxConcurrentRequests) {
 		conflicts = append(conflicts, "maxConcurrentRequests")
@@ -1618,6 +1656,10 @@ func (s *SQLiteStorage) mergeEndpoints(tx *sql.Tx, strategy MergeStrategy) error
 	if err != nil {
 		return err
 	}
+	localHasCodexFastMode, err := tableHasColumn(tx, "main", "endpoints", "codex_fast_mode")
+	if err != nil {
+		return err
+	}
 	backupHasAuthMode, err := tableHasColumn(tx, "backup", "endpoints", "auth_mode")
 	if err != nil {
 		return err
@@ -1627,6 +1669,10 @@ func (s *SQLiteStorage) mergeEndpoints(tx *sql.Tx, strategy MergeStrategy) error
 		return err
 	}
 	backupHasForceStream, err := tableHasColumn(tx, "backup", "endpoints", "force_stream")
+	if err != nil {
+		return err
+	}
+	backupHasCodexFastMode, err := tableHasColumn(tx, "backup", "endpoints", "codex_fast_mode")
 	if err != nil {
 		return err
 	}
@@ -1651,6 +1697,10 @@ func (s *SQLiteStorage) mergeEndpoints(tx *sql.Tx, strategy MergeStrategy) error
 	if backupHasForceStream {
 		selectForceStream = "COALESCE(force_stream, FALSE)"
 	}
+	selectCodexFastMode := "FALSE"
+	if backupHasCodexFastMode {
+		selectCodexFastMode = "COALESCE(codex_fast_mode, FALSE)"
+	}
 	selectProxyURL := "''"
 	if backupHasProxyURL {
 		selectProxyURL = "COALESCE(proxy_url, '')"
@@ -1660,20 +1710,24 @@ func (s *SQLiteStorage) mergeEndpoints(tx *sql.Tx, strategy MergeStrategy) error
 		selectMaxConcurrentRequests = "CASE WHEN COALESCE(max_concurrent_requests, 0) < 0 THEN 0 ELSE COALESCE(max_concurrent_requests, 0) END"
 	}
 
-	targetColumns := "name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, remark, sort_order"
-	selectColumns := fmt.Sprintf("name, api_url, api_key, %s, enabled, transformer, model, %s, %s, remark, COALESCE(sort_order, 0)", selectAuthMode, selectThinking, selectForceStream)
+	targetColumnParts := []string{"name", "api_url", "api_key", "auth_mode", "enabled", "transformer", "model", "thinking", "force_stream"}
+	selectColumnParts := []string{"name", "api_url", "api_key", selectAuthMode, "enabled", "transformer", "model", selectThinking, selectForceStream}
+	if localHasCodexFastMode {
+		targetColumnParts = append(targetColumnParts, "codex_fast_mode")
+		selectColumnParts = append(selectColumnParts, selectCodexFastMode)
+	}
 	if localHasMaxConcurrentRequests {
-		targetColumns = "name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, max_concurrent_requests, remark, sort_order"
-		selectColumns = fmt.Sprintf("name, api_url, api_key, %s, enabled, transformer, model, %s, %s, %s, remark, COALESCE(sort_order, 0)", selectAuthMode, selectThinking, selectForceStream, selectMaxConcurrentRequests)
+		targetColumnParts = append(targetColumnParts, "max_concurrent_requests")
+		selectColumnParts = append(selectColumnParts, selectMaxConcurrentRequests)
 	}
 	if localHasProxyURL {
-		targetColumns = "name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, proxy_url, remark, sort_order"
-		selectColumns = fmt.Sprintf("name, api_url, api_key, %s, enabled, transformer, model, %s, %s, %s, remark, COALESCE(sort_order, 0)", selectAuthMode, selectThinking, selectForceStream, selectProxyURL)
+		targetColumnParts = append(targetColumnParts, "proxy_url")
+		selectColumnParts = append(selectColumnParts, selectProxyURL)
 	}
-	if localHasProxyURL && localHasMaxConcurrentRequests {
-		targetColumns = "name, api_url, api_key, auth_mode, enabled, transformer, model, thinking, force_stream, max_concurrent_requests, proxy_url, remark, sort_order"
-		selectColumns = fmt.Sprintf("name, api_url, api_key, %s, enabled, transformer, model, %s, %s, %s, %s, remark, COALESCE(sort_order, 0)", selectAuthMode, selectThinking, selectForceStream, selectMaxConcurrentRequests, selectProxyURL)
-	}
+	targetColumnParts = append(targetColumnParts, "remark", "sort_order")
+	selectColumnParts = append(selectColumnParts, "remark", "COALESCE(sort_order, 0)")
+	targetColumns := strings.Join(targetColumnParts, ", ")
+	selectColumns := strings.Join(selectColumnParts, ", ")
 
 	switch strategy {
 	case MergeStrategyKeepLocal:

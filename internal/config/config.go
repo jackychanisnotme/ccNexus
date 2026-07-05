@@ -188,6 +188,7 @@ type Endpoint struct {
 	Model                 string `json:"model,omitempty"`       // Target model name for non-Claude APIs
 	Thinking              string `json:"thinking,omitempty"`    // Reasoning effort: off, low, medium, high, xhigh
 	ForceStream           bool   `json:"forceStream,omitempty"`
+	CodexFastMode         bool   `json:"codexFastMode,omitempty"`
 	ProxyURL              string `json:"proxyUrl,omitempty"`              // Optional endpoint-specific proxy URL
 	Remark                string `json:"remark,omitempty"`                // Optional remark for the endpoint
 	MaxConcurrentRequests int    `json:"maxConcurrentRequests,omitempty"` // 0 means unlimited
@@ -927,6 +928,7 @@ type StorageEndpoint struct {
 	Model                 string
 	Thinking              string
 	ForceStream           bool
+	CodexFastMode         bool
 	ProxyURL              string
 	Remark                string
 	MaxConcurrentRequests int
@@ -955,6 +957,7 @@ func LoadFromStorage(storage StorageAdapter) (*Config, error) {
 			Model:                 ep.Model,
 			Thinking:              ep.Thinking,
 			ForceStream:           ep.ForceStream,
+			CodexFastMode:         ep.CodexFastMode,
 			ProxyURL:              strings.TrimSpace(ep.ProxyURL),
 			Remark:                ep.Remark,
 			MaxConcurrentRequests: ep.MaxConcurrentRequests,
@@ -1272,6 +1275,7 @@ func (c *Config) SaveToStorage(storage StorageAdapter) error {
 			Model:                 ep.Model,
 			Thinking:              ep.Thinking,
 			ForceStream:           ep.ForceStream,
+			CodexFastMode:         ep.CodexFastMode,
 			ProxyURL:              ep.ProxyURL,
 			Remark:                ep.Remark,
 			MaxConcurrentRequests: ep.MaxConcurrentRequests,
@@ -1288,6 +1292,7 @@ func (c *Config) SaveToStorage(storage StorageAdapter) error {
 		endpoint.Model = normalizedEndpoint.Model
 		endpoint.Thinking = normalizedEndpoint.Thinking
 		endpoint.ForceStream = normalizedEndpoint.ForceStream
+		endpoint.CodexFastMode = normalizedEndpoint.CodexFastMode
 		endpoint.ProxyURL = normalizedEndpoint.ProxyURL
 		endpoint.Remark = normalizedEndpoint.Remark
 		endpoint.MaxConcurrentRequests = normalizedEndpoint.MaxConcurrentRequests

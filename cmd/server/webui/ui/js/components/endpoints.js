@@ -412,6 +412,13 @@ class Endpoints {
                                 </label>
                                 <small class="text-muted">${t('endpoints.forceStreamHint')}</small>
                             </div>
+                            <div class="form-group" id="endpoint-codex-fast-mode-group" style="display: none;">
+                                <label>
+                                    <input type="checkbox" class="form-checkbox" name="codexFastMode" id="endpoint-codex-fast-mode" ${endpoint?.codexFastMode ? 'checked' : ''}>
+                                    ${t('endpoints.codexFastMode')}
+                                </label>
+                                <small class="text-muted">${t('endpoints.codexFastModeHint')}</small>
+                            </div>
                             <div class="form-group">
                                 <label class="form-label">${t('endpoints.maxConcurrentRequests')}</label>
                                 <input type="number" class="form-input" name="maxConcurrentRequests" min="0" step="1" inputmode="numeric" value="${endpoint ? Number(endpoint.maxConcurrentRequests || 0) : 0}" placeholder="0">
@@ -450,6 +457,8 @@ class Endpoints {
             const apiKey = document.getElementById('endpoint-api-key');
             const transformer = document.getElementById('endpoint-transformer');
             const model = document.getElementById('model-input');
+            const codexFastModeGroup = document.getElementById('endpoint-codex-fast-mode-group');
+            const codexFastModeInput = document.getElementById('endpoint-codex-fast-mode');
             const isTokenPool = mode === 'token_pool' || mode === 'codex_token_pool' || mode === 'claude_oauth_token_pool';
             if (apiKey) {
                 apiKey.closest('.form-group').style.display = isTokenPool ? 'none' : '';
@@ -467,6 +476,15 @@ class Endpoints {
             const fixed = mode === 'codex_token_pool' || mode === 'claude_oauth_token_pool';
             apiUrl.readOnly = fixed;
             transformer.disabled = fixed;
+            if (codexFastModeGroup) {
+                codexFastModeGroup.style.display = mode === 'codex_token_pool' ? '' : 'none';
+            }
+            if (codexFastModeInput) {
+                codexFastModeInput.disabled = mode !== 'codex_token_pool';
+                if (mode !== 'codex_token_pool') {
+                    codexFastModeInput.checked = false;
+                }
+            }
         };
         document.getElementById('endpoint-auth-mode').addEventListener('change', syncAuthModeFields);
         syncAuthModeFields();
@@ -591,6 +609,7 @@ class Endpoints {
             remark: formData.get('remark'),
             enabled: formData.get('enabled') === 'on'
         };
+        data.codexFastMode = data.authMode === 'codex_token_pool' && formData.get('codexFastMode') === 'on';
         if (data.authMode === 'codex_token_pool') {
             data.apiUrl = 'https://chatgpt.com/backend-api/codex';
             data.transformer = 'openai2';
@@ -737,6 +756,7 @@ class Endpoints {
             model: endpoint.model,
             thinking: endpoint.thinking,
             forceStream: !!endpoint.forceStream,
+            codexFastMode: !!endpoint.codexFastMode,
             maxConcurrentRequests: endpoint.maxConcurrentRequests || 0,
             remark: endpoint.remark,
             enabled: endpoint.enabled,
