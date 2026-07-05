@@ -262,6 +262,7 @@ function readEndpointDraftFromModal() {
         thinking: getThinkingControlValue(),
         proxyUrl: document.getElementById('endpointProxyUrl')?.value?.trim() || '',
         forceStream: !!document.getElementById('endpointForceStream')?.checked,
+        codexFastMode: isCodexTokenPool && !!document.getElementById('endpointCodexFastMode')?.checked,
         maxConcurrentRequests,
         remark: document.getElementById('endpointRemark')?.value?.trim() || ''
     };
@@ -294,6 +295,7 @@ function endpointDraftHasUnsavedChanges(draft) {
         draftValue(saved.thinking) !== draft.thinking ||
         draftValue(saved.proxyUrl) !== draft.proxyUrl ||
         !!saved.forceStream !== draft.forceStream ||
+        !!saved.codexFastMode !== draft.codexFastMode ||
         (saved.maxConcurrentRequests || 0) !== (draft.maxConcurrentRequests || 0) ||
         draftValue(saved.remark) !== draft.remark
     );
@@ -340,9 +342,9 @@ async function persistEndpointDraftFromModal() {
 
     try {
         if (currentEditIndex === -1) {
-            await addEndpoint(draft.name, draft.url, draft.key, draft.authMode, draft.transformer, draft.model, draft.thinking, draft.proxyUrl, draft.forceStream, draft.maxConcurrentRequests, draft.remark);
+            await addEndpoint(draft.name, draft.url, draft.key, draft.authMode, draft.transformer, draft.model, draft.thinking, draft.proxyUrl, draft.forceStream, draft.codexFastMode, draft.maxConcurrentRequests, draft.remark);
         } else {
-            await updateEndpoint(currentEditIndex, draft.name, draft.url, draft.key, draft.authMode, draft.transformer, draft.model, draft.thinking, draft.proxyUrl, draft.forceStream, draft.maxConcurrentRequests, draft.remark);
+            await updateEndpoint(currentEditIndex, draft.name, draft.url, draft.key, draft.authMode, draft.transformer, draft.model, draft.thinking, draft.proxyUrl, draft.forceStream, draft.codexFastMode, draft.maxConcurrentRequests, draft.remark);
         }
 
         const freshConfig = await loadFreshEndpointConfig();
@@ -419,6 +421,7 @@ function bindEndpointDraftChangeHandlers() {
         'endpointTransformer',
         'endpointModel',
         'endpointForceStream',
+        'endpointCodexFastMode',
         'endpointMaxConcurrentRequests',
         'endpointRemark'
     ];
@@ -443,6 +446,8 @@ export function handleAuthModeChange() {
 	const urlInput = document.getElementById('endpointUrl');
 	const transformerSelect = document.getElementById('endpointTransformer');
 	const modelInput = document.getElementById('endpointModel');
+	const codexFastModeGroup = document.getElementById('endpointCodexFastModeGroup');
+	const codexFastModeInput = document.getElementById('endpointCodexFastMode');
 
 	const isTokenPool = isTokenPoolMode(authMode);
 	const isCodexTokenPool = isCodexTokenPoolMode(authMode);
@@ -478,6 +483,15 @@ export function handleAuthModeChange() {
 	if (modelInput && isClaudeOAuthTokenPool && !modelInput.value.trim()) {
 		modelInput.value = CLAUDE_OAUTH_DEFAULT_MODEL;
 	}
+	if (codexFastModeGroup) {
+		codexFastModeGroup.style.display = isCodexTokenPool ? 'block' : 'none';
+	}
+	if (codexFastModeInput) {
+		codexFastModeInput.disabled = !isCodexTokenPool;
+		if (!isCodexTokenPool) {
+			codexFastModeInput.checked = false;
+		}
+	}
 	if (fetchModelsBtn) {
 		fetchModelsBtn.disabled = false;
 		fetchModelsBtn.title = isTokenPool ? t('modal.fetchModelsUsingTokenPool') : t('modal.fetchModels');
@@ -511,6 +525,7 @@ export function showAddEndpointModal() {
     document.getElementById('endpointTransformer').value = 'claude';
     document.getElementById('endpointModel').value = '';
     document.getElementById('endpointForceStream').checked = false;
+    document.getElementById('endpointCodexFastMode').checked = false;
     document.getElementById('endpointMaxConcurrentRequests').value = '0';
     document.getElementById('endpointRemark').value = '';
     handleAuthModeChange();
@@ -536,6 +551,7 @@ export function showAddEndpointModalWithPreset(presetData) {
 	document.getElementById('endpointTransformer').value = presetData.transformer || 'claude';
 	document.getElementById('endpointModel').value = presetData.model || '';
 	document.getElementById('endpointForceStream').checked = !!presetData.forceStream;
+	document.getElementById('endpointCodexFastMode').checked = !!presetData.codexFastMode;
 	document.getElementById('endpointMaxConcurrentRequests').value = String(presetData.maxConcurrentRequests || 0);
 	document.getElementById('endpointRemark').value = presetData.remark || '';
 	handleAuthModeChange();
@@ -565,6 +581,7 @@ export async function editEndpoint(index) {
     document.getElementById('endpointTransformer').value = ep.transformer || 'claude';
     document.getElementById('endpointModel').value = ep.model || '';
     document.getElementById('endpointForceStream').checked = !!ep.forceStream;
+    document.getElementById('endpointCodexFastMode').checked = !!ep.codexFastMode;
     document.getElementById('endpointMaxConcurrentRequests').value = String(ep.maxConcurrentRequests || 0);
     document.getElementById('endpointRemark').value = ep.remark || '';
 

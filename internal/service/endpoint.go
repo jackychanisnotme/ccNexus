@@ -164,7 +164,7 @@ func credentialProviderTypeForAuthMode(authMode string) string {
 }
 
 // AddEndpoint adds a new endpoint
-func (e *EndpointService) AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, maxConcurrentRequests int, remark string) error {
+func (e *EndpointService) AddEndpoint(name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, codexFastMode bool, maxConcurrentRequests int, remark string) error {
 	endpoints := e.config.GetEndpoints()
 	for _, ep := range endpoints {
 		if ep.Name == name {
@@ -193,6 +193,7 @@ func (e *EndpointService) AddEndpoint(name, apiUrl, apiKey, authMode, transforme
 		Model:                 model,
 		Thinking:              thinking,
 		ForceStream:           forceStream,
+		CodexFastMode:         codexFastMode,
 		ProxyURL:              strings.TrimSpace(proxyURL),
 		Remark:                remark,
 		MaxConcurrentRequests: maxConcurrentRequests,
@@ -262,7 +263,7 @@ func (e *EndpointService) RemoveEndpoint(index int) error {
 }
 
 // UpdateEndpoint updates an endpoint by index
-func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, maxConcurrentRequests int, remark string) error {
+func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMode, transformer, model, thinking, proxyURL string, forceStream bool, codexFastMode bool, maxConcurrentRequests int, remark string) error {
 	endpoints := e.config.GetEndpoints()
 
 	if index < 0 || index >= len(endpoints) {
@@ -303,6 +304,7 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 		Model:                 model,
 		Thinking:              thinking,
 		ForceStream:           forceStream,
+		CodexFastMode:         codexFastMode,
 		ProxyURL:              strings.TrimSpace(proxyURL),
 		Remark:                remark,
 		MaxConcurrentRequests: maxConcurrentRequests,
@@ -332,6 +334,7 @@ func (e *EndpointService) UpdateEndpoint(index int, name, apiUrl, apiKey, authMo
 				Model:                 updatedEndpoint.Model,
 				Thinking:              updatedEndpoint.Thinking,
 				ForceStream:           updatedEndpoint.ForceStream,
+				CodexFastMode:         updatedEndpoint.CodexFastMode,
 				ProxyURL:              updatedEndpoint.ProxyURL,
 				Remark:                updatedEndpoint.Remark,
 				MaxConcurrentRequests: updatedEndpoint.MaxConcurrentRequests,

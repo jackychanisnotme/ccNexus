@@ -72,12 +72,12 @@ export async function addDiscoveredLANEndpoint(candidate) {
     return parseDesktopResult(raw);
 }
 
-export async function addEndpoint(name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, maxConcurrentRequests, remark) {
-    await window.go.main.App.AddEndpoint(name, url, key, authMode, transformer, model, thinking ?? '', proxyUrl || '', !!forceStream, maxConcurrentRequests || 0, remark || '');
+export async function addEndpoint(name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, codexFastMode, maxConcurrentRequests, remark) {
+    await window.go.main.App.AddEndpoint(name, url, key, authMode, transformer, model, thinking ?? '', proxyUrl || '', !!forceStream, !!codexFastMode, maxConcurrentRequests || 0, remark || '');
 }
 
-export async function updateEndpoint(index, name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, maxConcurrentRequests, remark) {
-    await window.go.main.App.UpdateEndpoint(index, name, url, key, authMode, transformer, model, thinking ?? '', proxyUrl || '', !!forceStream, maxConcurrentRequests || 0, remark || '');
+export async function updateEndpoint(index, name, url, key, authMode, transformer, model, thinking, proxyUrl, forceStream, codexFastMode, maxConcurrentRequests, remark) {
+    await window.go.main.App.UpdateEndpoint(index, name, url, key, authMode, transformer, model, thinking ?? '', proxyUrl || '', !!forceStream, !!codexFastMode, maxConcurrentRequests || 0, remark || '');
 }
 
 export async function removeEndpoint(index) {

@@ -28,6 +28,25 @@ describe('endpoint modal option layout', () => {
         );
     });
 
+    it('adds Codex fast mode as a Codex Token Pool-only endpoint option', () => {
+        assert.match(uiSource, /id="endpointCodexFastModeGroup"/);
+        assert.match(uiSource, /<input type="checkbox" id="endpointCodexFastMode"/);
+        assert.match(zhSource, /codexFastMode:\s*'快速模式'/);
+        assert.match(enSource, /codexFastMode:\s*'Fast mode'/);
+        assert.doesNotMatch(zhSource, /1\.5\s*倍/);
+        assert.doesNotMatch(enSource, /1\.5x/);
+
+        assert.match(modalSource, /codexFastMode:\s*isCodexTokenPool\s*&&\s*!!document\.getElementById\('endpointCodexFastMode'\)\?\.checked/);
+        assert.match(modalSource, /!!saved\.codexFastMode\s*!==\s*draft\.codexFastMode/);
+        assert.match(modalSource, /endpointCodexFastModeGroup[\s\S]*isCodexTokenPool/);
+        assert.match(modalSource, /endpointCodexFastMode[\s\S]*presetData\.codexFastMode/);
+        assert.match(modalSource, /endpointCodexFastMode[\s\S]*ep\.codexFastMode/);
+        assert.match(configSource, /function addEndpoint\([^)]*codexFastMode/);
+        assert.match(configSource, /App\.AddEndpoint\([^)]*!!codexFastMode/);
+        assert.match(configSource, /function updateEndpoint\([^)]*codexFastMode/);
+        assert.match(configSource, /App\.UpdateEndpoint\([^)]*!!codexFastMode/);
+    });
+
     it('keeps endpoint option checkboxes from taking the full form width', () => {
         assert.match(cssSource, /\.form-group\s+\.endpoint-option-label\s*{[^}]*display:\s*inline-flex;/s);
         assert.match(cssSource, /\.form-group\s+\.endpoint-option-label\s*{[^}]*align-items:\s*center;/s);

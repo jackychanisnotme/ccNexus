@@ -171,6 +171,7 @@ func storageEndpointToConfig(endpoint *storage.Endpoint) config.Endpoint {
 		Model:                 endpoint.Model,
 		Thinking:              endpoint.Thinking,
 		ForceStream:           endpoint.ForceStream,
+		CodexFastMode:         endpoint.CodexFastMode,
 		Remark:                endpoint.Remark,
 		ProxyURL:              endpoint.ProxyURL,
 		MaxConcurrentRequests: endpoint.MaxConcurrentRequests,

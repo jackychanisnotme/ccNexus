@@ -122,6 +122,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		Model                 string `json:"model"`
 		Thinking              string `json:"thinking"`
 		ForceStream           *bool  `json:"forceStream"`
+		CodexFastMode         *bool  `json:"codexFastMode"`
 		MaxConcurrentRequests *int   `json:"maxConcurrentRequests"`
 		Remark                string `json:"remark"`
 		ProxyURL              string `json:"proxyUrl"`
@@ -149,6 +150,10 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 						forceStream := ep.ForceStream
 						req.ForceStream = &forceStream
 					}
+					if req.CodexFastMode == nil {
+						codexFastMode := ep.CodexFastMode
+						req.CodexFastMode = &codexFastMode
+					}
 					if req.MaxConcurrentRequests == nil {
 						maxConcurrentRequests := ep.MaxConcurrentRequests
 						req.MaxConcurrentRequests = &maxConcurrentRequests
@@ -170,6 +175,10 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	if req.ForceStream != nil {
 		forceStream = *req.ForceStream
 	}
+	codexFastMode := false
+	if req.CodexFastMode != nil {
+		codexFastMode = *req.CodexFastMode
+	}
 	maxConcurrentRequests := 0
 	if req.MaxConcurrentRequests != nil {
 		maxConcurrentRequests = config.NormalizeEndpointMaxConcurrentRequests(*req.MaxConcurrentRequests)
@@ -182,6 +191,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		Model:                 req.Model,
 		Thinking:              req.Thinking,
 		ForceStream:           forceStream,
+		CodexFastMode:         codexFastMode,
 		Remark:                req.Remark,
 		ProxyURL:              strings.TrimSpace(req.ProxyURL),
 		MaxConcurrentRequests: maxConcurrentRequests,
@@ -198,6 +208,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	req.Thinking = normalizedEndpoint.Thinking
 	req.ProxyURL = normalizedEndpoint.ProxyURL
 	forceStream = normalizedEndpoint.ForceStream
+	codexFastMode = normalizedEndpoint.CodexFastMode
 	maxConcurrentRequests = normalizedEndpoint.MaxConcurrentRequests
 
 	// Validate required fields
@@ -240,6 +251,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		Model:                 req.Model,
 		Thinking:              req.Thinking,
 		ForceStream:           forceStream,
+		CodexFastMode:         codexFastMode,
 		MaxConcurrentRequests: maxConcurrentRequests,
 		Remark:                req.Remark,
 		ProxyURL:              strings.TrimSpace(req.ProxyURL),
@@ -280,6 +292,7 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 		Model                 string `json:"model"`
 		Thinking              string `json:"thinking"`
 		ForceStream           *bool  `json:"forceStream"`
+		CodexFastMode         *bool  `json:"codexFastMode"`
 		MaxConcurrentRequests *int   `json:"maxConcurrentRequests"`
 		Remark                string `json:"remark"`
 		ProxyURL              string `json:"proxyUrl"`
@@ -345,12 +358,16 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 		Model:                 existing.Model,
 		Thinking:              existing.Thinking,
 		ForceStream:           existing.ForceStream,
+		CodexFastMode:         existing.CodexFastMode,
 		Remark:                existing.Remark,
 		ProxyURL:              existing.ProxyURL,
 		MaxConcurrentRequests: existing.MaxConcurrentRequests,
 	}
 	if req.ForceStream != nil {
 		normalizedEndpoint.ForceStream = *req.ForceStream
+	}
+	if req.CodexFastMode != nil {
+		normalizedEndpoint.CodexFastMode = *req.CodexFastMode
 	}
 	if req.MaxConcurrentRequests != nil {
 		normalizedEndpoint.MaxConcurrentRequests = *req.MaxConcurrentRequests
@@ -368,6 +385,7 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, name st
 	existing.Transformer = normalizedEndpoint.Transformer
 	existing.Thinking = normalizedEndpoint.Thinking
 	existing.ForceStream = normalizedEndpoint.ForceStream
+	existing.CodexFastMode = normalizedEndpoint.CodexFastMode
 	existing.MaxConcurrentRequests = normalizedEndpoint.MaxConcurrentRequests
 	if existing.AuthMode == config.AuthModeAPIKey && existing.APIKey == "" {
 		WriteError(w, http.StatusBadRequest, "apiKey is required in api_key mode")

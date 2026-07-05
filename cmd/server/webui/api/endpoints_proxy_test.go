@@ -445,6 +445,87 @@ func TestEndpointAPIMaxConcurrentRequestsPersistsThroughCreateUpdateAndList(t *t
 	}
 }
 
+func TestEndpointAPICodexFastModePersistsThroughCreateUpdateCloneAndList(t *testing.T) {
+	store := newAPITestStorage(t)
+	cfg := config.DefaultConfig()
+	cfg.BasicAuthEnabled = false
+	proxyInstance := proxy.New(cfg, nil, store, "test-device")
+	handler := NewHandler(cfg, proxyInstance, store)
+
+	postJSON(t, handler, http.MethodPost, "/api/endpoints", map[string]any{
+		"name":                  "Codex Pool",
+		"apiUrl":                config.CodexTokenPoolAPIURL,
+		"authMode":              config.AuthModeCodexTokenPool,
+		"enabled":               true,
+		"transformer":           config.CodexTokenPoolTransformer,
+		"model":                 config.CodexTokenPoolDefaultModel,
+		"codexFastMode":         true,
+		"maxConcurrentRequests": 1,
+	})
+
+	source := mustGetStoredEndpoint(t, store, "Codex Pool")
+	if !source.CodexFastMode {
+		t.Fatalf("expected created endpoint codex fast mode to persist")
+	}
+
+	postJSON(t, handler, http.MethodPut, "/api/endpoints/Codex%20Pool", map[string]any{
+		"name":          "Codex Pool",
+		"apiUrl":        config.CodexTokenPoolAPIURL,
+		"authMode":      config.AuthModeCodexTokenPool,
+		"enabled":       true,
+		"transformer":   config.CodexTokenPoolTransformer,
+		"model":         config.CodexTokenPoolDefaultModel,
+		"codexFastMode": false,
+	})
+
+	source = mustGetStoredEndpoint(t, store, "Codex Pool")
+	if source.CodexFastMode {
+		t.Fatalf("expected updated endpoint codex fast mode to persist false")
+	}
+
+	postJSON(t, handler, http.MethodPut, "/api/endpoints/Codex%20Pool", map[string]any{
+		"name":          "Codex Pool",
+		"apiUrl":        config.CodexTokenPoolAPIURL,
+		"authMode":      config.AuthModeCodexTokenPool,
+		"enabled":       true,
+		"transformer":   config.CodexTokenPoolTransformer,
+		"model":         config.CodexTokenPoolDefaultModel,
+		"codexFastMode": true,
+	})
+	postJSON(t, handler, http.MethodPost, "/api/endpoints", map[string]any{
+		"name":        "Codex Clone",
+		"apiUrl":      config.CodexTokenPoolAPIURL,
+		"authMode":    config.AuthModeCodexTokenPool,
+		"enabled":     true,
+		"transformer": config.CodexTokenPoolTransformer,
+		"model":       config.CodexTokenPoolDefaultModel,
+		"cloneFrom":   "Codex Pool",
+	})
+
+	clone := mustGetStoredEndpoint(t, store, "Codex Clone")
+	if !clone.CodexFastMode {
+		t.Fatalf("expected cloned endpoint to inherit codex fast mode")
+	}
+
+	rec := requestJSON(t, handler, http.MethodGet, "/api/endpoints", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/endpoints status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp SuccessResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := resp.Data.(map[string]any)
+	endpoints := data["endpoints"].([]any)
+	if len(endpoints) != 2 {
+		t.Fatalf("expected two listed endpoints, got %#v", endpoints)
+	}
+	listed := endpoints[0].(map[string]any)
+	if got, ok := listed["codexFastMode"].(bool); !ok || !got {
+		t.Fatalf("listed codexFastMode = %#v, want true", listed["codexFastMode"])
+	}
+}
+
 func TestFetchModelsUsesProxyURLFromRequest(t *testing.T) {
 	store := newAPITestStorage(t)
 	cfg := config.DefaultConfig()

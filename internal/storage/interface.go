@@ -27,6 +27,7 @@ type Endpoint struct {
 	Model                 string    `json:"model"`
 	Thinking              string    `json:"thinking"`
 	ForceStream           bool      `json:"forceStream"`
+	CodexFastMode         bool      `json:"codexFastMode"`
 	ProxyURL              string    `json:"proxyUrl,omitempty"`
 	Remark                string    `json:"remark"`
 	MaxConcurrentRequests int       `json:"maxConcurrentRequests"`

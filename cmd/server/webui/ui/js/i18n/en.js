@@ -140,6 +140,8 @@ export default {
         remark: 'Remark',
         forceStream: 'Force streaming upstream',
         forceStreamHint: 'Use when this endpoint rejects non-streaming requests; AINexus aggregates the stream for non-streaming clients.',
+        codexFastMode: 'Fast mode',
+        codexFastModeHint: 'Only for Codex Token Pool. Uses fast for Codex Responses requests without service_tier, which may consume more Codex usage.',
         maxConcurrentRequests: 'Concurrency limit',
         maxConcurrentRequestsHint: '0 means unlimited; ordinary round-robin requests skip to the next endpoint when the limit is reached',
         invalidMaxConcurrentRequests: 'Concurrency limit must be 0 or a positive integer',

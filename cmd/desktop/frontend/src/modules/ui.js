@@ -541,6 +541,15 @@ export function initUI() {
                             ${t('modal.forceStreamHelp')}
                         </p>
                     </div>
+                    <div class="form-group" id="endpointCodexFastModeGroup" style="display: none;">
+                        <label class="endpoint-option-label">
+                            <input type="checkbox" id="endpointCodexFastMode">
+                            ${t('modal.codexFastMode')}
+                        </label>
+                        <p style="color: #666; font-size: 12px; margin-top: 5px;">
+                            ${t('modal.codexFastModeHelp')}
+                        </p>
+                    </div>
                     <div class="form-group">
                         <label>${t('modal.maxConcurrentRequests')}</label>
                         <input type="number" id="endpointMaxConcurrentRequests" min="0" step="1" inputmode="numeric" placeholder="0">
