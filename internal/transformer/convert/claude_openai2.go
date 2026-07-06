@@ -157,10 +157,15 @@ func hasClaudeToolResult(messages []transformer.ClaudeMessage) bool {
 // claudeThinkingBudget maps the Responses reasoning effort to a Claude extended
 // thinking budget. Defaults to a medium budget when effort is unset.
 func claudeThinkingBudget(reasoning map[string]interface{}) int {
-	effort := ""
-	if reasoning != nil {
-		effort, _ = reasoning["effort"].(string)
+	// Only enable Claude extended thinking when the client explicitly requests
+	// reasoning. Injecting thinking by default (e.g. for Codex requests that omit
+	// the reasoning field) breaks multi-turn tool conversations because dropped
+	// thinking blocks lack signatures, and some relays (e.g. Poe) reject the
+	// thinking field outright with a 500. See git history for details.
+	if reasoning == nil {
+		return 0
 	}
+	effort, _ := reasoning["effort"].(string)
 	switch strings.ToLower(strings.TrimSpace(effort)) {
 	case "none", "off":
 		return 0

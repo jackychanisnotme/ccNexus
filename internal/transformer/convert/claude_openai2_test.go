@@ -514,6 +514,29 @@ func TestOpenAI2ReqToClaudeEnablesThinking(t *testing.T) {
 	}
 }
 
+func TestOpenAI2ReqToClaudeNoReasoningDisablesThinking(t *testing.T) {
+	// Codex requests that omit the reasoning field must NOT get extended
+	// thinking injected. Doing so previously broke multi-turn tool chats and
+	// caused relays (e.g. Poe) to return 500.
+	req := transformer.OpenAI2Request{
+		Model:  "gpt-5.5",
+		Input:  "hi",
+		Stream: true,
+	}
+	raw, _ := json.Marshal(req)
+	out, err := OpenAI2ReqToClaude(raw, "claude-opus-4")
+	if err != nil {
+		t.Fatalf("convert error: %v", err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if _, ok := got["thinking"]; ok {
+		t.Fatalf("expected no thinking when reasoning is absent, got %v", got["thinking"])
+	}
+}
+
 func TestOpenAI2ReqToClaudeThinkingOffDisabled(t *testing.T) {
 	req := transformer.OpenAI2Request{
 		Model:     "gpt-5.5",
