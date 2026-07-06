@@ -140,6 +140,7 @@ func main() {
 	p := proxy.New(cfg, statsAdapter, sqliteStorage, deviceID)
 	endpointService := service.NewEndpointService(cfg, p, sqliteStorage)
 	licenseService.SetRemoteExecutor(service.NewRemoteManagementExecutor(cfg, sqliteStorage, endpointService))
+	licenseService.SetEndpointErrorTelemetryStore(service.NewEndpointErrorTelemetryStore(sqliteStorage))
 	licenseService.MaybeRefresh(timeNow())
 	remotePollLog := remotelog.NewPollFailureRecorder(serverRemotePollWarnFailures)
 	if _, err := licenseService.PollRemoteOnce(); err != nil {
@@ -150,6 +151,7 @@ func main() {
 	ctx, cancelRemote := context.WithCancel(context.Background())
 	defer cancelRemote()
 	go runRemoteManagementLoop(ctx, licenseService, remotePollLog)
+	go runEndpointErrorTelemetryLoop(ctx, licenseService)
 
 	// Create HTTP mux
 	mux := http.NewServeMux()
@@ -193,10 +195,11 @@ func main() {
 var timeNow = func() time.Time { return time.Now().UTC() }
 
 const (
-	serverRemotePollInterval     = 3 * time.Second
-	serverRemotePollMaxBackoff   = 30 * time.Second
-	serverRemoteSnapshotInterval = 60 * time.Second
-	serverRemotePollWarnFailures = 3
+	serverRemotePollInterval             = 3 * time.Second
+	serverRemotePollMaxBackoff           = 30 * time.Second
+	serverRemoteSnapshotInterval         = 60 * time.Second
+	serverEndpointErrorTelemetryInterval = 5 * time.Minute
+	serverRemotePollWarnFailures         = 3
 )
 
 func runRemoteManagementLoop(ctx context.Context, licenseService *onlinelicense.ClientService, remotePollLog *remotelog.PollFailureRecorder) {
@@ -234,6 +237,25 @@ func runRemoteManagementLoop(ctx context.Context, licenseService *onlinelicense.
 				}
 			}
 			timer.Reset(interval)
+		}
+	}
+}
+
+func runEndpointErrorTelemetryLoop(ctx context.Context, licenseService *onlinelicense.ClientService) {
+	if licenseService == nil {
+		return
+	}
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			if _, err := licenseService.UploadEndpointErrorTelemetry(timeNow()); err != nil {
+				logger.Warn("Failed to upload endpoint error telemetry: %v", err)
+			}
+			timer.Reset(serverEndpointErrorTelemetryInterval)
 		}
 	}
 }

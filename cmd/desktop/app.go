@@ -64,11 +64,12 @@ type desktopImportCredentialsRequest struct {
 }
 
 const (
-	desktopLicenseRefreshInterval = 5 * time.Minute
-	desktopRemotePollInterval     = 3 * time.Second
-	desktopRemotePollMaxBackoff   = 30 * time.Second
-	desktopRemoteSnapshotInterval = 60 * time.Second
-	desktopRemotePollWarnFailures = 3
+	desktopLicenseRefreshInterval         = 5 * time.Minute
+	desktopRemotePollInterval             = 3 * time.Second
+	desktopRemotePollMaxBackoff           = 30 * time.Second
+	desktopRemoteSnapshotInterval         = 60 * time.Second
+	desktopEndpointErrorTelemetryInterval = 5 * time.Minute
+	desktopRemotePollWarnFailures         = 3
 )
 
 // App struct
@@ -218,6 +219,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 	if a.license != nil {
 		a.license.SetRemoteExecutor(service.NewRemoteManagementExecutor(a.config, a.storage, a.endpoint))
+		a.license.SetEndpointErrorTelemetryStore(service.NewEndpointErrorTelemetryStore(a.storage))
 	}
 	a.codexAuth = codexauth.NewManager(codexauth.Options{
 		Storage:    a.storage,
@@ -233,6 +235,7 @@ func (a *App) startup(ctx context.Context) {
 		go a.refreshLicenseFromServer("startup")
 		go a.runLicenseRefreshLoop(ctx)
 		go a.runRemoteManagementLoop(ctx)
+		go a.runEndpointErrorTelemetryLoop(ctx)
 	}
 	go a.runLANDiscoveryLoop(ctx)
 	a.startProxyIfLicensed()
@@ -303,6 +306,22 @@ func (a *App) runRemoteManagementLoop(ctx context.Context) {
 	}
 }
 
+func (a *App) runEndpointErrorTelemetryLoop(ctx context.Context) {
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			if err := a.uploadEndpointErrorTelemetry(); err != nil {
+				logger.Warn("Failed to upload endpoint error telemetry: %v", err)
+			}
+			timer.Reset(desktopEndpointErrorTelemetryInterval)
+		}
+	}
+}
+
 func nextDesktopRemotePollInterval(current time.Duration) time.Duration {
 	switch {
 	case current < 5*time.Second:
@@ -312,6 +331,16 @@ func nextDesktopRemotePollInterval(current time.Duration) time.Duration {
 	default:
 		return desktopRemotePollMaxBackoff
 	}
+}
+
+func (a *App) uploadEndpointErrorTelemetry() error {
+	if a.license == nil {
+		return fmt.Errorf("license service unavailable")
+	}
+	a.licenseRefreshMu.Lock()
+	defer a.licenseRefreshMu.Unlock()
+	_, err := a.license.UploadEndpointErrorTelemetry(time.Now())
+	return err
 }
 
 func (a *App) pollRemoteManagement(fullSnapshot bool) (*onlinelicense.RemotePollOutcome, error) {

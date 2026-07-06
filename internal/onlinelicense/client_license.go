@@ -32,6 +32,7 @@ type ConfigStore interface {
 
 type ClientService struct {
 	store              ConfigStore
+	telemetry          EndpointErrorTelemetryStore
 	deviceID           string
 	serverURL          string
 	serverURLs         []string
@@ -57,6 +58,11 @@ type ClientOptions struct {
 type RemoteExecutor interface {
 	Snapshot() (RemoteSnapshot, error)
 	ExecuteRemoteCommand(command RemoteCommandPayload) (*RemoteExecutionOutcome, error)
+}
+
+type EndpointErrorTelemetryStore interface {
+	ListPendingEndpointErrorTelemetry(limit int) ([]EndpointErrorTelemetryLocalRecord, error)
+	MarkEndpointErrorTelemetryUploaded(ids []int64, uploadedAt time.Time) error
 }
 
 type ClientState struct {
@@ -156,6 +162,13 @@ func (s *ClientService) SetRemoteExecutor(executor RemoteExecutor) {
 		return
 	}
 	s.remote = executor
+}
+
+func (s *ClientService) SetEndpointErrorTelemetryStore(store EndpointErrorTelemetryStore) {
+	if s == nil {
+		return
+	}
+	s.telemetry = store
 }
 
 func NewConfiguredClientService(store ConfigStore, deviceID, version string) (*ClientService, error) {
@@ -288,6 +301,66 @@ func (s *ClientService) MaybeRefresh(now time.Time) {
 		return
 	}
 	_, _ = s.Refresh(now)
+}
+
+func (s *ClientService) UploadEndpointErrorTelemetry(now time.Time) (*EndpointErrorTelemetryResult, error) {
+	if s == nil || s.telemetry == nil {
+		return &EndpointErrorTelemetryResult{}, nil
+	}
+	records, err := s.telemetry.ListPendingEndpointErrorTelemetry(200)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return &EndpointErrorTelemetryResult{}, nil
+	}
+	items := make([]EndpointErrorTelemetryItem, 0, len(records))
+	ids := make([]int64, 0, len(records))
+	var windowStart time.Time
+	var windowEnd time.Time
+	for _, record := range records {
+		if record.ID <= 0 || record.Count <= 0 {
+			continue
+		}
+		item := record.EndpointErrorTelemetryItem
+		items = append(items, item)
+		ids = append(ids, record.ID)
+		if windowStart.IsZero() || (!item.WindowStart.IsZero() && item.WindowStart.Before(windowStart)) {
+			windowStart = item.WindowStart
+		}
+		if item.WindowEnd.After(windowEnd) {
+			windowEnd = item.WindowEnd
+		}
+	}
+	if len(items) == 0 {
+		return &EndpointErrorTelemetryResult{}, nil
+	}
+	state, err := s.loadState()
+	if err != nil {
+		return nil, err
+	}
+	if state.Ticket == "" {
+		return nil, ErrInvalidTicket
+	}
+	if now.IsZero() {
+		now = s.currentTime()
+	}
+	var result EndpointErrorTelemetryResult
+	if err := s.postJSON("/api/license/telemetry/endpoint-errors", EndpointErrorTelemetryRequest{
+		Ticket:      state.Ticket,
+		DeviceID:    s.deviceID,
+		Platform:    runtime.GOOS,
+		AppVersion:  s.version,
+		WindowStart: windowStart,
+		WindowEnd:   windowEnd,
+		Items:       items,
+	}, &result); err != nil {
+		return nil, err
+	}
+	if err := s.telemetry.MarkEndpointErrorTelemetryUploaded(ids, now); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (s *ClientService) PollRemoteOnce() (*RemotePollOutcome, error) {

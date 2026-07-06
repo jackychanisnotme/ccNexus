@@ -27,3 +27,28 @@ func TestAdminRemoteEndpointCodexFastModeControls(t *testing.T) {
 		t.Fatalf("admin copy must not hard-code a 1.5x fast-mode multiplier")
 	}
 }
+
+func TestAdminRemoteEndpointErrorTelemetrySection(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	body := string(source)
+	for _, want := range []string{
+		"/api/admin/telemetry/endpoint-errors/summary?deviceId=",
+		"renderEndpointErrorTelemetry(",
+		"renderEndpointErrorTelemetryTable(",
+		"端点错误遥测",
+		"近24小时",
+		"近7天",
+		"暂无端点错误遥测",
+		"endpointErrorSummary24h",
+		"endpointErrorSummary7d",
+		"row.apiHost||'-'",
+		"esc(row.sample||'-')",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("admin remote endpoint telemetry UI missing %q", want)
+		}
+	}
+}

@@ -108,6 +108,11 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleRemoteResult(w, r)
+	case path == "/api/license/telemetry/endpoint-errors":
+		if !h.allowRate(w, r, "license_remote", 2400, time.Minute) {
+			return
+		}
+		h.handleEndpointErrorTelemetrySubmit(w, r)
 	case path == "/api/admin/login":
 		h.handleLogin(w, r)
 	case path == "/api/admin/logout":
@@ -130,6 +135,10 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveAdmin(w, r, h.handleActivations)
 	case strings.HasPrefix(path, "/api/admin/activations/") && strings.HasSuffix(path, "/disable"):
 		h.serveAdminMutation(w, r, h.handleDisableActivation)
+	case path == "/api/admin/telemetry/endpoint-errors":
+		h.serveAdmin(w, r, h.handleEndpointErrorTelemetry)
+	case path == "/api/admin/telemetry/endpoint-errors/summary":
+		h.serveAdmin(w, r, h.handleEndpointErrorTelemetry)
 	case strings.HasPrefix(path, "/api/admin/devices/") && strings.Contains(path, "/remote/commands/"):
 		h.serveAdmin(w, r, h.handleRemoteCommandStatus)
 	case strings.HasPrefix(path, "/api/admin/devices/") && strings.HasSuffix(path, "/remote/commands"):
@@ -388,6 +397,24 @@ func (h *HTTPHandler) handleRemoteResult(w http.ResponseWriter, r *http.Request)
 	writeJSONSuccess(w, map[string]bool{"updated": true})
 }
 
+func (h *HTTPHandler) handleEndpointErrorTelemetrySubmit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req EndpointErrorTelemetryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	result, err := h.service.SubmitEndpointErrorTelemetry(req)
+	if err != nil {
+		writeJSONError(w, httpStatusForError(err), err.Error())
+		return
+	}
+	writeJSONSuccess(w, result)
+}
+
 func (h *HTTPHandler) handleCards(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -632,6 +659,33 @@ func (h *HTTPHandler) handleRemoteCommandStatus(w http.ResponseWriter, r *http.R
 	writeJSONSuccess(w, command)
 }
 
+func (h *HTTPHandler) handleEndpointErrorTelemetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	query, err := endpointErrorTelemetryQueryFromRequest(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := h.service.EndpointErrorTelemetryFor(adminFromContext(r), query)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	if strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/summary") {
+		writeJSONSuccess(w, map[string]interface{}{
+			"deviceId": query.DeviceID,
+			"from":     query.From,
+			"to":       query.To,
+			"summary":  result.Summary,
+		})
+		return
+	}
+	writeJSONSuccess(w, result)
+}
+
 func (h *HTTPHandler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -672,6 +726,45 @@ func remoteCommandPath(path string) (string, int64, error) {
 		return "", 0, fmt.Errorf("invalid command id")
 	}
 	return strings.Trim(parts[0], "/"), id, nil
+}
+
+func endpointErrorTelemetryQueryFromRequest(r *http.Request) (EndpointErrorTelemetryQuery, error) {
+	values := r.URL.Query()
+	query := EndpointErrorTelemetryQuery{
+		DeviceID:     strings.TrimSpace(values.Get("deviceId")),
+		EndpointName: strings.TrimSpace(values.Get("endpoint")),
+		Reason:       strings.TrimSpace(values.Get("reason")),
+	}
+	if raw := strings.TrimSpace(values.Get("statusCode")); raw != "" {
+		statusCode, err := strconv.Atoi(raw)
+		if err != nil || statusCode < 0 {
+			return query, fmt.Errorf("invalid statusCode")
+		}
+		query.StatusCode = statusCode
+		query.StatusCodeSet = true
+	}
+	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 {
+			return query, fmt.Errorf("invalid limit")
+		}
+		query.Limit = limit
+	}
+	if raw := strings.TrimSpace(values.Get("from")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return query, fmt.Errorf("invalid from")
+		}
+		query.From = parsed.UTC()
+	}
+	if raw := strings.TrimSpace(values.Get("to")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return query, fmt.Errorf("invalid to")
+		}
+		query.To = parsed.UTC()
+	}
+	return query, nil
 }
 
 func (h *HTTPHandler) serveAdmin(w http.ResponseWriter, r *http.Request, handler http.HandlerFunc) {

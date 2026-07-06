@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +115,26 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	}
 	if err := store.RecordDailyStat(&staleHistory); err != nil {
 		t.Fatalf("save stale destination history: %v", err)
+	}
+	telemetryWindow := time.Date(2026, 6, 20, 8, 0, 0, 0, time.UTC)
+	if err := store.RecordEndpointErrorStat(&EndpointErrorStatRecord{
+		EndpointName:        legacyOldName,
+		EndpointFingerprint: "legacy-fp",
+		APIHost:             "api.example.com",
+		APIURLFingerprint:   "url-fp",
+		AuthMode:            config.AuthModeAPIKey,
+		Transformer:         "openai",
+		Model:               "gpt-4.1",
+		Reason:              "upstream_5xx",
+		StatusCode:          502,
+		WindowStart:         telemetryWindow,
+		WindowEnd:           telemetryWindow.Add(5 * time.Minute),
+		FirstAt:             telemetryWindow.Add(time.Second),
+		LastAt:              telemetryWindow.Add(time.Second),
+		Count:               1,
+		Sample:              "bad gateway",
+	}); err != nil {
+		t.Fatalf("save endpoint error telemetry: %v", err)
 	}
 
 	renamed := oldEndpoint
@@ -287,6 +308,16 @@ func TestRenameEndpointPreservesAssociatedDataAndMergesHistory(t *testing.T) {
 	}
 	if oldHistoryCount != 0 {
 		t.Fatalf("old history row count = %d, want 0", oldHistoryCount)
+	}
+	pendingTelemetry, err := store.ListPendingEndpointErrorStats(10)
+	if err != nil {
+		t.Fatalf("list renamed endpoint error telemetry: %v", err)
+	}
+	if len(pendingTelemetry) != 1 ||
+		pendingTelemetry[0].EndpointName != canonicalNewName ||
+		pendingTelemetry[0].EndpointFingerprint != "legacy-fp" ||
+		pendingTelemetry[0].Count != 1 {
+		t.Fatalf("renamed endpoint error telemetry = %#v, want one row under %q", pendingTelemetry, canonicalNewName)
 	}
 }
 
@@ -1515,6 +1546,97 @@ func TestEndpointRuntimeStatusPersistsAcrossReopen(t *testing.T) {
 	}
 	if status.LastFailureStatusCode != 0 {
 		t.Fatalf("expected non-http failure to clear status code, got %d", status.LastFailureStatusCode)
+	}
+}
+
+func TestEndpointErrorStatsAggregateAndUploadCursor(t *testing.T) {
+	store, err := NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+
+	windowStart := time.Date(2026, 7, 5, 8, 0, 0, 0, time.UTC)
+	first := windowStart.Add(10 * time.Second)
+	second := windowStart.Add(2 * time.Minute)
+	base := EndpointErrorStatRecord{
+		EndpointName:        "Primary",
+		EndpointFingerprint: "ep-fp",
+		APIHost:             "api.example.test",
+		APIURLFingerprint:   "url-fp",
+		AuthMode:            "api_key",
+		Transformer:         "openai2",
+		Model:               "gpt-5",
+		Reason:              "rate_limited",
+		StatusCode:          429,
+		WindowStart:         windowStart,
+		WindowEnd:           windowStart.Add(5 * time.Minute),
+		FirstAt:             first,
+		LastAt:              first,
+		Count:               1,
+		Sample:              "Too many requests",
+	}
+	if err := store.RecordEndpointErrorStat(&base); err != nil {
+		t.Fatalf("record first error stat: %v", err)
+	}
+	next := base
+	next.FirstAt = second
+	next.LastAt = second
+	next.Sample = "Retry later"
+	if err := store.RecordEndpointErrorStat(&next); err != nil {
+		t.Fatalf("record second error stat: %v", err)
+	}
+
+	pending, err := store.ListPendingEndpointErrorStats(10)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("pending len = %d, want 1: %#v", len(pending), pending)
+	}
+	if pending[0].Count != 2 || pending[0].UploadedCount != 0 {
+		t.Fatalf("pending count/uploaded = %d/%d, want 2/0", pending[0].Count, pending[0].UploadedCount)
+	}
+	if !pending[0].FirstAt.Equal(first) || !pending[0].LastAt.Equal(second) {
+		t.Fatalf("pending times = %s/%s, want %s/%s", pending[0].FirstAt, pending[0].LastAt, first, second)
+	}
+
+	if err := store.MarkEndpointErrorStatsUploaded([]int64{pending[0].ID}, second.Add(time.Second)); err != nil {
+		t.Fatalf("mark uploaded: %v", err)
+	}
+	pending, err = store.ListPendingEndpointErrorStats(10)
+	if err != nil {
+		t.Fatalf("list pending after upload: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("pending after upload = %#v, want empty", pending)
+	}
+
+	third := base
+	third.FirstAt = second.Add(time.Minute)
+	third.LastAt = third.FirstAt
+	if err := store.RecordEndpointErrorStat(&third); err != nil {
+		t.Fatalf("record third error stat: %v", err)
+	}
+	pending, err = store.ListPendingEndpointErrorStats(10)
+	if err != nil {
+		t.Fatalf("list pending delta: %v", err)
+	}
+	if len(pending) != 1 || pending[0].Count != 3 || pending[0].UploadedCount != 2 {
+		t.Fatalf("pending cumulative = %#v, want cumulative count 3 with uploaded cursor 2", pending)
+	}
+}
+
+func TestSanitizeEndpointErrorSampleRedactsSecrets(t *testing.T) {
+	raw := `Bearer sk-secret-token hit https://api.example.test/v1?api_key=abc&token=def with jwt eyJhbGciOi.fake.sig`
+	got := SanitizeEndpointErrorSample(raw)
+	for _, leaked := range []string{"sk-secret-token", "api_key=abc", "token=def", "eyJhbGciOi.fake.sig"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("sanitized sample leaked %q in %q", leaked, got)
+		}
+	}
+	if len(got) > 200 {
+		t.Fatalf("sanitized sample length = %d, want <= 200", len(got))
 	}
 }
 

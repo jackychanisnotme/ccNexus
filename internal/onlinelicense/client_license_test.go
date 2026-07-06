@@ -48,6 +48,20 @@ func (e *testRemoteExecutor) ExecuteRemoteCommand(command RemoteCommandPayload) 
 	return &RemoteExecutionOutcome{Message: "ok"}, nil
 }
 
+type testEndpointErrorTelemetryStore struct {
+	pending  []EndpointErrorTelemetryLocalRecord
+	uploaded []int64
+}
+
+func (s *testEndpointErrorTelemetryStore) ListPendingEndpointErrorTelemetry(limit int) ([]EndpointErrorTelemetryLocalRecord, error) {
+	return append([]EndpointErrorTelemetryLocalRecord(nil), s.pending...), nil
+}
+
+func (s *testEndpointErrorTelemetryStore) MarkEndpointErrorTelemetryUploaded(ids []int64, _ time.Time) error {
+	s.uploaded = append(s.uploaded, ids...)
+	return nil
+}
+
 func TestClientActivateRequiresVerifierBeforeContactingServer(t *testing.T) {
 	store := newMemoryConfigStore()
 	requests := 0
@@ -221,6 +235,87 @@ func TestClientPostJSONDoesNotFallbackOnBusinessError(t *testing.T) {
 	}
 	if firstHits != 1 || secondHits != 0 {
 		t.Fatalf("hits first=%d second=%d, want 1/0", firstHits, secondHits)
+	}
+}
+
+func TestClientUploadEndpointErrorTelemetryPostsPendingAndMarksUploaded(t *testing.T) {
+	store := newMemoryConfigStore()
+	state := ClientState{
+		Ticket:   "ticket-a",
+		DeviceID: "device-a",
+	}
+	stateData, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	store.values[clientStateConfigKey] = string(stateData)
+
+	var got EndpointErrorTelemetryRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/license/telemetry/endpoint-errors" {
+			t.Fatalf("path = %s, want telemetry endpoint", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		writeJSONSuccess(w, EndpointErrorTelemetryResult{Accepted: len(got.Items)})
+	}))
+	t.Cleanup(server.Close)
+
+	telemetry := &testEndpointErrorTelemetryStore{pending: []EndpointErrorTelemetryLocalRecord{{
+		ID: 7,
+		EndpointErrorTelemetryItem: EndpointErrorTelemetryItem{
+			EndpointName:        "Primary",
+			EndpointFingerprint: "ep-fp",
+			APIHost:             "api.example.test",
+			Reason:              "rate_limited",
+			StatusCode:          429,
+			Count:               2,
+			WindowStart:         time.Date(2026, 7, 5, 8, 0, 0, 0, time.UTC),
+			WindowEnd:           time.Date(2026, 7, 5, 8, 5, 0, 0, time.UTC),
+			FirstAt:             time.Date(2026, 7, 5, 8, 1, 0, 0, time.UTC),
+			LastAt:              time.Date(2026, 7, 5, 8, 2, 0, 0, time.UTC),
+			Sample:              "reason=rate_limited status=429",
+		},
+	}}}
+	client := NewClientService(store, "device-a", ClientOptions{
+		ServerURL: server.URL,
+		Version:   "6.7.3",
+		Now: func() time.Time {
+			return time.Date(2026, 7, 5, 8, 3, 0, 0, time.UTC)
+		},
+	})
+	client.SetEndpointErrorTelemetryStore(telemetry)
+
+	result, err := client.UploadEndpointErrorTelemetry(time.Time{})
+	if err != nil {
+		t.Fatalf("upload telemetry: %v", err)
+	}
+	if result.Accepted != 1 {
+		t.Fatalf("accepted = %d, want 1", result.Accepted)
+	}
+	if got.Ticket != "ticket-a" || got.DeviceID != "device-a" || got.AppVersion != "6.7.3" || len(got.Items) != 1 {
+		t.Fatalf("unexpected telemetry request: %#v", got)
+	}
+	if len(telemetry.uploaded) != 1 || telemetry.uploaded[0] != 7 {
+		t.Fatalf("uploaded ids = %#v, want [7]", telemetry.uploaded)
+	}
+}
+
+func TestClientUploadEndpointErrorTelemetrySkipsEmptyStoreWithoutTicket(t *testing.T) {
+	telemetry := &testEndpointErrorTelemetryStore{}
+	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{})
+	client.SetEndpointErrorTelemetryStore(telemetry)
+
+	result, err := client.UploadEndpointErrorTelemetry(time.Time{})
+	if err != nil {
+		t.Fatalf("upload empty telemetry without ticket: %v", err)
+	}
+	if result == nil || result.Accepted != 0 {
+		t.Fatalf("result = %#v, want empty result", result)
+	}
+	if len(telemetry.uploaded) != 0 {
+		t.Fatalf("uploaded ids = %#v, want none", telemetry.uploaded)
 	}
 }
 

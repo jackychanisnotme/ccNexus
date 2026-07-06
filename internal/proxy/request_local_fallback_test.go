@@ -626,6 +626,49 @@ func TestEndpointRuntimeEventClearsStatusCodeForNonHTTPFailure(t *testing.T) {
 	}
 }
 
+func TestEndpointErrorTelemetryRecordedWithDailyStats(t *testing.T) {
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "Primary",
+		APIUrl:      "https://api.example.test/v1?api_key=secret",
+		APIKey:      "sk-secret",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai2",
+		Model:       "gpt-5",
+	}})
+	p := New(cfg, storage.NewStatsStorageAdapter(store), store, "device-a")
+
+	p.recordEndpointErrorForClient("Primary", "rate_limited", "203.0.113.10", http.StatusTooManyRequests)
+
+	_, stats := p.GetStats().GetStats()
+	if stats["Primary"] == nil || stats["Primary"].Errors != 1 {
+		t.Fatalf("daily stats errors = %#v, want one Primary error", stats["Primary"])
+	}
+	pending, err := store.ListPendingEndpointErrorStats(10)
+	if err != nil {
+		t.Fatalf("list pending endpoint errors: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("pending endpoint errors = %#v, want one row", pending)
+	}
+	got := pending[0]
+	if got.EndpointName != "Primary" || got.Reason != "rate_limited" || got.StatusCode != http.StatusTooManyRequests || got.Count != 1 {
+		t.Fatalf("unexpected endpoint error telemetry: %#v", got)
+	}
+	if got.APIHost != "api.example.test" || got.AuthMode != config.AuthModeAPIKey || got.Transformer != "openai2" || got.Model != "gpt-5" {
+		t.Fatalf("unexpected endpoint metadata in telemetry: %#v", got)
+	}
+	if strings.Contains(got.Sample, "sk-secret") || strings.Contains(got.Sample, "api_key=secret") {
+		t.Fatalf("telemetry sample leaked secret: %q", got.Sample)
+	}
+}
+
 func TestRequestLocalFallbackDoesNotAffectNextRequest(t *testing.T) {
 	logger.GetLogger().Clear()
 	logger.GetLogger().SetMinLevel(logger.DEBUG)
