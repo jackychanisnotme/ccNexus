@@ -169,6 +169,30 @@ func (s *SQLiteStorage) initSchema() error {
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS endpoint_error_stats (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		endpoint_name TEXT NOT NULL,
+		endpoint_fingerprint TEXT NOT NULL,
+		api_host TEXT,
+		api_url_fingerprint TEXT,
+		auth_mode TEXT,
+		transformer TEXT,
+		model TEXT,
+		reason TEXT NOT NULL,
+		status_code INTEGER NOT NULL DEFAULT 0,
+		window_start DATETIME NOT NULL,
+		window_end DATETIME NOT NULL,
+		first_at DATETIME NOT NULL,
+		last_at DATETIME NOT NULL,
+		count INTEGER NOT NULL DEFAULT 0,
+		uploaded_count INTEGER NOT NULL DEFAULT 0,
+		sample TEXT,
+		last_uploaded_at DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(endpoint_fingerprint, reason, status_code, window_start)
+	);
+
 	CREATE TABLE IF NOT EXISTS daily_stats (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		endpoint_name TEXT NOT NULL,
@@ -198,6 +222,9 @@ func (s *SQLiteStorage) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_credential_rate_limits_updated ON credential_rate_limits(updated_at);
 	CREATE INDEX IF NOT EXISTS idx_credential_usage_endpoint ON credential_usage(endpoint_name);
 	CREATE INDEX IF NOT EXISTS idx_endpoint_runtime_status_updated ON endpoint_runtime_status(updated_at);
+	CREATE INDEX IF NOT EXISTS idx_endpoint_error_stats_window ON endpoint_error_stats(window_start, window_end);
+	CREATE INDEX IF NOT EXISTS idx_endpoint_error_stats_endpoint ON endpoint_error_stats(endpoint_name);
+	CREATE INDEX IF NOT EXISTS idx_endpoint_error_stats_pending ON endpoint_error_stats(updated_at) WHERE count > uploaded_count;
 	`
 
 	if _, err := s.db.Exec(schema); err != nil {
@@ -620,6 +647,9 @@ func (s *SQLiteStorage) RenameEndpoint(oldName string, ep *Endpoint) error {
 	if _, err := tx.Exec(`UPDATE credential_usage SET endpoint_name=? WHERE endpoint_name=?`, newName, oldName); err != nil {
 		return fmt.Errorf("rename credential usage from %q to %q: %w", oldName, newName, err)
 	}
+	if _, err := tx.Exec(`UPDATE endpoint_error_stats SET endpoint_name=?, updated_at=CURRENT_TIMESTAMP WHERE endpoint_name IN (?, ?)`, newName, oldName, strings.TrimSpace(oldName)); err != nil {
+		return fmt.Errorf("rename endpoint error telemetry from %q to %q: %w", oldName, newName, err)
+	}
 
 	type runtimeStatusRow struct {
 		endpointName          string
@@ -775,6 +805,9 @@ func (s *SQLiteStorage) DeleteEndpoint(name string) error {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM endpoint_runtime_status WHERE endpoint_name=?`, name); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM endpoint_error_stats WHERE endpoint_name=?`, name); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM endpoints WHERE name=?`, name); err != nil {

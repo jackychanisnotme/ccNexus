@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,12 @@ var (
 	ErrTicketExpired       = errors.New("license ticket grace period expired")
 	ErrForbidden           = errors.New("forbidden")
 	ErrRemoteResultExpired = errors.New("remote command result expired")
+)
+
+var (
+	endpointTelemetrySecretPattern   = regexp.MustCompile(`(?i)(sk-[A-Za-z0-9_-]{4,}|bearer\s+[A-Za-z0-9._~+/=-]+|eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)`)
+	endpointTelemetryURLQueryPattern = regexp.MustCompile(`(https?://[^\s?]+)\?[^\s]+`)
+	endpointTelemetryKVSecretPattern = regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|token|key)=([^&\s]+)`)
 )
 
 type Store interface {
@@ -76,6 +83,9 @@ type Store interface {
 	GetRemoteCommand(deviceID string, commandID int64) (*RemoteCommandRecord, error)
 	MarkRemoteCommandsDelivered(deviceID string, commandIDs []int64, now time.Time) error
 	UpdateRemoteCommandResult(deviceID string, commandID int64, status, resultText, errorText string, resultJSON *RemoteCommandResult, expiresAt time.Time, now time.Time) error
+	RecordEndpointErrorTelemetry(deviceID string, activationID, ownerAccountID int64, platform, appVersion string, items []EndpointErrorTelemetryItem, now time.Time) (int, error)
+	ListEndpointErrorTelemetry(query EndpointErrorTelemetryQuery) ([]EndpointErrorTelemetryRecord, error)
+	SummarizeEndpointErrorTelemetry(query EndpointErrorTelemetryQuery) ([]EndpointErrorTelemetrySummary, error)
 }
 
 type Service struct {
@@ -1019,6 +1029,93 @@ func (s *Service) SubmitRemoteResult(req RemoteResultRequest) error {
 		return nil
 	}
 	return s.store.UpdateRemoteCommandResult(strings.TrimSpace(req.DeviceID), req.CommandID, status, resultText, strings.TrimSpace(req.Error), resultJSON, expiresAt, now)
+}
+
+func (s *Service) SubmitEndpointErrorTelemetry(req EndpointErrorTelemetryRequest) (*EndpointErrorTelemetryResult, error) {
+	payload, err := s.decodeAndVerifyTicket(req.Ticket)
+	if err != nil {
+		return nil, err
+	}
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if deviceID == "" || payload.DeviceID != deviceID {
+		return nil, ErrInvalidTicket
+	}
+	activation, err := s.store.GetActivation(payload.ActivationID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]EndpointErrorTelemetryItem, 0, len(req.Items))
+	for _, item := range req.Items {
+		item = normalizeEndpointErrorTelemetryItem(item)
+		item.Sample = sanitizeEndpointTelemetrySample(item.Sample)
+		if item.EndpointFingerprint == "" || item.Reason == "" || item.Count <= 0 || item.WindowStart.IsZero() || item.WindowEnd.IsZero() {
+			continue
+		}
+		items = append(items, item)
+	}
+	accepted, err := s.store.RecordEndpointErrorTelemetry(deviceID, activation.ID, activation.OwnerAccountID, strings.TrimSpace(req.Platform), strings.TrimSpace(req.AppVersion), items, s.currentTime())
+	if err != nil {
+		return nil, err
+	}
+	return &EndpointErrorTelemetryResult{Accepted: accepted}, nil
+}
+
+func (s *Service) EndpointErrorTelemetryFor(actor *AdminAccount, query EndpointErrorTelemetryQuery) (*EndpointErrorTelemetryResponse, error) {
+	if actor == nil || !hasPermission(actor, PermissionDevicesRemoteView) {
+		return nil, ErrForbidden
+	}
+	if strings.TrimSpace(query.DeviceID) != "" {
+		if ok, err := s.deviceInScope(actor, strings.TrimSpace(query.DeviceID)); err != nil || !ok {
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil, ErrForbidden
+				}
+				return nil, err
+			}
+			return nil, ErrForbidden
+		}
+	} else if actor.Level != AdminLevelRoot {
+		return nil, ErrForbidden
+	}
+	if query.Limit <= 0 || query.Limit > 500 {
+		query.Limit = 200
+	}
+	items, err := s.store.ListEndpointErrorTelemetry(query)
+	if err != nil {
+		return nil, err
+	}
+	summary, err := s.store.SummarizeEndpointErrorTelemetry(query)
+	if err != nil {
+		return nil, err
+	}
+	response := &EndpointErrorTelemetryResponse{
+		DeviceID: query.DeviceID,
+		From:     query.From,
+		To:       query.To,
+		Items:    items,
+		Summary:  summary,
+	}
+	if len(items) > 0 {
+		response.Platform = items[0].Platform
+		response.AppVersion = items[0].AppVersion
+	}
+	return response, nil
+}
+
+func sanitizeEndpointTelemetrySample(sample string) string {
+	sample = strings.TrimSpace(sample)
+	if sample == "" {
+		return ""
+	}
+	sample = endpointTelemetrySecretPattern.ReplaceAllString(sample, "[redacted]")
+	sample = endpointTelemetryURLQueryPattern.ReplaceAllString(sample, "$1?[redacted]")
+	sample = endpointTelemetryKVSecretPattern.ReplaceAllString(sample, "$1=[redacted]")
+	sample = strings.ReplaceAll(sample, "prompt text", "[redacted-prompt]")
+	sample = strings.ReplaceAll(sample, "response text", "[redacted-response]")
+	if len(sample) > 200 {
+		sample = sample[:200]
+	}
+	return sample
 }
 
 func (s *Service) upsertRemoteStateFromActivation(activation *ActivationRecord, report RemoteCapabilityReport, appVersion string, now time.Time) error {

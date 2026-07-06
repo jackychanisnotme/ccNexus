@@ -1,9 +1,14 @@
 package proxy
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/lich0821/ccNexus/internal/config"
 	"github.com/lich0821/ccNexus/internal/logger"
 	"github.com/lich0821/ccNexus/internal/storage"
 )
@@ -121,6 +126,7 @@ func (p *Proxy) recordEndpointError(endpointName, reason string, statusCodes ...
 func (p *Proxy) recordEndpointErrorForClient(endpointName, reason, clientIP string, statusCodes ...int) {
 	p.stats.RecordErrorForClient(endpointName, clientIP)
 	status := p.recordEndpointFailure(endpointName, reason, statusCodes...)
+	p.recordEndpointErrorTelemetry(endpointName, reason, endpointFailureStatusCode(statusCodes))
 	p.emitEndpointRuntimeEvent(endpointName, "failure", status)
 }
 
@@ -142,4 +148,99 @@ func (p *Proxy) emitCurrentEndpointChanged(previousName, name, reason string) {
 		PreviousName: previousName,
 		Reason:       reason,
 	})
+}
+
+func (p *Proxy) recordEndpointErrorTelemetry(endpointName, reason string, statusCode int) {
+	if p == nil || p.storage == nil || strings.TrimSpace(endpointName) == "" {
+		return
+	}
+	endpoint, ok := p.endpointConfigByName(endpointName)
+	if !ok {
+		endpoint = config.Endpoint{Name: endpointName}
+	}
+	now := time.Now().UTC()
+	windowStart := now.Truncate(5 * time.Minute)
+	record := &storage.EndpointErrorStatRecord{
+		EndpointName:        endpoint.Name,
+		EndpointFingerprint: endpointTelemetryFingerprint(endpoint),
+		APIHost:             endpointTelemetryHost(endpoint.APIUrl),
+		APIURLFingerprint:   endpointTelemetryURLFingerprint(endpoint.APIUrl),
+		AuthMode:            config.NormalizeAuthMode(endpoint.AuthMode),
+		Transformer:         endpoint.Transformer,
+		Model:               endpoint.Model,
+		Reason:              reason,
+		StatusCode:          statusCode,
+		WindowStart:         windowStart,
+		WindowEnd:           windowStart.Add(5 * time.Minute),
+		FirstAt:             now,
+		LastAt:              now,
+		Count:               1,
+		Sample:              endpointTelemetrySample(reason, statusCode, endpoint.APIUrl),
+	}
+	if err := p.storage.RecordEndpointErrorStat(record); err != nil {
+		logger.Warn("Failed to record endpoint error telemetry endpoint=%s reason=%s: %v", endpointName, reason, err)
+	}
+}
+
+func (p *Proxy) endpointConfigByName(endpointName string) (config.Endpoint, bool) {
+	if p == nil || p.config == nil {
+		return config.Endpoint{}, false
+	}
+	for _, endpoint := range p.config.GetEndpoints() {
+		if endpoint.Name == endpointName {
+			return endpoint, true
+		}
+	}
+	return config.Endpoint{}, false
+}
+
+func endpointTelemetryFingerprint(endpoint config.Endpoint) string {
+	return shortSHA256(strings.Join([]string{
+		strings.TrimSpace(endpoint.Name),
+		strings.TrimSpace(endpoint.APIUrl),
+		config.NormalizeAuthMode(endpoint.AuthMode),
+		strings.TrimSpace(endpoint.Transformer),
+		strings.TrimSpace(endpoint.Model),
+	}, "\x00"))
+}
+
+func endpointTelemetryURLFingerprint(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return shortSHA256(strings.TrimSpace(rawURL))
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return shortSHA256(parsed.String())
+}
+
+func endpointTelemetryHost(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
+}
+
+func endpointTelemetrySample(reason string, statusCode int, rawURL string) string {
+	parts := []string{"reason=" + strings.TrimSpace(reason)}
+	if statusCode > 0 {
+		parts = append(parts, "status="+strings.TrimSpace(httpStatusCodeString(statusCode)))
+	}
+	if host := endpointTelemetryHost(rawURL); host != "" {
+		parts = append(parts, "host="+host)
+	}
+	return storage.SanitizeEndpointErrorSample(strings.Join(parts, " "))
+}
+
+func httpStatusCodeString(statusCode int) string {
+	if statusCode <= 0 {
+		return ""
+	}
+	return strconv.Itoa(statusCode)
+}
+
+func shortSHA256(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:16]
 }

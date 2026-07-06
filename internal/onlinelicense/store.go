@@ -128,6 +128,33 @@ func (s *SQLiteStore) init() error {
 		updated_at DATETIME NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS license_endpoint_error_windows (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		device_id TEXT NOT NULL,
+		activation_id INTEGER NOT NULL DEFAULT 0,
+		owner_account_id INTEGER NOT NULL DEFAULT 0,
+		platform TEXT,
+		app_version TEXT,
+		endpoint_name TEXT NOT NULL DEFAULT '',
+		endpoint_fingerprint TEXT NOT NULL,
+		api_host TEXT,
+		api_url_fingerprint TEXT,
+		auth_mode TEXT,
+		transformer TEXT,
+		model TEXT,
+		reason TEXT NOT NULL,
+		status_code INTEGER NOT NULL DEFAULT 0,
+		count INTEGER NOT NULL DEFAULT 0,
+		first_at DATETIME NOT NULL,
+		last_at DATETIME NOT NULL,
+		window_start DATETIME NOT NULL,
+		window_end DATETIME NOT NULL,
+		sample TEXT,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL,
+		UNIQUE(device_id, endpoint_fingerprint, reason, status_code, window_start)
+	);
+
 	CREATE TABLE IF NOT EXISTS admin_accounts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		username TEXT UNIQUE NOT NULL,
@@ -150,6 +177,9 @@ func (s *SQLiteStore) init() error {
 	CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON admin_audit_logs(created_at);
 	CREATE INDEX IF NOT EXISTS idx_admin_accounts_parent ON admin_accounts(parent_id);
 	CREATE INDEX IF NOT EXISTS idx_license_remote_commands_device ON license_remote_commands(device_id, status, created_at);
+	CREATE INDEX IF NOT EXISTS idx_license_endpoint_error_windows_device ON license_endpoint_error_windows(device_id, window_start);
+	CREATE INDEX IF NOT EXISTS idx_license_endpoint_error_windows_owner ON license_endpoint_error_windows(owner_account_id, window_start);
+	CREATE INDEX IF NOT EXISTS idx_license_endpoint_error_windows_reason ON license_endpoint_error_windows(reason, status_code, window_start);
 
 	UPDATE license_activations
 	SET expires_at = disabled_at, updated_at = CURRENT_TIMESTAMP
@@ -305,6 +335,115 @@ func (s *SQLiteStore) GetRemoteSnapshot(deviceID string) (*RemoteSnapshot, error
 		snapshot.UpdatedAt = updatedAt.Time.UTC()
 	}
 	return &snapshot, nil
+}
+
+func (s *SQLiteStore) RecordEndpointErrorTelemetry(deviceID string, activationID, ownerAccountID int64, platform, appVersion string, items []EndpointErrorTelemetryItem, now time.Time) (int, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || len(items) == 0 {
+		return 0, nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	accepted := 0
+	for _, item := range items {
+		item = normalizeEndpointErrorTelemetryItem(item)
+		if item.EndpointFingerprint == "" || item.Reason == "" || item.Count <= 0 || item.WindowStart.IsZero() || item.WindowEnd.IsZero() {
+			continue
+		}
+		if item.FirstAt.IsZero() {
+			item.FirstAt = item.WindowStart
+		}
+		if item.LastAt.IsZero() {
+			item.LastAt = item.FirstAt
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO license_endpoint_error_windows (
+				device_id, activation_id, owner_account_id, platform, app_version, endpoint_name,
+				endpoint_fingerprint, api_host, api_url_fingerprint, auth_mode, transformer,
+				model, reason, status_code, count, first_at, last_at, window_start, window_end,
+				sample, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(device_id, endpoint_fingerprint, reason, status_code, window_start) DO UPDATE SET
+				activation_id=excluded.activation_id,
+				owner_account_id=excluded.owner_account_id,
+				platform=excluded.platform,
+				app_version=excluded.app_version,
+				endpoint_name=excluded.endpoint_name,
+				api_host=excluded.api_host,
+				api_url_fingerprint=excluded.api_url_fingerprint,
+				auth_mode=excluded.auth_mode,
+				transformer=excluded.transformer,
+				model=excluded.model,
+				count=MAX(license_endpoint_error_windows.count, excluded.count),
+				first_at=MIN(license_endpoint_error_windows.first_at, excluded.first_at),
+				last_at=MAX(license_endpoint_error_windows.last_at, excluded.last_at),
+				window_end=excluded.window_end,
+				sample=CASE WHEN excluded.sample != '' THEN excluded.sample ELSE license_endpoint_error_windows.sample END,
+				updated_at=excluded.updated_at
+		`, deviceID, activationID, ownerAccountID, strings.TrimSpace(platform), strings.TrimSpace(appVersion), item.EndpointName,
+			item.EndpointFingerprint, item.APIHost, item.APIURLFingerprint, item.AuthMode, item.Transformer, item.Model,
+			item.Reason, item.StatusCode, item.Count, formatTime(item.FirstAt), formatTime(item.LastAt), formatTime(item.WindowStart),
+			formatTime(item.WindowEnd), item.Sample, formatTime(now), formatTime(now)); err != nil {
+			return 0, err
+		}
+		accepted++
+	}
+	_, _ = tx.Exec(`DELETE FROM license_endpoint_error_windows WHERE window_end < ?`, formatTime(now.AddDate(0, 0, -90)))
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	committed = true
+	return accepted, nil
+}
+
+func (s *SQLiteStore) ListEndpointErrorTelemetry(query EndpointErrorTelemetryQuery) ([]EndpointErrorTelemetryRecord, error) {
+	sqlText, args := endpointErrorTelemetrySelectSQL(query)
+	rows, err := s.db.Query(sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]EndpointErrorTelemetryRecord, 0)
+	for rows.Next() {
+		record, err := scanEndpointErrorTelemetryRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *record)
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) SummarizeEndpointErrorTelemetry(query EndpointErrorTelemetryQuery) ([]EndpointErrorTelemetrySummary, error) {
+	sqlText, args := endpointErrorTelemetrySummarySQL(query)
+	rows, err := s.db.Query(sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]EndpointErrorTelemetrySummary, 0)
+	for rows.Next() {
+		var summary EndpointErrorTelemetrySummary
+		var lastAt string
+		if err := rows.Scan(&summary.DeviceID, &summary.EndpointName, &summary.EndpointFingerprint, &summary.APIHost,
+			&summary.Reason, &summary.StatusCode, &summary.Count, &lastAt, &summary.Sample); err != nil {
+			return nil, err
+		}
+		summary.LastAt = parseTime(lastAt)
+		result = append(result, summary)
+	}
+	return result, rows.Err()
 }
 
 func (s *SQLiteStore) CreateRemoteCommand(command *RemoteCommandRecord, ownerAccountID int64) error {
@@ -511,6 +650,129 @@ func scanRemoteDeviceState(scanner interface {
 	return &state, nil
 }
 
+func endpointErrorTelemetrySelectSQL(query EndpointErrorTelemetryQuery) (string, []interface{}) {
+	limit := query.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	sqlText := `
+		SELECT id, device_id, activation_id, owner_account_id, COALESCE(platform,''), COALESCE(app_version,''),
+			endpoint_name, endpoint_fingerprint, COALESCE(api_host,''), COALESCE(api_url_fingerprint,''),
+			COALESCE(auth_mode,''), COALESCE(transformer,''), COALESCE(model,''), reason, status_code,
+			count, first_at, last_at, window_start, window_end, COALESCE(sample,''), created_at, updated_at
+		FROM license_endpoint_error_windows
+	`
+	where, args := endpointErrorTelemetryWhere(query)
+	sqlText += where + ` ORDER BY window_start DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+	return sqlText, args
+}
+
+func endpointErrorTelemetrySummarySQL(query EndpointErrorTelemetryQuery) (string, []interface{}) {
+	limit := query.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	where, args := endpointErrorTelemetryWhere(query)
+	sqlText := `
+		SELECT device_id, endpoint_name, endpoint_fingerprint, COALESCE(api_host,''), reason, status_code,
+			SUM(count), MAX(last_at), COALESCE(MAX(sample), '')
+		FROM license_endpoint_error_windows
+	` + where + `
+		GROUP BY device_id, endpoint_fingerprint, reason, status_code
+		ORDER BY MAX(last_at) DESC
+		LIMIT ?
+	`
+	args = append(args, limit)
+	return sqlText, args
+}
+
+func endpointErrorTelemetryWhere(query EndpointErrorTelemetryQuery) (string, []interface{}) {
+	clauses := make([]string, 0)
+	args := make([]interface{}, 0)
+	if strings.TrimSpace(query.DeviceID) != "" {
+		clauses = append(clauses, "device_id=?")
+		args = append(args, strings.TrimSpace(query.DeviceID))
+	}
+	if !query.From.IsZero() {
+		clauses = append(clauses, "window_end>=?")
+		args = append(args, formatTime(query.From))
+	}
+	if !query.To.IsZero() {
+		clauses = append(clauses, "window_start<=?")
+		args = append(args, formatTime(query.To))
+	}
+	if strings.TrimSpace(query.EndpointName) != "" {
+		clauses = append(clauses, "endpoint_name=?")
+		args = append(args, strings.TrimSpace(query.EndpointName))
+	}
+	if strings.TrimSpace(query.Reason) != "" {
+		clauses = append(clauses, "reason=?")
+		args = append(args, strings.TrimSpace(query.Reason))
+	}
+	if query.StatusCodeSet {
+		clauses = append(clauses, "status_code=?")
+		args = append(args, query.StatusCode)
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func scanEndpointErrorTelemetryRecord(scanner interface {
+	Scan(dest ...interface{}) error
+}) (*EndpointErrorTelemetryRecord, error) {
+	var record EndpointErrorTelemetryRecord
+	var firstAt, lastAt, windowStart, windowEnd, createdAt, updatedAt sql.NullTime
+	if err := scanner.Scan(
+		&record.ID,
+		&record.DeviceID,
+		&record.ActivationID,
+		&record.OwnerAccountID,
+		&record.Platform,
+		&record.AppVersion,
+		&record.EndpointName,
+		&record.EndpointFingerprint,
+		&record.APIHost,
+		&record.APIURLFingerprint,
+		&record.AuthMode,
+		&record.Transformer,
+		&record.Model,
+		&record.Reason,
+		&record.StatusCode,
+		&record.Count,
+		&firstAt,
+		&lastAt,
+		&windowStart,
+		&windowEnd,
+		&record.Sample,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return nil, err
+	}
+	if firstAt.Valid {
+		record.FirstAt = firstAt.Time.UTC()
+	}
+	if lastAt.Valid {
+		record.LastAt = lastAt.Time.UTC()
+	}
+	if windowStart.Valid {
+		record.WindowStart = windowStart.Time.UTC()
+	}
+	if windowEnd.Valid {
+		record.WindowEnd = windowEnd.Time.UTC()
+	}
+	if createdAt.Valid {
+		record.CreatedAt = createdAt.Time.UTC()
+	}
+	if updatedAt.Valid {
+		record.UpdatedAt = updatedAt.Time.UTC()
+	}
+	return &record, nil
+}
+
 func scanRemoteCommand(scanner interface {
 	Scan(dest ...interface{}) error
 }) (*RemoteCommandRecord, error) {
@@ -535,6 +797,19 @@ func scanRemoteCommand(scanner interface {
 	command.CreatedAt = command.CreatedAt.UTC()
 	command.UpdatedAt = command.UpdatedAt.UTC()
 	return &command, nil
+}
+
+func normalizeEndpointErrorTelemetryItem(item EndpointErrorTelemetryItem) EndpointErrorTelemetryItem {
+	item.EndpointName = strings.TrimSpace(item.EndpointName)
+	item.EndpointFingerprint = strings.TrimSpace(item.EndpointFingerprint)
+	item.APIHost = strings.TrimSpace(item.APIHost)
+	item.APIURLFingerprint = strings.TrimSpace(item.APIURLFingerprint)
+	item.AuthMode = strings.TrimSpace(item.AuthMode)
+	item.Transformer = strings.TrimSpace(item.Transformer)
+	item.Model = strings.TrimSpace(item.Model)
+	item.Reason = strings.TrimSpace(item.Reason)
+	item.Sample = strings.TrimSpace(item.Sample)
+	return item
 }
 
 func remoteCommandResultJSON(result *RemoteCommandResult) interface{} {

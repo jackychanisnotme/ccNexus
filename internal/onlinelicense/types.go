@@ -313,6 +313,102 @@ type RemoteUsageStats struct {
 	OutputTokens int `json:"outputTokens"`
 }
 
+type EndpointErrorTelemetryItem struct {
+	EndpointName        string    `json:"endpointName"`
+	EndpointFingerprint string    `json:"endpointFingerprint"`
+	APIHost             string    `json:"apiHost,omitempty"`
+	APIURLFingerprint   string    `json:"apiUrlFingerprint,omitempty"`
+	AuthMode            string    `json:"authMode,omitempty"`
+	Transformer         string    `json:"transformer,omitempty"`
+	Model               string    `json:"model,omitempty"`
+	Reason              string    `json:"reason"`
+	StatusCode          int       `json:"statusCode,omitempty"`
+	Count               int       `json:"count"`
+	FirstAt             time.Time `json:"firstAt"`
+	LastAt              time.Time `json:"lastAt"`
+	WindowStart         time.Time `json:"windowStart"`
+	WindowEnd           time.Time `json:"windowEnd"`
+	Sample              string    `json:"sample,omitempty"`
+}
+
+type EndpointErrorTelemetryLocalRecord struct {
+	ID int64 `json:"-"`
+	EndpointErrorTelemetryItem
+}
+
+type EndpointErrorTelemetryRequest struct {
+	Ticket      string                       `json:"ticket"`
+	DeviceID    string                       `json:"deviceId"`
+	Platform    string                       `json:"platform,omitempty"`
+	AppVersion  string                       `json:"appVersion,omitempty"`
+	WindowStart time.Time                    `json:"windowStart,omitempty"`
+	WindowEnd   time.Time                    `json:"windowEnd,omitempty"`
+	Items       []EndpointErrorTelemetryItem `json:"items"`
+}
+
+type EndpointErrorTelemetryResult struct {
+	Accepted int `json:"accepted"`
+}
+
+type EndpointErrorTelemetryQuery struct {
+	DeviceID      string
+	From          time.Time
+	To            time.Time
+	EndpointName  string
+	Reason        string
+	StatusCode    int
+	StatusCodeSet bool
+	Limit         int
+}
+
+type EndpointErrorTelemetryRecord struct {
+	ID                  int64     `json:"id,omitempty"`
+	DeviceID            string    `json:"deviceId,omitempty"`
+	ActivationID        int64     `json:"activationId,omitempty"`
+	OwnerAccountID      int64     `json:"ownerAccountId,omitempty"`
+	Platform            string    `json:"platform,omitempty"`
+	AppVersion          string    `json:"appVersion,omitempty"`
+	EndpointName        string    `json:"endpointName"`
+	EndpointFingerprint string    `json:"endpointFingerprint"`
+	APIHost             string    `json:"apiHost,omitempty"`
+	APIURLFingerprint   string    `json:"apiUrlFingerprint,omitempty"`
+	AuthMode            string    `json:"authMode,omitempty"`
+	Transformer         string    `json:"transformer,omitempty"`
+	Model               string    `json:"model,omitempty"`
+	Reason              string    `json:"reason"`
+	StatusCode          int       `json:"statusCode,omitempty"`
+	Count               int       `json:"count"`
+	FirstAt             time.Time `json:"firstAt"`
+	LastAt              time.Time `json:"lastAt"`
+	WindowStart         time.Time `json:"windowStart"`
+	WindowEnd           time.Time `json:"windowEnd"`
+	Sample              string    `json:"sample,omitempty"`
+	CreatedAt           time.Time `json:"createdAt,omitempty"`
+	UpdatedAt           time.Time `json:"updatedAt,omitempty"`
+}
+
+type EndpointErrorTelemetrySummary struct {
+	DeviceID            string    `json:"deviceId,omitempty"`
+	EndpointName        string    `json:"endpointName"`
+	EndpointFingerprint string    `json:"endpointFingerprint"`
+	APIHost             string    `json:"apiHost,omitempty"`
+	Reason              string    `json:"reason"`
+	StatusCode          int       `json:"statusCode,omitempty"`
+	Count               int       `json:"count"`
+	LastAt              time.Time `json:"lastAt"`
+	Sample              string    `json:"sample,omitempty"`
+}
+
+type EndpointErrorTelemetryResponse struct {
+	DeviceID   string                          `json:"deviceId,omitempty"`
+	Platform   string                          `json:"platform,omitempty"`
+	AppVersion string                          `json:"appVersion,omitempty"`
+	From       time.Time                       `json:"from,omitempty"`
+	To         time.Time                       `json:"to,omitempty"`
+	Items      []EndpointErrorTelemetryRecord  `json:"items"`
+	Summary    []EndpointErrorTelemetrySummary `json:"summary,omitempty"`
+}
+
 type RemoteAdminDetail struct {
 	State    RemoteDeviceState     `json:"state"`
 	Commands []RemoteCommandRecord `json:"commands"`

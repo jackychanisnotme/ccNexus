@@ -123,6 +123,26 @@ type EndpointRuntimeStatusPatch struct {
 	LastAttemptAt         *time.Time
 }
 
+type EndpointErrorStatRecord struct {
+	ID                  int64     `json:"id,omitempty"`
+	EndpointName        string    `json:"endpointName"`
+	EndpointFingerprint string    `json:"endpointFingerprint"`
+	APIHost             string    `json:"apiHost,omitempty"`
+	APIURLFingerprint   string    `json:"apiUrlFingerprint,omitempty"`
+	AuthMode            string    `json:"authMode,omitempty"`
+	Transformer         string    `json:"transformer,omitempty"`
+	Model               string    `json:"model,omitempty"`
+	Reason              string    `json:"reason"`
+	StatusCode          int       `json:"statusCode"`
+	WindowStart         time.Time `json:"windowStart"`
+	WindowEnd           time.Time `json:"windowEnd"`
+	FirstAt             time.Time `json:"firstAt"`
+	LastAt              time.Time `json:"lastAt"`
+	Count               int       `json:"count"`
+	UploadedCount       int       `json:"uploadedCount,omitempty"`
+	Sample              string    `json:"sample,omitempty"`
+}
+
 type TokenPoolStats struct {
 	Total       int `json:"total"`
 	Active      int `json:"active"`
@@ -193,6 +213,9 @@ type Storage interface {
 	UpsertCredentialUsage(credentialID int64, endpointName string, requestsDelta, errorsDelta, inputTokensDelta, outputTokensDelta int, updatedAt time.Time) error
 	UpsertEndpointRuntimeStatus(endpointName string, patch EndpointRuntimeStatusPatch) (*EndpointRuntimeStatus, error)
 	GetEndpointRuntimeStatuses() (map[string]*EndpointRuntimeStatus, error)
+	RecordEndpointErrorStat(record *EndpointErrorStatRecord) error
+	ListPendingEndpointErrorStats(limit int) ([]EndpointErrorStatRecord, error)
+	MarkEndpointErrorStatsUploaded(ids []int64, uploadedAt time.Time) error
 
 	// Stats
 	RecordDailyStat(stat *DailyStat) error
