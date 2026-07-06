@@ -565,6 +565,39 @@ func TestOpenAI2StreamToOpenAIEmitsCompletedOnlyOutput(t *testing.T) {
 	}
 }
 
+func TestOpenAI2StreamToOpenAIEmitsCompletedOnlyFunctionCall(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+
+	completed := `data: {"type":"response.completed","response":{"id":"resp_1","object":"response","status":"completed","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},"output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{\"q\":\"weather\"}"}]}}`
+	out, err := OpenAI2StreamToOpenAI([]byte(completed), ctx, "gpt-4.1")
+	if err != nil {
+		t.Fatalf("response.completed failed: %v", err)
+	}
+	if out == nil {
+		t.Fatal("expected transformed chunk, got nil")
+	}
+
+	_, jsonData := parseSSE(out)
+	var chunk map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonData), &chunk); err != nil {
+		t.Fatalf("unmarshal chunk failed: %v, raw=%s", err, jsonData)
+	}
+	choice := chunk["choices"].([]interface{})[0].(map[string]interface{})
+	if choice["finish_reason"] != "tool_calls" {
+		t.Fatalf("expected finish_reason tool_calls, got %#v", choice["finish_reason"])
+	}
+	delta := choice["delta"].(map[string]interface{})
+	toolCalls := delta["tool_calls"].([]interface{})
+	toolCall := toolCalls[0].(map[string]interface{})
+	if toolCall["id"] != "call_1" {
+		t.Fatalf("expected call id call_1, got %#v", toolCall["id"])
+	}
+	fn := toolCall["function"].(map[string]interface{})
+	if fn["name"] != "lookup" || fn["arguments"] != `{"q":"weather"}` {
+		t.Fatalf("unexpected function call delta: %#v", fn)
+	}
+}
+
 func TestOpenAIStreamToOpenAI2SuppressesReasoningDeltaForResponsesSDK(t *testing.T) {
 	ctx := transformer.NewStreamContext()
 

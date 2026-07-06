@@ -29,16 +29,21 @@ func cleanSchemaForGemini(schema interface{}) interface{} {
 	return m
 }
 
-// parseSSE parses SSE event data
+// parseSSE parses SSE event data. Per the SSE spec a single event may carry
+// multiple `data:` lines that must be concatenated with newlines; keeping only
+// the last line truncates long JSON payloads, tool-call arguments, and error
+// bodies that upstreams split across lines.
 func parseSSE(data []byte) (eventType, jsonData string) {
+	var dataLines []string
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "event:") {
 			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 		} else if strings.HasPrefix(line, "data:") {
-			jsonData = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
 		}
 	}
+	jsonData = strings.Join(dataLines, "\n")
 	return
 }
 
@@ -284,6 +289,24 @@ func missingOpenAI2Text(ctx *transformer.StreamContext, outputIndex int, fullTex
 	}
 	recordOpenAI2Text(ctx, outputIndex, fullText)
 	return fullText
+}
+
+func openAI2ReasoningTextFromItem(item transformer.OpenAI2OutputItem) string {
+	var text strings.Builder
+	appendParts := func(parts []transformer.OpenAI2ContentPart) {
+		for _, part := range parts {
+			if part.Text == "" {
+				continue
+			}
+			switch part.Type {
+			case "summary_text", "reasoning_text", "output_text":
+				text.WriteString(part.Text)
+			}
+		}
+	}
+	appendParts(item.Summary)
+	appendParts(item.Content)
+	return text.String()
 }
 
 func openAI2MissingOutputText(ctx *transformer.StreamContext, output []transformer.OpenAI2OutputItem) string {

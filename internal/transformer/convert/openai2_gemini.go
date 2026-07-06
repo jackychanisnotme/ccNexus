@@ -368,6 +368,9 @@ func convertOpenAI2InputToGeminiContents(input interface{}) []map[string]interfa
 			case "function_call":
 				name, _ := itemMap["name"].(string)
 				callID, _ := itemMap["call_id"].(string)
+				if callID == "" {
+					callID, _ = itemMap["id"].(string)
+				}
 				if callID != "" && name != "" {
 					callIDToName[callID] = name
 				}
@@ -387,6 +390,9 @@ func convertOpenAI2InputToGeminiContents(input interface{}) []map[string]interfa
 					pendingFuncCalls = nil
 				}
 				callID, _ := itemMap["call_id"].(string)
+				if callID == "" {
+					callID, _ = itemMap["id"].(string)
+				}
 				name := callIDToName[callID]
 				output, _ := itemMap["output"].(string)
 				pendingFuncResponses = append(pendingFuncResponses, map[string]interface{}{

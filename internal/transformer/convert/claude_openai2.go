@@ -85,14 +85,13 @@ func ClaudeReqToOpenAI2WithThinking(claudeReq []byte, model string, thinking str
 		if mapped := mapClaudeToolChoiceToOpenAI2(req.ToolChoice); mapped != nil {
 			openai2Req["tool_choice"] = mapped
 		} else {
-			// For first turn, prefer required to avoid "plan-only" responses.
-			// After at least one tool_result exists, switch to auto to prevent
-			// forced repeated tool calls in later turns.
-			if hasClaudeToolResult(req.Messages) {
-				openai2Req["tool_choice"] = "auto"
-			} else {
-				openai2Req["tool_choice"] = "required"
-			}
+			// Claude's default when tool_choice is omitted is "auto": the model
+			// decides whether to call a tool. Forcing "required" made the model
+			// call a tool even when a direct answer was appropriate, causing
+			// wasted tool loops and rejections from providers that don't allow
+			// forced tools. Only an explicit Claude tool_choice ("any"/named)
+			// maps to a forced Responses tool_choice.
+			openai2Req["tool_choice"] = "auto"
 		}
 	}
 
@@ -345,6 +344,13 @@ func OpenAI2RespToClaude(openai2Resp []byte) ([]byte, error) {
 				if part.Type == "output_text" {
 					content = append(content, splitThinkTaggedText(part.Text)...)
 				}
+			}
+		case "reasoning":
+			if text := openAI2ReasoningTextFromItem(item); text != "" {
+				content = append(content, map[string]interface{}{
+					"type":     "thinking",
+					"thinking": text,
+				})
 			}
 		case "function_call":
 			hasToolCall = true
@@ -676,6 +682,24 @@ func OpenAI2StreamToClaude(event []byte, ctx *transformer.StreamContext) ([]byte
 		}
 		appendMissingText(evt.OutputIndex, text)
 
+	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
+		thinking := firstNonEmpty(evt.Delta, evt.Text)
+		recordOpenAI2Reasoning(ctx, evt.OutputIndex, thinking)
+		_, emitThinking := makeThinkEmitters(ctx, &result)
+		emitThinking(thinking)
+
+	case "response.reasoning_text.done", "response.reasoning_summary_text.done":
+		thinking := firstNonEmpty(evt.Text, evt.Delta)
+		if thinking != "" && ctx.ResponseReasoningByIndex[evt.OutputIndex] == "" {
+			recordOpenAI2Reasoning(ctx, evt.OutputIndex, thinking)
+			_, emitThinking := makeThinkEmitters(ctx, &result)
+			emitThinking(thinking)
+		}
+		if ctx.ThinkingBlockStarted {
+			result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ThinkingIndex})...)
+			ctx.ThinkingBlockStarted = false
+		}
+
 	case "response.output_item.added":
 		if evt.Item != nil && evt.Item.Type == "function_call" {
 			if ctx.ThinkingBlockStarted {
@@ -737,6 +761,51 @@ func OpenAI2StreamToClaude(event []byte, ctx *transformer.StreamContext) ([]byte
 			for outputIndex, item := range evt.Response.Output {
 				if item.Type == "message" {
 					appendMissingText(outputIndex, openAI2TextFromParts(item.Content))
+					continue
+				}
+				if item.Type == "reasoning" && ctx.ResponseReasoningByIndex[outputIndex] == "" {
+					if text := openAI2ReasoningTextFromItem(item); text != "" {
+						recordOpenAI2Reasoning(ctx, outputIndex, text)
+						_, emitThinking := makeThinkEmitters(ctx, &result)
+						emitThinking(text)
+					}
+					continue
+				}
+				if item.Type == "function_call" && !ctx.ClaudeToolStartedByKey[outputIndex] {
+					// Some upstreams only include function_call items in the final
+					// response.completed payload without prior output_item.added/done
+					// events. Emit the missing Claude tool_use block so the tool call
+					// is not dropped and stop_reason becomes tool_use below.
+					if ctx.ThinkingBlockStarted {
+						result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ThinkingIndex})...)
+						ctx.ThinkingBlockStarted = false
+					}
+					if ctx.ContentBlockStarted {
+						result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ContentIndex})...)
+						ctx.ContentBlockStarted = false
+						ctx.ContentIndex++
+					}
+					callID := item.CallID
+					if callID == "" {
+						callID = item.ID
+					}
+					recordClaudeToolCall(ctx, outputIndex, callID, item.Name)
+					blockIndex := claudeToolBlockIndex(ctx, outputIndex)
+					ctx.ToolBlockStarted = true
+					ctx.ClaudeToolStartedByKey[outputIndex] = true
+					result = append(result, buildClaudeEvent("content_block_start", map[string]interface{}{
+						"index": blockIndex, "content_block": map[string]interface{}{
+							"type": "tool_use", "id": callID, "name": item.Name, "input": map[string]interface{}{},
+						},
+					})...)
+					if item.Arguments != "" {
+						recordClaudeToolArguments(ctx, outputIndex, item.Arguments)
+						result = append(result, buildClaudeEvent("content_block_delta", map[string]interface{}{
+							"index": blockIndex, "delta": map[string]interface{}{"type": "input_json_delta", "partial_json": item.Arguments},
+						})...)
+					}
+					result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": blockIndex})...)
+					ctx.ClaudeToolDoneByKey[outputIndex] = true
 				}
 			}
 		}

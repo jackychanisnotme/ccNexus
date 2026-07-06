@@ -25,7 +25,26 @@ func TestParseSSEDataWithAndWithoutSpace(t *testing.T) {
 	}
 }
 
-func TestFilterNonResponsesStreamEventDropsChatChunk(t *testing.T) {
+func TestParseSSEConcatenatesMultipleDataLines(t *testing.T) {
+	// A single event whose JSON payload was split across multiple data: lines.
+	input := "event: message\ndata: {\"a\":1,\ndata: \"b\":\"long\"}"
+	ev, data := parseSSE([]byte(input))
+	if ev != "message" {
+		t.Fatalf("event = %q, want %q", ev, "message")
+	}
+	want := "{\"a\":1,\n\"b\":\"long\"}"
+	if data != want {
+		t.Fatalf("data = %q, want %q", data, want)
+	}
+}
+
+func TestParseSSEKeepsDonePassthrough(t *testing.T) {
+	_, data := parseSSE([]byte("data: [DONE]"))
+	if data != "[DONE]" {
+		t.Fatalf("data = %q, want [DONE]", data)
+	}
+}
+func TestFilterNonResponsesStreamEventDropsChatCompletionChunk(t *testing.T) {
 	chatChunk := []byte("data: {\"id\":\"chatcmpl-x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n")
 	if got := FilterNonResponsesStreamEvent(chatChunk); got != nil {
 		t.Fatalf("expected chat.completion.chunk to be filtered, got %q", got)

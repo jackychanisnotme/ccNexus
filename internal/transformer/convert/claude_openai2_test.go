@@ -53,6 +53,37 @@ func TestOpenAI2RespToClaudeWithThinking(t *testing.T) {
 	}
 }
 
+func TestOpenAI2RespToClaudeWithNativeReasoningItem(t *testing.T) {
+	openai2Resp := `{
+		"id":"resp_1",
+		"object":"response",
+		"status":"completed",
+		"output":[
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"native reason"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}
+		],
+		"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8}
+	}`
+
+	claudeRespBytes, err := OpenAI2RespToClaude([]byte(openai2Resp))
+	if err != nil {
+		t.Fatalf("OpenAI2RespToClaude failed: %v", err)
+	}
+
+	var claudeResp map[string]interface{}
+	if err := json.Unmarshal(claudeRespBytes, &claudeResp); err != nil {
+		t.Fatalf("unmarshal Claude response: %v", err)
+	}
+	content := claudeResp["content"].([]interface{})
+	if len(content) != 2 {
+		t.Fatalf("expected thinking and text blocks, got %#v", content)
+	}
+	thinking := content[0].(map[string]interface{})
+	if thinking["type"] != "thinking" || thinking["thinking"] != "native reason" {
+		t.Fatalf("unexpected thinking block: %#v", thinking)
+	}
+}
+
 func TestOpenAI2StreamToClaudeWithThinking(t *testing.T) {
 	ctx := transformer.NewStreamContext()
 	ctx.ModelName = "claude-3-sonnet-20240229"
@@ -87,6 +118,37 @@ func TestOpenAI2StreamToClaudeWithThinking(t *testing.T) {
 	}
 	if strings.Contains(fullEvents, "<think>") || strings.Contains(fullEvents, "</think>") {
 		t.Fatalf("Unexpected think tags leaked into output")
+	}
+}
+
+func TestOpenAI2StreamToClaudeMapsNativeReasoningDelta(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	ctx.ModelName = "claude-3-sonnet-20240229"
+
+	chunks := []string{
+		`data: {"type":"response.created","response":{"id":"resp_1","object":"response","status":"in_progress"}}`,
+		`data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"native reason"}`,
+		`data: {"type":"response.reasoning_text.done","output_index":0,"content_index":0,"text":"native reason"}`,
+		`data: {"type":"response.output_text.delta","output_index":1,"content_index":0,"delta":"answer"}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","status":"completed"}}`,
+	}
+
+	var allEvents []string
+	for _, chunk := range chunks {
+		events, err := OpenAI2StreamToClaude([]byte(chunk), ctx)
+		if err != nil {
+			t.Fatalf("OpenAI2StreamToClaude failed: %v", err)
+		}
+		if events != nil {
+			allEvents = append(allEvents, string(events))
+		}
+	}
+	fullEvents := strings.Join(allEvents, "")
+	if !strings.Contains(fullEvents, `"type":"thinking"`) || !strings.Contains(fullEvents, `"thinking":"native reason"`) {
+		t.Fatalf("expected native reasoning to map to Claude thinking, got: %s", fullEvents)
+	}
+	if !strings.Contains(fullEvents, `"text":"answer"`) {
+		t.Fatalf("expected text answer, got: %s", fullEvents)
 	}
 }
 
@@ -146,6 +208,38 @@ func TestOpenAI2StreamToClaudeEmitsCompletedOnlyOutput(t *testing.T) {
 	}
 	if !strings.Contains(fullEvents, "event: message_stop") {
 		t.Fatalf("expected message_stop, got: %s", fullEvents)
+	}
+}
+
+func TestOpenAI2StreamToClaudeEmitsCompletedOnlyFunctionCall(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	ctx.ModelName = "claude-3-sonnet-20240229"
+
+	chunks := []string{
+		`data: {"type":"response.created","response":{"id":"resp_1","object":"response","status":"in_progress"}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","status":"completed","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},"output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{\"q\":\"weather\"}"}]}}`,
+	}
+
+	var allEvents []string
+	for _, chunk := range chunks {
+		events, err := OpenAI2StreamToClaude([]byte(chunk), ctx)
+		if err != nil {
+			t.Fatalf("OpenAI2StreamToClaude failed: %v", err)
+		}
+		if events != nil {
+			allEvents = append(allEvents, string(events))
+		}
+	}
+
+	fullEvents := strings.Join(allEvents, "")
+	if !strings.Contains(fullEvents, `"type":"tool_use"`) || !strings.Contains(fullEvents, `"name":"lookup"`) {
+		t.Fatalf("expected completed-only function_call to emit Claude tool_use, got: %s", fullEvents)
+	}
+	if !strings.Contains(fullEvents, `"partial_json":"{\"q\":\"weather\"}"`) {
+		t.Fatalf("expected function arguments delta, got: %s", fullEvents)
+	}
+	if !strings.Contains(fullEvents, `"stop_reason":"tool_use"`) {
+		t.Fatalf("expected stop_reason tool_use, got: %s", fullEvents)
 	}
 }
 
@@ -387,7 +481,7 @@ func TestClaudeReqToOpenAI2MapsNamedToolChoice(t *testing.T) {
 	}
 }
 
-func TestClaudeReqToOpenAI2DefaultsToolChoiceRequiredWhenToolsPresent(t *testing.T) {
+func TestClaudeReqToOpenAI2DefaultsToolChoiceAutoWhenToolsPresent(t *testing.T) {
 	claudeReq := `{
 		"model": "claude-sonnet-4-20250514",
 		"stream": true,
@@ -405,8 +499,8 @@ func TestClaudeReqToOpenAI2DefaultsToolChoiceRequiredWhenToolsPresent(t *testing
 		t.Fatalf("unmarshal transformed req failed: %v", err)
 	}
 
-	if req["tool_choice"] != "required" {
-		t.Fatalf("expected tool_choice=required, got %#v", req["tool_choice"])
+	if req["tool_choice"] != "auto" {
+		t.Fatalf("expected tool_choice=auto by default, got %#v", req["tool_choice"])
 	}
 }
 

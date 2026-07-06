@@ -1080,6 +1080,7 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 		return nil, nil
 
 	case "response.completed":
+		var completedOnlyToolCalls []map[string]interface{}
 		if evt.Response != nil {
 			if ctx.MessageID == "" {
 				ctx.MessageID = evt.Response.ID
@@ -1089,6 +1090,29 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 			}
 			if evt.Response.Usage.OutputTokens > 0 {
 				ctx.OutputTokens = evt.Response.Usage.OutputTokens
+			}
+			for outputIndex, item := range evt.Response.Output {
+				if item.Type != "function_call" || ctx.ResponseToolCallIDByIndex[outputIndex] != "" {
+					continue
+				}
+				callID := item.CallID
+				if callID == "" {
+					callID = item.ID
+				}
+				recordOpenAI2ToolCall(ctx, outputIndex, callID, item.Name)
+				if item.Arguments != "" {
+					recordOpenAI2ToolArguments(ctx, outputIndex, item.Arguments)
+				}
+				chatIndex := openAI2ChatToolIndex(ctx, outputIndex)
+				completedOnlyToolCalls = append(completedOnlyToolCalls, map[string]interface{}{
+					"index": chatIndex,
+					"id":    ctx.ResponseToolCallIDByIndex[outputIndex],
+					"type":  "function",
+					"function": map[string]interface{}{
+						"name":      ctx.ResponseToolNameByIndex[outputIndex],
+						"arguments": ctx.ResponseToolArgumentsByIndex[outputIndex],
+					},
+				})
 			}
 		}
 		finishReason := "stop"
@@ -1107,7 +1131,7 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 		if evt.Response != nil {
 			content = openAI2MissingOutputText(ctx, evt.Response.Output)
 		}
-		return buildOpenAIChunkWithUsage(ctx.MessageID, model, content, nil, finishReason, usage)
+		return buildOpenAIChunkWithUsage(ctx.MessageID, model, content, completedOnlyToolCalls, finishReason, usage)
 	}
 
 	return nil, nil

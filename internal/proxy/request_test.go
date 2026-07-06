@@ -148,6 +148,35 @@ func TestCodexProxyUsesStableClientIdentity(t *testing.T) {
 	}
 }
 
+func TestBuildProxyRequestSkipsCodexHeadersForGenericTokenPool(t *testing.T) {
+	endpoint := config.Endpoint{
+		Name:        "Generic Responses Pool",
+		APIUrl:      "https://api.example.com",
+		AuthMode:    config.AuthModeTokenPool,
+		Transformer: "openai2",
+		Model:       "gpt-5.5",
+	}
+	body := []byte(`{"model":"gpt-5.5","stream":true,"input":"ping"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
+	// A generic token_pool credential can carry the storage default provider
+	// type "codex"; the endpoint is not a Codex backend so no Codex headers.
+	credential := &storage.EndpointCredential{ProviderType: storage.ProviderTypeCodex, AccessToken: "generic-token"}
+
+	proxyReq, err := buildProxyRequest(req, endpoint, "generic-token", body, "cx_resp_openai2", credential)
+	if err != nil {
+		t.Fatalf("buildProxyRequest failed: %v", err)
+	}
+	if got := proxyReq.Header.Get("Version"); got != "" {
+		t.Fatalf("did not expect Codex Version header for generic token pool, got %q", got)
+	}
+	if got := proxyReq.Header.Get("Originator"); got != "" {
+		t.Fatalf("did not expect Codex Originator header for generic token pool, got %q", got)
+	}
+	if got := proxyReq.Header.Get("User-Agent"); strings.Contains(got, "codex_cli_rs") {
+		t.Fatalf("did not expect Codex User-Agent for generic token pool, got %q", got)
+	}
+}
+
 func TestBuildProxyRequestPreservesMaxOutputTokensForNonCodexResponses(t *testing.T) {
 	endpoint := config.Endpoint{
 		Name:        "OpenAI Responses",
@@ -710,12 +739,12 @@ func TestInjectEndpointThinkingInPayloadSkipsOff(t *testing.T) {
 
 func TestBuildProxyRequestInjectsCodexFastServiceTierWhenEnabled(t *testing.T) {
 	endpoint := config.Endpoint{
-		Name:           "Codex Pool",
-		APIUrl:         config.CodexTokenPoolAPIURL,
-		AuthMode:       config.AuthModeCodexTokenPool,
-		Transformer:    config.CodexTokenPoolTransformer,
-		Model:          "gpt-5.5",
-		CodexFastMode:  true,
+		Name:          "Codex Pool",
+		APIUrl:        config.CodexTokenPoolAPIURL,
+		AuthMode:      config.AuthModeCodexTokenPool,
+		Transformer:   config.CodexTokenPoolTransformer,
+		Model:         "gpt-5.5",
+		CodexFastMode: true,
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	body := []byte(`{"model":"gpt-5.5","stream":true,"input":[]}`)
@@ -732,12 +761,12 @@ func TestBuildProxyRequestInjectsCodexFastServiceTierWhenEnabled(t *testing.T) {
 
 func TestBuildProxyRequestPreservesClientServiceTierWhenCodexFastModeEnabled(t *testing.T) {
 	endpoint := config.Endpoint{
-		Name:           "Codex Pool",
-		APIUrl:         config.CodexTokenPoolAPIURL,
-		AuthMode:       config.AuthModeCodexTokenPool,
-		Transformer:    config.CodexTokenPoolTransformer,
-		Model:          "gpt-5.5",
-		CodexFastMode:  true,
+		Name:          "Codex Pool",
+		APIUrl:        config.CodexTokenPoolAPIURL,
+		AuthMode:      config.AuthModeCodexTokenPool,
+		Transformer:   config.CodexTokenPoolTransformer,
+		Model:         "gpt-5.5",
+		CodexFastMode: true,
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	body := []byte(`{"model":"gpt-5.5","stream":true,"service_tier":"flex","input":[]}`)
@@ -754,13 +783,13 @@ func TestBuildProxyRequestPreservesClientServiceTierWhenCodexFastModeEnabled(t *
 
 func TestBuildProxyRequestDoesNotInjectCodexFastServiceTierForNonCodexTokenPool(t *testing.T) {
 	endpoint := config.Endpoint{
-		Name:           "API Key Codex URL",
-		APIUrl:         config.CodexTokenPoolAPIURL,
-		AuthMode:       config.AuthModeAPIKey,
-		APIKey:         "api-key",
-		Transformer:    config.CodexTokenPoolTransformer,
-		Model:          "gpt-5.5",
-		CodexFastMode:  true,
+		Name:          "API Key Codex URL",
+		APIUrl:        config.CodexTokenPoolAPIURL,
+		AuthMode:      config.AuthModeAPIKey,
+		APIKey:        "api-key",
+		Transformer:   config.CodexTokenPoolTransformer,
+		Model:         "gpt-5.5",
+		CodexFastMode: true,
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	body := []byte(`{"model":"gpt-5.5","stream":true,"input":[]}`)

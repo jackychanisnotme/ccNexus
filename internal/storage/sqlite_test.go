@@ -1360,6 +1360,15 @@ func TestDeleteCredentialAndEndpointRemoveCredentialUsage(t *testing.T) {
 	if err := store.UpsertCredentialUsage(cred.ID, "ep", 1, 0, 2, 3, time.Now()); err != nil {
 		t.Fatalf("save usage: %v", err)
 	}
+	// Sibling credential under the same endpoint. Deleting cred must not remove
+	// this credential's usage row.
+	sibling := &EndpointCredential{EndpointName: "ep", AccessToken: "tok-sibling", Enabled: true}
+	if err := store.SaveEndpointCredential(sibling); err != nil {
+		t.Fatalf("save sibling credential: %v", err)
+	}
+	if err := store.UpsertCredentialUsage(sibling.ID, "ep", 5, 1, 6, 7, time.Now()); err != nil {
+		t.Fatalf("save sibling usage: %v", err)
+	}
 	if err := store.DeleteEndpointCredential("ep", cred.ID); err != nil {
 		t.Fatalf("delete credential: %v", err)
 	}
@@ -1367,8 +1376,14 @@ func TestDeleteCredentialAndEndpointRemoveCredentialUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get usage: %v", err)
 	}
-	if len(usage) != 0 {
-		t.Fatalf("usage after credential delete = %#v, want empty", usage)
+	if _, ok := usage[cred.ID]; ok {
+		t.Fatalf("deleted credential usage still present: %#v", usage)
+	}
+	if _, ok := usage[sibling.ID]; !ok {
+		t.Fatalf("sibling credential usage removed by single delete: %#v", usage)
+	}
+	if len(usage) != 1 {
+		t.Fatalf("usage after credential delete = %#v, want only sibling", usage)
 	}
 
 	endpoint := &Endpoint{Name: "ep2", APIUrl: "https://api.example.com", APIKey: "key", AuthMode: "api_key", Enabled: true, Transformer: "openai", Model: "gpt-test"}

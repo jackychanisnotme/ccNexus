@@ -2,6 +2,7 @@ package convert
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/lich0821/ccNexus/internal/transformer"
@@ -80,6 +81,53 @@ func TestGeminiStreamToClaudeUniqueToolIDs(t *testing.T) {
 	}
 	if len(ids) != 2 {
 		t.Fatalf("expected 2 unique streaming tool_use ids, got %d", len(ids))
+	}
+}
+
+func TestGeminiStreamToClaudeMapsThoughtToThinking(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	event := []byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hidden reason\",\"thought\":true},{\"text\":\"visible answer\"}]},\"finishReason\":\"STOP\"}]}\n\n")
+	out, err := GeminiStreamToClaude(event, ctx)
+	if err != nil {
+		t.Fatalf("GeminiStreamToClaude failed: %v", err)
+	}
+	full := string(out)
+	if !strings.Contains(full, `"type":"thinking"`) || !strings.Contains(full, `"thinking":"hidden reason"`) {
+		t.Fatalf("expected Gemini thought to become Claude thinking, got: %s", full)
+	}
+	if !strings.Contains(full, `"text":"visible answer"`) {
+		t.Fatalf("expected visible answer text, got: %s", full)
+	}
+	if strings.Contains(full, `"type":"text_delta","text":"hidden reason"`) {
+		t.Fatalf("Gemini thought leaked as visible text: %s", full)
+	}
+}
+
+func TestOpenAI2ReqToGeminiFunctionOutputFallsBackToItemID(t *testing.T) {
+	req := `{
+		"model":"gpt-4.1",
+		"input":[
+			{"type":"function_call","id":"fc_1","name":"lookup","arguments":"{\"q\":\"weather\"}"},
+			{"type":"function_call_output","id":"fc_1","output":"sunny"}
+		]
+	}`
+	out, err := OpenAI2ReqToGemini([]byte(req), "gemini-2.5-pro")
+	if err != nil {
+		t.Fatalf("OpenAI2ReqToGemini failed: %v", err)
+	}
+	var geminiReq map[string]interface{}
+	if err := json.Unmarshal(out, &geminiReq); err != nil {
+		t.Fatalf("unmarshal gemini request: %v", err)
+	}
+	contents := geminiReq["contents"].([]interface{})
+	if len(contents) != 2 {
+		t.Fatalf("expected model functionCall and user functionResponse contents, got %#v", contents)
+	}
+	responseContent := contents[1].(map[string]interface{})
+	parts := responseContent["parts"].([]interface{})
+	functionResponse := parts[0].(map[string]interface{})["functionResponse"].(map[string]interface{})
+	if functionResponse["name"] != "lookup" {
+		t.Fatalf("expected functionResponse name lookup via id fallback, got %#v", functionResponse)
 	}
 }
 

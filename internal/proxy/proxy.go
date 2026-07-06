@@ -882,6 +882,12 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	maxRetries := p.computeMaxRetries(requestEndpoints)
 	if useSpecificEndpoint {
 		maxRetries = endpointSlowFailoverAttempts
+		if specifiedEndpoint != nil && config.IsTokenPoolAuthMode(specifiedEndpoint.AuthMode) {
+			// A pinned endpoint must not fail over to other endpoints, but token-pool
+			// credentials within that endpoint still need enough attempts to rotate
+			// past invalid or expired credentials.
+			maxRetries = p.computeMaxRetries([]config.Endpoint{*specifiedEndpoint})
+		}
 	}
 	forceStreamRetryEndpoints := make(map[string]bool)
 	endpointAttempts := 0

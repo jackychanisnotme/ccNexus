@@ -336,7 +336,10 @@ func (s *SQLiteStorage) DeleteEndpointCredential(endpointName string, id int64) 
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM credential_usage WHERE credential_id=? OR endpoint_name=?`, id, endpointName); err != nil {
+	// Only remove usage for the credential being deleted. Using endpoint_name
+	// here would wipe usage rows for every other credential under the same
+	// endpoint. Endpoint-wide cleanup belongs in DeleteEndpoint.
+	if _, err := tx.Exec(`DELETE FROM credential_usage WHERE credential_id=?`, id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM credential_rate_limits WHERE credential_id=?`, id); err != nil {

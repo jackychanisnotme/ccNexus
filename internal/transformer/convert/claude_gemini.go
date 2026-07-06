@@ -455,6 +455,20 @@ func GeminiStreamToClaude(event []byte, ctx *transformer.StreamContext) ([]byte,
 	hasFunctionCall := false
 	for _, part := range candidate.Content.Parts {
 		if part.Text != "" {
+			if part.Thought {
+				if ctx.ContentBlockStarted {
+					result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ContentIndex})...)
+					ctx.ContentBlockStarted = false
+					ctx.ContentIndex++
+				}
+				_, emitThinking := makeThinkEmitters(ctx, &result)
+				emitThinking(part.Text)
+				continue
+			}
+			if ctx.ThinkingBlockStarted {
+				result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ThinkingIndex})...)
+				ctx.ThinkingBlockStarted = false
+			}
 			if !ctx.ContentBlockStarted {
 				ctx.ContentBlockStarted = true
 				result = append(result, buildClaudeEvent("content_block_start", map[string]interface{}{
@@ -467,11 +481,15 @@ func GeminiStreamToClaude(event []byte, ctx *transformer.StreamContext) ([]byte,
 		}
 		if part.FunctionCall != nil {
 			hasFunctionCall = true
-			// Close text block first if open
+			// Close text/thinking block first if open
 			if ctx.ContentBlockStarted {
 				result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ContentIndex})...)
 				ctx.ContentBlockStarted = false
 				ctx.ContentIndex++
+			}
+			if ctx.ThinkingBlockStarted {
+				result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ThinkingIndex})...)
+				ctx.ThinkingBlockStarted = false
 			}
 			// Handle function call
 			result = append(result, buildClaudeEvent("content_block_start", map[string]interface{}{
@@ -494,6 +512,10 @@ func GeminiStreamToClaude(event []byte, ctx *transformer.StreamContext) ([]byte,
 		if ctx.ContentBlockStarted {
 			result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ContentIndex})...)
 			ctx.ContentBlockStarted = false
+		}
+		if ctx.ThinkingBlockStarted {
+			result = append(result, buildClaudeEvent("content_block_stop", map[string]interface{}{"index": ctx.ThinkingIndex})...)
+			ctx.ThinkingBlockStarted = false
 		}
 		stopReason := "end_turn"
 		if hasFunctionCall || candidate.FinishReason == "TOOL_CODE" {

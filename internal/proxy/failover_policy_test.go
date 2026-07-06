@@ -555,6 +555,62 @@ func TestTokenPoolUnauthorizedStillRetriesNextToken(t *testing.T) {
 	}
 }
 
+func TestPinnedTokenPoolRetriesBeyondEndpointSlowFailoverAttempts(t *testing.T) {
+	logger.GetLogger().Clear()
+	logger.GetLogger().SetMinLevel(logger.DEBUG)
+
+	var tokens []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		tokens = append(tokens, token)
+		w.Header().Set("Content-Type", "application/json")
+		if token != "token-d" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"Invalid token","type":"new_api_error","code":""}}`))
+			return
+		}
+		_, _ = w.Write([]byte(validResponsesBody("resp-ok", "ok")))
+	}))
+	defer upstream.Close()
+
+	store, err := storage.NewSQLiteStorage(filepath.Join(t.TempDir(), "ainexus.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer store.Close()
+
+	for _, token := range []string{"token-a", "token-b", "token-c", "token-d"} {
+		cred := storage.EndpointCredential{EndpointName: "Primary", ProviderType: "openai", AccessToken: token, Enabled: true}
+		if err := store.SaveEndpointCredential(&cred); err != nil {
+			t.Fatalf("save credential %s: %v", token, err)
+		}
+	}
+
+	cfg := config.DefaultConfig()
+	endpoint := failoverPolicyTestEndpoint("Primary", upstream.URL)
+	endpoint.AuthMode = config.AuthModeTokenPool
+	endpoint.APIKey = ""
+	cfg.UpdateEndpoints([]config.Endpoint{endpoint})
+	p := New(cfg, &noopStatsStorage{}, store, "test-device")
+	p.httpClient = upstream.Client()
+	p.retrySleep = func(time.Duration) {}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CCN-Endpoint", "Primary")
+	req.Header.Set(headerCCNexusRequestID, "req-pinned-token-pool-rotates-past-three")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected pinned token pool to retry through fourth credential, got status=%d body=%q tokens=%v", rec.Code, rec.Body.String(), tokens)
+	}
+	if strings.Join(tokens, ",") != "token-a,token-b,token-c,token-d" {
+		t.Fatalf("expected pinned token pool to try four credentials, got tokens=%v", tokens)
+	}
+}
+
 func TestGenericTokenPoolRejectsMixedProviders(t *testing.T) {
 	var upstreamHits int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -235,7 +235,7 @@ func buildProxyRequest(r *http.Request, endpoint config.Endpoint, apiKey string,
 	if parsedBase, err := url.Parse(normalizedAPIUrl); err == nil && strings.TrimSpace(parsedBase.Host) != "" {
 		proxyReq.Header.Set("Host", parsedBase.Host)
 	}
-	applyCodexCredentialHeaders(proxyReq, credential, requestBody)
+	applyCodexCredentialHeaders(proxyReq, endpoint, credential, requestBody)
 
 	return proxyReq, nil
 }
@@ -249,8 +249,22 @@ func isOpenAIChatTransformerName(transformerName string) bool {
 	}
 }
 
-func applyCodexCredentialHeaders(req *http.Request, credential *storage.EndpointCredential, payload []byte) {
+// isCodexBackendEndpoint reports whether the endpoint actually targets the
+// ChatGPT Codex backend. Codex-specific request headers must only be applied
+// for real Codex endpoints; a generic token_pool credential can default to the
+// "codex" provider type in storage, so provider type alone is not sufficient.
+func isCodexBackendEndpoint(endpoint config.Endpoint) bool {
+	if config.NormalizeAuthMode(endpoint.AuthMode) == config.AuthModeCodexTokenPool {
+		return true
+	}
+	return isCodexBackendBaseURL(endpoint.APIUrl)
+}
+
+func applyCodexCredentialHeaders(req *http.Request, endpoint config.Endpoint, credential *storage.EndpointCredential, payload []byte) {
 	if req == nil || credential == nil {
+		return
+	}
+	if !isCodexBackendEndpoint(endpoint) {
 		return
 	}
 	if !isCodexProviderType(credential.ProviderType) {
