@@ -160,7 +160,6 @@ body {
 .modal-content { border-radius: var(--apple-radius); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.22); }
 .modal-header h2,
 #endpointModal .modal-header h2,
-#welcomeModal .modal-header h2,
 #portModal .modal-header h2 { color: var(--text-primary); font-weight: 600; }
 
 /* ---------- Dark mode (Apple dark tones) ---------- */

@@ -675,57 +675,6 @@ export function initUI() {
             </div>
         </div>
 
-        <!-- Welcome Modal -->
-        <div id="welcomeModal" class="modal">
-            <div class="modal-content" style="max-width: min(600px, 90vw);">
-                <div class="modal-header">
-                    <h2>👋 ${t('welcome.title')}</h2>
-                    <button class="modal-close" onclick="window.closeWelcomeModal()">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
-                        ${t('welcome.message')}
-                    </p>
-
-                    <div style="display: flex; justify-content: center; gap: 30px; margin: 30px 0;">
-                        <div style="text-align: center;">
-                            <img src="/WeChat.jpg" alt="WeChat QR Code" style="width: 200px; height: 200px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                            <p style="margin-top: 10px; color: #666; font-size: 14px;">${t('welcome.qrCodeTip')}</p>
-                        </div>
-                        <div style="text-align: center;">
-                            <img
-                                id="chatQRCodeImg"
-                                src="/ME.png"
-                                alt="Chat Group QR Code"
-                                style="width: 200px; height: 200px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"
-                            >
-                            <p id="chatQRCodeTip" style="margin-top: 10px; color: #666; font-size: 14px;">${t('welcome.chatGroupFallbackTip')}</p>
-                        </div>
-                    </div>
-
-                    <div style="display: flex; gap: 15px; justify-content: center; margin-top: 20px;">
-                        <button class="btn btn-secondary" onclick="window.openArticle()">
-                            ${t('welcome.readArticle')}
-                        </button>
-                        <button class="btn btn-secondary" onclick="window.showChangelogModal()">
-                            ${t('welcome.changelog')}
-                        </button>
-                        <button class="btn btn-secondary check-update-btn" onclick="window.checkForUpdates()">
-                            🔄 ${t('update.checkForUpdates')}
-                            <span class="update-badge" id="checkUpdateBadge"></span>
-                        </button>
-                    </div>
-                </div>
-                <div class="modal-footer" style="display: flex; justify-content: flex-end; align-items: center; gap: 20px;">
-                    <label style="display: flex; align-items: center; cursor: pointer;">
-                        <input type="checkbox" id="dontShowAgain" style="margin-right: 8px;">
-                        <span style="font-size: 14px; color: #666;">${t('welcome.dontShow')}</span>
-                    </label>
-                    <button class="btn btn-primary" onclick="window.closeWelcomeModal()">${t('welcome.getStarted')}</button>
-                </div>
-            </div>
-        </div>
-
         <!-- Test Result Modal -->
         <div id="testResultModal" class="modal">
             <div class="modal-content" style="max-width: min(600px, 90vw);">
@@ -1022,7 +971,7 @@ export function initUI() {
 }
 
 function setupModalEventListeners() {
-    // Close modals on background click (endpointModal, portModal, welcomeModal do NOT close on background click)
+    // Close modals on background click (endpointModal and portModal do NOT close on background click)
      document.getElementById('testResultModal').addEventListener('click', (e) => {
         if (e.target.id === 'testResultModal') {
             window.closeTestResultModal();

@@ -184,7 +184,6 @@ body.dark-theme #portModal .modal-header h2,
 body.dark-theme #historyModal .modal-header h2,
 body.dark-theme #settingsModal .modal-header h2,
 body.dark-theme #autoThemeConfigModal .modal-header h2,
-body.dark-theme #welcomeModal .modal-header h2,
 body.dark-theme #testResultModal .modal-header h2,
 body.dark-theme #genericModal .modal-header h2,
 body.dark-theme #subModal .modal-header h2 {
@@ -207,7 +206,6 @@ body.dark-theme #genericModal .modal-close,
 body.dark-theme #subModal .modal-close,
 body.dark-theme #settingsModal .modal-close,
 body.dark-theme #autoThemeConfigModal .modal-close,
-body.dark-theme #welcomeModal .modal-close,
 body.dark-theme #testResultModal .modal-close {
     background: var(--bg-tertiary) !important;
     color: var(--text-secondary) !important;
@@ -221,7 +219,6 @@ body.dark-theme #genericModal .modal-close:hover,
 body.dark-theme #subModal .modal-close:hover,
 body.dark-theme #settingsModal .modal-close:hover,
 body.dark-theme #autoThemeConfigModal .modal-close:hover,
-body.dark-theme #welcomeModal .modal-close:hover,
 body.dark-theme #testResultModal .modal-close:hover {
     background: var(--hover-bg) !important;
     color: var(--text-primary) !important;
@@ -421,7 +418,6 @@ body.dark-theme #endpointModal .modal-header::after,
 body.dark-theme #portModal .modal-header::after,
 body.dark-theme #historyModal .modal-header::after,
 body.dark-theme #testResultModal .modal-header::after,
-body.dark-theme #welcomeModal .modal-header::after,
 body.dark-theme #changelogModal .modal-header::after,
 body.dark-theme #updateModal .modal-header::after,
 body.dark-theme #terminalModal .modal-header::after,
@@ -641,15 +637,6 @@ body.dark-theme #historyDailyTable th {
     color: var(--text-secondary);
 }
 
-/* ========== Welcome Modal ========== */
-body.dark-theme #welcomeModal .modal-body p {
-    color: var(--text-secondary);
-}
-
-body.dark-theme #welcomeModal img {
-    box-shadow: 0 2px 8px var(--shadow-color);
-}
-
 /* ========== Test Result Modal ========== */
 body.dark-theme #testResultModal .modal-body,
 body.dark-theme #testResultContent {
@@ -816,11 +803,6 @@ body.dark-theme .modal-body p {
 /* ========== Form Row ========== */
 body.dark-theme .form-row {
     color: var(--text-primary);
-}
-
-/* ========== Checkbox Label ========== */
-body.dark-theme #welcomeModal label span {
-    color: var(--text-secondary) !important;
 }
 
 /* ========== Scrollbar Styling for Dark Theme ========== */

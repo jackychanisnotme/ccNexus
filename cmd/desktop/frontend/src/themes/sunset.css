@@ -185,7 +185,6 @@ body.sunset-theme #portModal .modal-header h2,
 body.sunset-theme #historyModal .modal-header h2,
 body.sunset-theme #settingsModal .modal-header h2,
 body.sunset-theme #autoThemeConfigModal .modal-header h2,
-body.sunset-theme #welcomeModal .modal-header h2,
 body.sunset-theme #testResultModal .modal-header h2,
 body.sunset-theme #genericModal .modal-header h2,
 body.sunset-theme #subModal .modal-header h2 {
@@ -208,7 +207,6 @@ body.sunset-theme #genericModal .modal-close,
 body.sunset-theme #subModal .modal-close,
 body.sunset-theme #settingsModal .modal-close,
 body.sunset-theme #autoThemeConfigModal .modal-close,
-body.sunset-theme #welcomeModal .modal-close,
 body.sunset-theme #testResultModal .modal-close {
     background: var(--bg-tertiary) !important;
     color: var(--text-secondary) !important;
@@ -222,7 +220,6 @@ body.sunset-theme #genericModal .modal-close:hover,
 body.sunset-theme #subModal .modal-close:hover,
 body.sunset-theme #settingsModal .modal-close:hover,
 body.sunset-theme #autoThemeConfigModal .modal-close:hover,
-body.sunset-theme #welcomeModal .modal-close:hover,
 body.sunset-theme #testResultModal .modal-close:hover {
     background: var(--hover-bg) !important;
     color: var(--text-primary) !important;
@@ -422,7 +419,6 @@ body.sunset-theme #endpointModal .modal-header::after,
 body.sunset-theme #portModal .modal-header::after,
 body.sunset-theme #historyModal .modal-header::after,
 body.sunset-theme #testResultModal .modal-header::after,
-body.sunset-theme #welcomeModal .modal-header::after,
 body.sunset-theme #changelogModal .modal-header::after,
 body.sunset-theme #updateModal .modal-header::after,
 body.sunset-theme #terminalModal .modal-header::after,
@@ -660,15 +656,6 @@ body.sunset-theme #historyDailyTable th {
     color: var(--text-secondary);
 }
 
-/* ========== Welcome Modal ========== */
-body.sunset-theme #welcomeModal .modal-body p {
-    color: var(--text-secondary);
-}
-
-body.sunset-theme #welcomeModal img {
-    box-shadow: 0 2px 8px var(--shadow-color);
-}
-
 /* ========== Test Result Modal ========== */
 body.sunset-theme #testResultModal .modal-body,
 body.sunset-theme #testResultContent {
@@ -835,11 +822,6 @@ body.sunset-theme .modal-body p {
 /* ========== Form Row ========== */
 body.sunset-theme .form-row {
     color: var(--text-primary);
-}
-
-/* ========== Checkbox Label ========== */
-body.sunset-theme #welcomeModal label span {
-    color: var(--text-secondary) !important;
 }
 
 /* ========== Scrollbar Styling for Sunset Theme ========== */

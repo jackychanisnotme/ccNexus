@@ -185,7 +185,6 @@ body.starry-theme #portModal .modal-header h2,
 body.starry-theme #historyModal .modal-header h2,
 body.starry-theme #settingsModal .modal-header h2,
 body.starry-theme #autoThemeConfigModal .modal-header h2,
-body.starry-theme #welcomeModal .modal-header h2,
 body.starry-theme #testResultModal .modal-header h2,
 body.starry-theme #genericModal .modal-header h2,
 body.starry-theme #subModal .modal-header h2 {
@@ -208,7 +207,6 @@ body.starry-theme #genericModal .modal-close,
 body.starry-theme #subModal .modal-close,
 body.starry-theme #settingsModal .modal-close,
 body.starry-theme #autoThemeConfigModal .modal-close,
-body.starry-theme #welcomeModal .modal-close,
 body.starry-theme #testResultModal .modal-close {
     background: var(--bg-tertiary) !important;
     color: var(--text-secondary) !important;
@@ -222,7 +220,6 @@ body.starry-theme #genericModal .modal-close:hover,
 body.starry-theme #subModal .modal-close:hover,
 body.starry-theme #settingsModal .modal-close:hover,
 body.starry-theme #autoThemeConfigModal .modal-close:hover,
-body.starry-theme #welcomeModal .modal-close:hover,
 body.starry-theme #testResultModal .modal-close:hover {
     background: var(--hover-bg) !important;
     color: var(--text-primary) !important;
@@ -422,7 +419,6 @@ body.starry-theme #endpointModal .modal-header::after,
 body.starry-theme #portModal .modal-header::after,
 body.starry-theme #historyModal .modal-header::after,
 body.starry-theme #testResultModal .modal-header::after,
-body.starry-theme #welcomeModal .modal-header::after,
 body.starry-theme #changelogModal .modal-header::after,
 body.starry-theme #updateModal .modal-header::after,
 body.starry-theme #terminalModal .modal-header::after,
@@ -642,15 +638,6 @@ body.starry-theme #historyDailyTable th {
     color: var(--text-secondary);
 }
 
-/* ========== Welcome Modal ========== */
-body.starry-theme #welcomeModal .modal-body p {
-    color: var(--text-secondary);
-}
-
-body.starry-theme #welcomeModal img {
-    box-shadow: 0 2px 8px var(--shadow-color);
-}
-
 /* ========== Test Result Modal ========== */
 body.starry-theme #testResultModal .modal-body,
 body.starry-theme #testResultContent {
@@ -817,11 +804,6 @@ body.starry-theme .modal-body p {
 /* ========== Form Row ========== */
 body.starry-theme .form-row {
     color: var(--text-primary);
-}
-
-/* ========== Checkbox Label ========== */
-body.starry-theme #welcomeModal label span {
-    color: var(--text-secondary) !important;
 }
 
 /* ========== Scrollbar Styling for Starry Theme ========== */

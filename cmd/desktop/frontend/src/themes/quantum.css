@@ -236,7 +236,6 @@ body.quantum-theme #portModal .modal-header h2,
 body.quantum-theme #historyModal .modal-header h2,
 body.quantum-theme #settingsModal .modal-header h2,
 body.quantum-theme #autoThemeConfigModal .modal-header h2,
-body.quantum-theme #welcomeModal .modal-header h2,
 body.quantum-theme #testResultModal .modal-header h2,
 body.quantum-theme #genericModal .modal-header h2,
 body.quantum-theme #subModal .modal-header h2 {
@@ -261,7 +260,6 @@ body.quantum-theme #genericModal .modal-close,
 body.quantum-theme #subModal .modal-close,
 body.quantum-theme #settingsModal .modal-close,
 body.quantum-theme #autoThemeConfigModal .modal-close,
-body.quantum-theme #welcomeModal .modal-close,
 body.quantum-theme #testResultModal .modal-close {
     background: var(--bg-tertiary) !important;
     color: var(--text-secondary) !important;
@@ -275,7 +273,6 @@ body.quantum-theme #genericModal .modal-close:hover,
 body.quantum-theme #subModal .modal-close:hover,
 body.quantum-theme #settingsModal .modal-close:hover,
 body.quantum-theme #autoThemeConfigModal .modal-close:hover,
-body.quantum-theme #welcomeModal .modal-close:hover,
 body.quantum-theme #testResultModal .modal-close:hover {
     background: var(--hover-bg) !important;
     color: var(--quantum-purple) !important;
@@ -498,7 +495,6 @@ body.quantum-theme #endpointModal .modal-header::after,
 body.quantum-theme #portModal .modal-header::after,
 body.quantum-theme #historyModal .modal-header::after,
 body.quantum-theme #testResultModal .modal-header::after,
-body.quantum-theme #welcomeModal .modal-header::after,
 body.quantum-theme #changelogModal .modal-header::after,
 body.quantum-theme #updateModal .modal-header::after,
 body.quantum-theme #terminalModal .modal-header::after,
@@ -742,15 +738,6 @@ body.quantum-theme #historyDailyTable th {
     color: var(--text-secondary);
 }
 
-/* ========== Welcome Modal ========== */
-body.quantum-theme #welcomeModal .modal-body p {
-    color: var(--text-secondary);
-}
-
-body.quantum-theme #welcomeModal img {
-    box-shadow: 0 2px 8px var(--shadow-color), var(--quantum-glow);
-}
-
 /* ========== Test Result Modal ========== */
 body.quantum-theme #testResultModal .modal-body,
 body.quantum-theme #testResultContent {
@@ -926,11 +913,6 @@ body.quantum-theme .modal-body p {
 /* ========== Form Row ========== */
 body.quantum-theme .form-row {
     color: var(--text-primary);
-}
-
-/* ========== Checkbox Label ========== */
-body.quantum-theme #welcomeModal label span {
-    color: var(--text-secondary) !important;
 }
 
 /* ========== Scrollbar Styling for Quantum Theme ========== */

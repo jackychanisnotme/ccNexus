@@ -223,7 +223,7 @@ func (p *Proxy) RefreshCodexCredential(endpoint config.Endpoint, credentialID in
 		return nil, fmt.Errorf("credential not found")
 	}
 
-		refreshed, err := p.refreshCredential(endpoint, cred)
+	refreshed, err := p.refreshCredential(endpoint, cred)
 	if err != nil {
 		if !errors.Is(err, errCodexRefreshTokenReused) {
 			p.markCredentialFailure(credentialID, 0, err.Error())

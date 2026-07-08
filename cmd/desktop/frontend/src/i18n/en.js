@@ -440,24 +440,6 @@ export default {
         testError: 'Test error',
         notSupportedMessage: 'This endpoint not support test API, try using it directly in the client'
     },
-    welcome: {
-        title: 'Welcome to AINexus!',
-        titleWithVersion: '👋 Welcome to AINexus v{version}',
-        message: 'AINexus is an API resource management system for Claude Code, Codex CLI, and OpenAI-compatible clients, with smart endpoint rotation built in.',
-        features: 'Features',
-        feature1: 'Centralized management for API endpoints, models, keys, and Token Pools',
-        feature2: 'Support for Claude, OpenAI, Responses, Gemini, DeepSeek, Kimi, and Poe formats',
-        feature3: 'Live statistics for endpoints, credentials, tokens, and quota usage',
-        feature4: 'Automatic rotation, failover, forced streaming, and reasoning controls',
-        getStarted: 'Get Started',
-        dontShow: "Don't show this again",
-        qrCodeTip: 'Scan to follow the official account for more',
-        chatGroupTip: 'Join the group for feedback, learning and discussion',
-        chatGroupFallbackTip: 'Scan to contact, please note "join group"',
-        readArticle: '📖 Read Introduction',
-        githubRepo: '🔗 GitHub Repository',
-        changelog: '📋 Changelog'
-    },
     changelog: {
         title: 'Changelog',
         loading: 'Loading...',

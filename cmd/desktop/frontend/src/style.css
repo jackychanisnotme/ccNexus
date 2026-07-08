@@ -1089,13 +1089,6 @@ body {
     z-index: 1600;
 }
 
-/* Welcome/About Modal with blur background */
-#welcomeModal {
-    background: rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-}
-
 #endpointModal {
     backdrop-filter: blur(4px);
 }
@@ -1152,70 +1145,6 @@ body {
 
 #endpointModal .modal-body {
     padding: 25px 30px 30px 30px;
-}
-
-#welcomeModal .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 30px;
-    border-bottom: none;
-    margin-bottom: 0;
-    position: relative;
-}
-
-#welcomeModal .modal-header::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 30px;
-    right: 30px;
-    height: 1px;
-    background: var(--border-color, #e9ecef);
-    transform: translateZ(0);
-}
-
-#welcomeModal .modal-header h2 {
-    margin: 0;
-    font-size: 20px;
-    color: #333;
-}
-
-#welcomeModal .modal-close {
-    width: 32px;
-    height: 32px;
-    border: none;
-    background: #f0f0f0;
-    border-radius: 50%;
-    cursor: pointer;
-    font-size: 24px;
-    line-height: 1;
-    color: #666;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-    padding: 0;
-}
-
-#welcomeModal .modal-close:hover {
-    background: #e0e0e0;
-    color: #333;
-    transform: rotate(90deg);
-}
-
-#welcomeModal .modal-content {
-    min-height: 550px;
-}
-
-#welcomeModal .modal-body {
-    padding-top: 30px;
-    padding-bottom: 10px;
-}
-
-#welcomeModal .modal-footer {
-    padding-top: 15px;
-    padding-bottom: 25px;
 }
 
 #portModal {

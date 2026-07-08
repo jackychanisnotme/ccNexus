@@ -262,13 +262,13 @@ func hermesProvider(existing any, name string) map[string]any {
 }
 
 type simpleTOMLConfig struct {
-	root     map[string]string
+	root    map[string]string
 	section map[string]map[string]string
 }
 
 func parseSimpleTOML(text string) simpleTOMLConfig {
 	result := simpleTOMLConfig{
-		root:     map[string]string{},
+		root:    map[string]string{},
 		section: map[string]map[string]string{},
 	}
 	current := ""

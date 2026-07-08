@@ -38,6 +38,9 @@ cd cmd/server && go run main.go
 
 ### 测试
 ```bash
+# Claude 修改 Go 代码后的标准验证命令（优先使用）
+bash ./claude-go-check.sh
+
 # 运行所有测试
 go test ./... -count=1
 
@@ -153,6 +156,8 @@ AINexus/
 - SQLite（modernc.org/sqlite，纯 Go 实现）
 
 ## 代码规范
+
+Claude 修改 Go 文件后必须执行 `bash ./claude-go-check.sh`。该脚本会检查 Go 工具链、运行 `go fmt ./...` 并执行 `go test ./... -count=1`；如果测试失败，应继续修复直到通过，或明确说明无法运行的环境原因。
 
 **静态函数命名**：所有静态函数必须使用 `__` 前缀表示内部可见性
 

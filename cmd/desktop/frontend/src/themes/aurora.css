@@ -216,7 +216,6 @@ body.aurora-theme #portModal .modal-header h2,
 body.aurora-theme #historyModal .modal-header h2,
 body.aurora-theme #settingsModal .modal-header h2,
 body.aurora-theme #autoThemeConfigModal .modal-header h2,
-body.aurora-theme #welcomeModal .modal-header h2,
 body.aurora-theme #testResultModal .modal-header h2,
 body.aurora-theme #genericModal .modal-header h2,
 body.aurora-theme #subModal .modal-header h2 {
@@ -239,7 +238,6 @@ body.aurora-theme #genericModal .modal-close,
 body.aurora-theme #subModal .modal-close,
 body.aurora-theme #settingsModal .modal-close,
 body.aurora-theme #autoThemeConfigModal .modal-close,
-body.aurora-theme #welcomeModal .modal-close,
 body.aurora-theme #testResultModal .modal-close {
     background: var(--bg-tertiary) !important;
     color: var(--text-secondary) !important;
@@ -253,7 +251,6 @@ body.aurora-theme #genericModal .modal-close:hover,
 body.aurora-theme #subModal .modal-close:hover,
 body.aurora-theme #settingsModal .modal-close:hover,
 body.aurora-theme #autoThemeConfigModal .modal-close:hover,
-body.aurora-theme #welcomeModal .modal-close:hover,
 body.aurora-theme #testResultModal .modal-close:hover {
     background: var(--hover-bg) !important;
     color: var(--aurora-cyan) !important;
@@ -463,7 +460,6 @@ body.aurora-theme #endpointModal .modal-header::after,
 body.aurora-theme #portModal .modal-header::after,
 body.aurora-theme #historyModal .modal-header::after,
 body.aurora-theme #testResultModal .modal-header::after,
-body.aurora-theme #welcomeModal .modal-header::after,
 body.aurora-theme #changelogModal .modal-header::after,
 body.aurora-theme #updateModal .modal-header::after,
 body.aurora-theme #terminalModal .modal-header::after,
@@ -704,15 +700,6 @@ body.aurora-theme #historyDailyTable th {
     color: var(--text-secondary);
 }
 
-/* ========== Welcome Modal ========== */
-body.aurora-theme #welcomeModal .modal-body p {
-    color: var(--text-secondary);
-}
-
-body.aurora-theme #welcomeModal img {
-    box-shadow: 0 2px 8px var(--shadow-color), var(--aurora-glow);
-}
-
 /* ========== Test Result Modal ========== */
 body.aurora-theme #testResultModal .modal-body,
 body.aurora-theme #testResultContent {
@@ -886,11 +873,6 @@ body.aurora-theme .modal-body p {
 /* ========== Form Row ========== */
 body.aurora-theme .form-row {
     color: var(--text-primary);
-}
-
-/* ========== Checkbox Label ========== */
-body.aurora-theme #welcomeModal label span {
-    color: var(--text-secondary) !important;
 }
 
 /* ========== Scrollbar Styling for Aurora Theme ========== */

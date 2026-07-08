@@ -1023,55 +1023,6 @@ export function closePortModal() {
 }
 
 
-// ========== 加群二维码URL配置 ==========
-// 上传到图床后填写URL，过期时直接替换图床文件即可自动更新
-const CHAT_QRCODE_URL = 'https://gitee.com/hea7en/images/raw/master/group/chat.png';
-
-// 添加时间戳破除缓存
-function getQRCodeUrlWithTimestamp(url) {
-    const ts = new Date().getTime();
-    return url + (url.includes('?') ? '&' : '?') + 't=' + ts;
-}
-// ===================================
-
-// Welcome Modal
-export async function showWelcomeModal() {
-    document.getElementById('welcomeModal').classList.add('active');
-
-    try {
-        const version = await window.go.main.App.GetVersion();
-        document.querySelector('#welcomeModal .modal-header h2').textContent = t('welcome.titleWithVersion').replace('{version}', version);
-    } catch (error) {
-        console.error('Failed to load version:', error);
-    }
-
-    // 通过 Go 后端获取加群二维码图片（绕过 CORS 限制，添加时间戳破除缓存）
-    try {
-        const urlWithTimestamp = getQRCodeUrlWithTimestamp(CHAT_QRCODE_URL);
-        const base64Data = await window.go.main.App.FetchImageAsBase64(urlWithTimestamp);
-        if (base64Data) {
-            const img = document.getElementById('chatQRCodeImg');
-            const tip = document.getElementById('chatQRCodeTip');
-            if (img) {
-                img.src = base64Data;
-            }
-            if (tip) {
-                tip.textContent = t('welcome.chatGroupTip');
-            }
-        }
-    } catch (error) {
-        console.error('Failed to load chat QR code:', error);
-    }
-}
-
-export function closeWelcomeModal() {
-    const dontShowAgain = document.getElementById('dontShowAgain').checked;
-    if (dontShowAgain) {
-        localStorage.setItem('AINexus_welcomeShown', 'true');
-    }
-    document.getElementById('welcomeModal').classList.remove('active');
-}
-
 // Changelog Modal
 export async function showChangelogModal() {
     const modal = document.getElementById('changelogModal');
@@ -1243,10 +1194,4 @@ export async function testEndpointHandler(index, buttonElement) {
 export function closeTestResultModal() {
     document.getElementById('testResultModal').classList.remove('active');
     clearTestState();
-}
-
-export function openArticle() {
-    if (window.go?.main?.App) {
-        window.go.main.App.OpenURL('https://mp.weixin.qq.com/s/ohtkyIMd5YC7So1q-gE0og');
-    }
 }

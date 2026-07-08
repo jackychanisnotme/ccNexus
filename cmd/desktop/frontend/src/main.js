@@ -41,14 +41,11 @@ import {
     loadLANDiscoveryStatus,
     refreshLANDiscovery,
     addDiscoveredLANEndpoint,
-    showWelcomeModal,
-    closeWelcomeModal,
     showChangelogModal,
     closeChangelogModal,
     showChangelogIfNewVersion,
     testEndpointHandler,
     closeTestResultModal,
-    openArticle,
     togglePasswordVisibility,
     acceptConfirm,
     cancelConfirm,
@@ -261,13 +258,10 @@ window.savePort = savePort;
 window.closePortModal = closePortModal;
 window.refreshLANDiscovery = refreshLANDiscovery;
 window.addDiscoveredLANEndpoint = addDiscoveredLANEndpoint;
-window.showWelcomeModal = showWelcomeModal;
-window.closeWelcomeModal = closeWelcomeModal;
 window.showChangelogModal = showChangelogModal;
 window.closeChangelogModal = closeChangelogModal;
 window.testEndpoint = testEndpointHandler;
 window.closeTestResultModal = closeTestResultModal;
-window.openArticle = openArticle;
 window.toggleLogPanel = toggleLogPanel;
 window.changeLogLevel = changeLogLevel;
 window.copyLogs = copyLogs;

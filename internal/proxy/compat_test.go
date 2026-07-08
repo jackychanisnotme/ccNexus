@@ -127,7 +127,7 @@ func TestDiscoveryRouteRequiresLANModeAndExposesNoSecrets(t *testing.T) {
 
 	var payload struct {
 		Product      string `json:"product"`
-		Service     string `json:"service"`
+		Service      string `json:"service"`
 		Version      int    `json:"version"`
 		Port         int    `json:"port"`
 		BaseURL      string `json:"baseUrl"`

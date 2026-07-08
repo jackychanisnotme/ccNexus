@@ -108,13 +108,13 @@ func TestRemoteManagementExecutorUpdatePreservesOmittedFields(t *testing.T) {
 func TestRemoteManagementExecutorUpdatesCodexFastModeAndSnapshotsIt(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.UpdateEndpoints([]config.Endpoint{{
-		Name:           "Codex Pool",
-		APIUrl:         config.CodexTokenPoolAPIURL,
-		AuthMode:       config.AuthModeCodexTokenPool,
-		Enabled:        true,
-		Transformer:    config.CodexTokenPoolTransformer,
-		Model:          config.CodexTokenPoolDefaultModel,
-		CodexFastMode:  false,
+		Name:          "Codex Pool",
+		APIUrl:        config.CodexTokenPoolAPIURL,
+		AuthMode:      config.AuthModeCodexTokenPool,
+		Enabled:       true,
+		Transformer:   config.CodexTokenPoolTransformer,
+		Model:         config.CodexTokenPoolDefaultModel,
+		CodexFastMode: false,
 	}})
 	p := proxy.New(cfg, nil, nil, "remote-test-device")
 	endpoints := NewEndpointService(cfg, p, nil)

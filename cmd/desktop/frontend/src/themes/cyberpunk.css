@@ -231,7 +231,6 @@ body.cyberpunk-theme #portModal .modal-header h2,
 body.cyberpunk-theme #historyModal .modal-header h2,
 body.cyberpunk-theme #settingsModal .modal-header h2,
 body.cyberpunk-theme #autoThemeConfigModal .modal-header h2,
-body.cyberpunk-theme #welcomeModal .modal-header h2,
 body.cyberpunk-theme #testResultModal .modal-header h2,
 body.cyberpunk-theme #genericModal .modal-header h2,
 body.cyberpunk-theme #subModal .modal-header h2 {
@@ -255,7 +254,6 @@ body.cyberpunk-theme #genericModal .modal-close,
 body.cyberpunk-theme #subModal .modal-close,
 body.cyberpunk-theme #settingsModal .modal-close,
 body.cyberpunk-theme #autoThemeConfigModal .modal-close,
-body.cyberpunk-theme #welcomeModal .modal-close,
 body.cyberpunk-theme #testResultModal .modal-close {
     background: var(--bg-tertiary) !important;
     color: var(--text-secondary) !important;
@@ -270,7 +268,6 @@ body.cyberpunk-theme #genericModal .modal-close:hover,
 body.cyberpunk-theme #subModal .modal-close:hover,
 body.cyberpunk-theme #settingsModal .modal-close:hover,
 body.cyberpunk-theme #autoThemeConfigModal .modal-close:hover,
-body.cyberpunk-theme #welcomeModal .modal-close:hover,
 body.cyberpunk-theme #testResultModal .modal-close:hover {
     background: var(--hover-bg) !important;
     color: var(--primary-color) !important;
@@ -495,7 +492,6 @@ body.cyberpunk-theme #endpointModal .modal-header::after,
 body.cyberpunk-theme #portModal .modal-header::after,
 body.cyberpunk-theme #historyModal .modal-header::after,
 body.cyberpunk-theme #testResultModal .modal-header::after,
-body.cyberpunk-theme #welcomeModal .modal-header::after,
 body.cyberpunk-theme #changelogModal .modal-header::after,
 body.cyberpunk-theme #updateModal .modal-header::after,
 body.cyberpunk-theme #terminalModal .modal-header::after,
@@ -728,15 +724,6 @@ body.cyberpunk-theme .table-container {
     box-shadow: 0 2px 8px var(--shadow-color);
 }
 
-/* ========== Welcome Modal ========== */
-body.cyberpunk-theme #welcomeModal .modal-body p {
-    color: var(--text-secondary);
-}
-
-body.cyberpunk-theme #welcomeModal img {
-    box-shadow: 0 2px 8px var(--shadow-color);
-}
-
 /* ========== Test Result Modal ========== */
 body.cyberpunk-theme #testResultModal .modal-body,
 body.cyberpunk-theme #testResultContent {
@@ -861,11 +848,6 @@ body.cyberpunk-theme .modal-body p {
 /* ========== Form Row ========== */
 body.cyberpunk-theme .form-row {
     color: var(--text-primary);
-}
-
-/* ========== Checkbox Label ========== */
-body.cyberpunk-theme #welcomeModal label span {
-    color: var(--text-secondary) !important;
 }
 
 /* ========== Scrollbar Styling for Cyberpunk Theme ========== */

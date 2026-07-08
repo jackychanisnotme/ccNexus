@@ -185,7 +185,6 @@ body.mocha-theme #portModal .modal-header h2,
 body.mocha-theme #historyModal .modal-header h2,
 body.mocha-theme #settingsModal .modal-header h2,
 body.mocha-theme #autoThemeConfigModal .modal-header h2,
-body.mocha-theme #welcomeModal .modal-header h2,
 body.mocha-theme #testResultModal .modal-header h2,
 body.mocha-theme #genericModal .modal-header h2,
 body.mocha-theme #subModal .modal-header h2 {
@@ -208,7 +207,6 @@ body.mocha-theme #genericModal .modal-close,
 body.mocha-theme #subModal .modal-close,
 body.mocha-theme #settingsModal .modal-close,
 body.mocha-theme #autoThemeConfigModal .modal-close,
-body.mocha-theme #welcomeModal .modal-close,
 body.mocha-theme #testResultModal .modal-close {
     background: var(--bg-tertiary) !important;
     color: var(--text-secondary) !important;
@@ -222,7 +220,6 @@ body.mocha-theme #genericModal .modal-close:hover,
 body.mocha-theme #subModal .modal-close:hover,
 body.mocha-theme #settingsModal .modal-close:hover,
 body.mocha-theme #autoThemeConfigModal .modal-close:hover,
-body.mocha-theme #welcomeModal .modal-close:hover,
 body.mocha-theme #testResultModal .modal-close:hover {
     background: var(--hover-bg) !important;
     color: var(--text-primary) !important;
@@ -428,7 +425,6 @@ body.mocha-theme #endpointModal .modal-header::after,
 body.mocha-theme #portModal .modal-header::after,
 body.mocha-theme #historyModal .modal-header::after,
 body.mocha-theme #testResultModal .modal-header::after,
-body.mocha-theme #welcomeModal .modal-header::after,
 body.mocha-theme #changelogModal .modal-header::after,
 body.mocha-theme #updateModal .modal-header::after,
 body.mocha-theme #terminalModal .modal-header::after,
@@ -644,15 +640,6 @@ body.mocha-theme .table-container {
     box-shadow: 0 2px 8px var(--shadow-color);
 }
 
-/* ========== Welcome Modal ========== */
-body.mocha-theme #welcomeModal .modal-body p {
-    color: var(--text-secondary);
-}
-
-body.mocha-theme #welcomeModal img {
-    box-shadow: 0 2px 8px var(--shadow-color);
-}
-
 /* ========== Test Result Modal ========== */
 body.mocha-theme #testResultModal .modal-body,
 body.mocha-theme #testResultContent {
@@ -771,11 +758,6 @@ body.mocha-theme .modal-body p {
 /* ========== Form Row ========== */
 body.mocha-theme .form-row {
     color: var(--text-primary);
-}
-
-/* ========== Checkbox Label ========== */
-body.mocha-theme #welcomeModal label span {
-    color: var(--text-secondary) !important;
 }
 
 /* ========== Scrollbar Styling for Mocha Theme ========== */

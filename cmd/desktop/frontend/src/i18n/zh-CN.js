@@ -440,24 +440,6 @@ export default {
         testError: '测试出错',
         notSupportedMessage: '当前端点不支持测试接口，可尝试直接到客户端中使用'
     },
-    welcome: {
-        title: '欢迎使用 AINexus！',
-        titleWithVersion: '👋 欢迎使用 AINexus v{version}',
-        message: 'AINexus 是面向 Claude Code、Codex CLI 和 OpenAI 兼容客户端的 API 资源管理系统，也是一款智能端点轮换代理。',
-        features: '功能特性',
-        feature1: '集中管理 API 端点、模型、密钥和 Token Pool',
-        feature2: '支持 Claude、OpenAI、Responses、Gemini、DeepSeek、Kimi 和 Poe API 格式',
-        feature3: '实时统计端点、凭证、Token 与额度使用情况',
-        feature4: '自动轮换、故障转移、强制流式与推理强度控制',
-        getStarted: '开始使用',
-        dontShow: '不再显示',
-        qrCodeTip: '扫码关注公众号，了解更多',
-        chatGroupTip: '问题反馈请加群，学习与交流',
-        chatGroupFallbackTip: '问题反馈可扫码，请备注加群',
-        readArticle: '📖 阅读介绍',
-        githubRepo: '🔗 GitHub 仓库',
-        changelog: '📋 更新日志'
-    },
     changelog: {
         title: '更新日志',
         loading: '加载中...',

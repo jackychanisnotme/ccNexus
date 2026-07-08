@@ -24,13 +24,13 @@ type BackupData struct {
 
 // ConflictInfo 冲突信息
 type ConflictInfo struct {
-	HasConflict        bool      `json:"hasConflict"`        // 是否存在冲突
-	LocalEndpointCount int       `json:"localEndpointCount"` // 本地端点数量
-	RemoteEndpointCount int      `json:"remoteEndpointCount"` // 远程端点数量
-	LocalModTime       time.Time `json:"localModTime"`       // 本地修改时间
-	RemoteModTime      time.Time `json:"remoteModTime"`      // 远程修改时间
-	LocalPort          int       `json:"localPort"`          // 本地端口
-	RemotePort         int       `json:"remotePort"`         // 远程端口
+	HasConflict         bool      `json:"hasConflict"`         // 是否存在冲突
+	LocalEndpointCount  int       `json:"localEndpointCount"`  // 本地端点数量
+	RemoteEndpointCount int       `json:"remoteEndpointCount"` // 远程端点数量
+	LocalModTime        time.Time `json:"localModTime"`        // 本地修改时间
+	RemoteModTime       time.Time `json:"remoteModTime"`       // 远程修改时间
+	LocalPort           int       `json:"localPort"`           // 本地端口
+	RemotePort          int       `json:"remotePort"`          // 远程端口
 }
 
 // TestResult WebDAV 连接测试结果

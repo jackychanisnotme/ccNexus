@@ -185,7 +185,6 @@ body.sakura-theme #portModal .modal-header h2,
 body.sakura-theme #historyModal .modal-header h2,
 body.sakura-theme #settingsModal .modal-header h2,
 body.sakura-theme #autoThemeConfigModal .modal-header h2,
-body.sakura-theme #welcomeModal .modal-header h2,
 body.sakura-theme #testResultModal .modal-header h2,
 body.sakura-theme #genericModal .modal-header h2,
 body.sakura-theme #subModal .modal-header h2 {
@@ -208,7 +207,6 @@ body.sakura-theme #genericModal .modal-close,
 body.sakura-theme #subModal .modal-close,
 body.sakura-theme #settingsModal .modal-close,
 body.sakura-theme #autoThemeConfigModal .modal-close,
-body.sakura-theme #welcomeModal .modal-close,
 body.sakura-theme #testResultModal .modal-close {
     background: var(--bg-tertiary) !important;
     color: var(--text-secondary) !important;
@@ -222,7 +220,6 @@ body.sakura-theme #genericModal .modal-close:hover,
 body.sakura-theme #subModal .modal-close:hover,
 body.sakura-theme #settingsModal .modal-close:hover,
 body.sakura-theme #autoThemeConfigModal .modal-close:hover,
-body.sakura-theme #welcomeModal .modal-close:hover,
 body.sakura-theme #testResultModal .modal-close:hover {
     background: var(--hover-bg) !important;
     color: var(--text-primary) !important;
@@ -422,7 +419,6 @@ body.sakura-theme #endpointModal .modal-header::after,
 body.sakura-theme #portModal .modal-header::after,
 body.sakura-theme #historyModal .modal-header::after,
 body.sakura-theme #testResultModal .modal-header::after,
-body.sakura-theme #welcomeModal .modal-header::after,
 body.sakura-theme #changelogModal .modal-header::after,
 body.sakura-theme #updateModal .modal-header::after,
 body.sakura-theme #terminalModal .modal-header::after,
@@ -660,15 +656,6 @@ body.sakura-theme #historyDailyTable th {
     color: var(--text-secondary);
 }
 
-/* ========== Welcome Modal ========== */
-body.sakura-theme #welcomeModal .modal-body p {
-    color: var(--text-secondary);
-}
-
-body.sakura-theme #welcomeModal img {
-    box-shadow: 0 2px 8px var(--shadow-color);
-}
-
 /* ========== Test Result Modal ========== */
 body.sakura-theme #testResultModal .modal-body,
 body.sakura-theme #testResultContent {
@@ -835,11 +822,6 @@ body.sakura-theme .modal-body p {
 /* ========== Form Row ========== */
 body.sakura-theme .form-row {
     color: var(--text-primary);
-}
-
-/* ========== Checkbox Label ========== */
-body.sakura-theme #welcomeModal label span {
-    color: var(--text-secondary) !important;
 }
 
 /* ========== Scrollbar Styling for Sakura Theme ========== */

@@ -185,7 +185,6 @@ body.ocean-theme #portModal .modal-header h2,
 body.ocean-theme #historyModal .modal-header h2,
 body.ocean-theme #settingsModal .modal-header h2,
 body.ocean-theme #autoThemeConfigModal .modal-header h2,
-body.ocean-theme #welcomeModal .modal-header h2,
 body.ocean-theme #testResultModal .modal-header h2,
 body.ocean-theme #genericModal .modal-header h2,
 body.ocean-theme #subModal .modal-header h2 {
@@ -208,7 +207,6 @@ body.ocean-theme #genericModal .modal-close,
 body.ocean-theme #subModal .modal-close,
 body.ocean-theme #settingsModal .modal-close,
 body.ocean-theme #autoThemeConfigModal .modal-close,
-body.ocean-theme #welcomeModal .modal-close,
 body.ocean-theme #testResultModal .modal-close {
     background: var(--bg-tertiary) !important;
     color: var(--text-secondary) !important;
@@ -222,7 +220,6 @@ body.ocean-theme #genericModal .modal-close:hover,
 body.ocean-theme #subModal .modal-close:hover,
 body.ocean-theme #settingsModal .modal-close:hover,
 body.ocean-theme #autoThemeConfigModal .modal-close:hover,
-body.ocean-theme #welcomeModal .modal-close:hover,
 body.ocean-theme #testResultModal .modal-close:hover {
     background: var(--hover-bg) !important;
     color: var(--text-primary) !important;
@@ -428,7 +425,6 @@ body.ocean-theme #endpointModal .modal-header::after,
 body.ocean-theme #portModal .modal-header::after,
 body.ocean-theme #historyModal .modal-header::after,
 body.ocean-theme #testResultModal .modal-header::after,
-body.ocean-theme #welcomeModal .modal-header::after,
 body.ocean-theme #changelogModal .modal-header::after,
 body.ocean-theme #updateModal .modal-header::after,
 body.ocean-theme #terminalModal .modal-header::after,
@@ -644,15 +640,6 @@ body.ocean-theme .table-container {
     box-shadow: 0 2px 8px var(--shadow-color);
 }
 
-/* ========== Welcome Modal ========== */
-body.ocean-theme #welcomeModal .modal-body p {
-    color: var(--text-secondary);
-}
-
-body.ocean-theme #welcomeModal img {
-    box-shadow: 0 2px 8px var(--shadow-color);
-}
-
 /* ========== Test Result Modal ========== */
 body.ocean-theme #testResultModal .modal-body,
 body.ocean-theme #testResultContent {
@@ -771,11 +758,6 @@ body.ocean-theme .modal-body p {
 /* ========== Form Row ========== */
 body.ocean-theme .form-row {
     color: var(--text-primary);
-}
-
-/* ========== Checkbox Label ========== */
-body.ocean-theme #welcomeModal label span {
-    color: var(--text-secondary) !important;
 }
 
 /* ========== Scrollbar Styling for Ocean Theme ========== */
