@@ -140,10 +140,10 @@ func TestCodexProxyUsesStableClientIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProxyRequest failed: %v", err)
 	}
-	if got := proxyReq.Header.Get("Version"); got != "0.141.0" {
-		t.Fatalf("Version = %q, want %q", got, "0.141.0")
+	if got := proxyReq.Header.Get("Version"); got != "0.144.1" {
+		t.Fatalf("Version = %q, want %q", got, "0.144.1")
 	}
-	if got := proxyReq.Header.Get("User-Agent"); !strings.Contains(got, "codex_cli_rs/0.141.0") {
+	if got := proxyReq.Header.Get("User-Agent"); !strings.Contains(got, "codex_cli_rs/0.144.1") {
 		t.Fatalf("User-Agent = %q, want stable Codex identity", got)
 	}
 }

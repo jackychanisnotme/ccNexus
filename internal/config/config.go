@@ -33,8 +33,8 @@ const (
 	CodexTokenPoolAPIURL       = "https://chatgpt.com/backend-api/codex"
 	CodexTokenPoolTransformer  = "openai2"
 	CodexTokenPoolDefaultModel = "gpt-5-codex"
-	CodexClientVersion         = "0.141.0"
-	CodexUserAgent             = "codex_cli_rs/0.141.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
+	CodexClientVersion         = "0.144.1"
+	CodexUserAgent             = "codex_cli_rs/" + CodexClientVersion + " (Mac OS 26.0.1; arm64) Apple_Terminal/464"
 
 	ClaudeOAuthTokenPoolAPIURL       = "https://api.anthropic.com"
 	ClaudeOAuthTokenPoolTransformer  = "claude"
