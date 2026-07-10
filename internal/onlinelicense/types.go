@@ -285,6 +285,7 @@ type RemoteEndpointSnapshot struct {
 	Enabled               bool             `json:"enabled"`
 	Transformer           string           `json:"transformer,omitempty"`
 	Model                 string           `json:"model,omitempty"`
+	Thinking              string           `json:"thinking,omitempty"`
 	CodexFastMode         bool             `json:"codexFastMode,omitempty"`
 	MaxConcurrentRequests int              `json:"maxConcurrentRequests,omitempty"`
 	Stats                 RemoteUsageStats `json:"stats"`

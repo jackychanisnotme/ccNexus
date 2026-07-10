@@ -71,6 +71,9 @@ func TestRemoteStateMigrationAndSnapshotAreBackwardCompatible(t *testing.T) {
 	if !got.Supported || !got.Enabled || got.ClientVersion != "6.4.0" || len(got.Snapshot.Endpoints) != 1 {
 		t.Fatalf("unexpected remote device: %#v", got)
 	}
+	if got.Snapshot.Endpoints[0].Thinking != "" {
+		t.Fatalf("legacy snapshot thinking = %q, want empty", got.Snapshot.Endpoints[0].Thinking)
+	}
 	if strings.Contains(mustJSON(t, got), "sk-secret") {
 		t.Fatalf("remote snapshot leaked plaintext secret: %s", mustJSON(t, got))
 	}
@@ -137,7 +140,7 @@ func TestRemoteCommandPayloadIsEncryptedAndTamperRejected(t *testing.T) {
 	deviceKey, devicePub := testRemoteDeviceKey(t)
 	activated := activateHTTPCardWithRemoteKey(t, handler, cardKey, "device-a", devicePub)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/devices/device-a/remote/commands", strings.NewReader(`{"commandType":"endpoint.update","payload":{"endpointName":"OpenAI","apiKey":"sk-secret-value"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/devices/device-a/remote/commands", strings.NewReader(`{"commandType":"endpoint.update","payload":{"endpointName":"OpenAI","apiKey":"sk-secret-value","model":"gpt-5.2","thinking":"xhigh"}}`))
 	req.AddCookie(rootCookie)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -171,6 +174,9 @@ func TestRemoteCommandPayloadIsEncryptedAndTamperRejected(t *testing.T) {
 	}
 	if !bytes.Contains(plain, []byte("sk-secret-value")) {
 		t.Fatalf("decrypted command missing secret: %s", string(plain))
+	}
+	if !bytes.Contains(plain, []byte(`"model":"gpt-5.2"`)) || !bytes.Contains(plain, []byte(`"thinking":"xhigh"`)) {
+		t.Fatalf("decrypted command missing model or thinking: %s", string(plain))
 	}
 
 	tampered := poll.Data.Commands[0].Envelope

@@ -40,6 +40,7 @@ func (e *RemoteManagementExecutor) Snapshot() (onlinelicense.RemoteSnapshot, err
 			Enabled:               endpoint.Enabled,
 			Transformer:           endpoint.Transformer,
 			Model:                 endpoint.Model,
+			Thinking:              endpoint.Thinking,
 			CodexFastMode:         endpoint.CodexFastMode,
 			MaxConcurrentRequests: endpoint.MaxConcurrentRequests,
 		}

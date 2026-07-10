@@ -239,10 +239,10 @@ const adminHTML = `<!doctype html>
     table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}th,td{border-bottom:1px solid var(--soft-line);padding:10px 9px;text-align:left;vertical-align:top}th{font-size:11px;color:var(--muted);background:rgba(251,251,253,.96);position:sticky;top:0;z-index:1;font-weight:700}tbody tr:hover td{background:#fbfbfd}
     .table-wrap{overflow:auto;max-height:520px;border:1px solid var(--soft-line);border-radius:8px;background:#fff}.mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.muted{color:var(--muted)}.status-active,.status-disabled,.status-expired{display:inline-flex;border-radius:999px;padding:3px 8px;font-weight:650;font-size:12px}.status-active{background:var(--ok-bg);color:var(--ok)}.status-disabled,.status-expired{background:var(--danger-bg);color:var(--danger)}
     .device-detail td{padding:0;background:#fbfbfd}.device-detail[hidden]{display:none}.detail-inner{padding:14px 16px}.detail-inner table{background:#fff}.detail-inner th{position:static}.detail-label{font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 8px}
-    dialog{width:min(480px,calc(100% - 32px));border:1px solid var(--line);border-radius:8px;padding:0;color:var(--text);box-shadow:0 28px 80px rgba(29,29,31,.22)}dialog::backdrop{background:rgba(29,29,31,.34);backdrop-filter:blur(2px)}.dialog-body{padding:20px}.dialog-body h2{font-size:18px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+    dialog{width:min(480px,calc(100% - 32px));border:1px solid var(--line);border-radius:8px;padding:0;color:var(--text);box-shadow:0 28px 80px rgba(29,29,31,.22)}dialog::backdrop{background:rgba(29,29,31,.34);backdrop-filter:blur(2px)}.dialog-body{padding:20px}.dialog-body h2{font-size:18px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.remote-endpoint-dialog{width:min(680px,calc(100% - 32px))}.remote-table-wrap{width:100%;max-width:calc(100vw - 340px);min-width:0;overflow:auto;contain:inline-size;border:1px solid var(--soft-line);border-radius:8px;background:#fff}.remote-table-wrap table{min-width:1180px}
     #generated{white-space:pre-wrap;word-break:break-all;background:#fff;border:1px solid var(--soft-line);border-radius:8px;padding:12px;margin-top:12px;min-height:188px;max-height:280px;overflow:auto}.message{min-height:20px;margin-top:12px;color:var(--danger);font-size:13px}.empty{text-align:center;color:var(--muted);padding:26px!important}
-    @media(max-width:1100px){.admin-shell{grid-template-columns:1fr}.sidebar{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--soft-line)}.page-tabs{grid-template-columns:repeat(5,minmax(0,1fr))}.content{padding:20px}.topbar{margin:-20px -20px 18px;padding:16px 20px}.overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.generate-grid{grid-template-columns:1fr}}
-    @media(max-width:720px){.topbar{align-items:flex-start;flex-direction:column}.toolbar{width:100%;justify-content:space-between}.page-tabs{grid-template-columns:1fr 1fr}.overview-grid,.row{grid-template-columns:1fr}.content{padding:14px}.topbar{margin:-14px -14px 16px;padding:14px}.sidebar{padding:16px}.permission-grid{grid-template-columns:1fr}}
+    @media(max-width:1100px){.admin-shell{grid-template-columns:1fr}.sidebar{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--soft-line)}.page-tabs{grid-template-columns:repeat(5,minmax(0,1fr))}.content{padding:20px}.topbar{margin:-20px -20px 18px;padding:16px 20px}.overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.generate-grid{grid-template-columns:1fr}.remote-table-wrap{max-width:calc(100vw - 40px)}}
+    @media(max-width:720px){html,body{overflow-x:hidden}.topbar{align-items:flex-start;flex-direction:column}.toolbar{width:100%;justify-content:space-between}.page-tabs{grid-template-columns:1fr 1fr}.overview-grid,.row{grid-template-columns:1fr}.content{width:100%;max-width:100vw;overflow-x:hidden;padding:14px}.topbar{margin:-14px -14px 16px;padding:14px}.sidebar{padding:16px}.permission-grid{grid-template-columns:1fr}.remote-table-wrap{max-width:calc(100vw - 28px)}}
   </style>
 </head>
 <body>
@@ -351,11 +351,48 @@ const adminHTML = `<!doctype html>
       <div class="dialog-actions"><button type="button" class="secondary" onclick="remarkDialog.close()">取消</button><button type="submit">保存</button></div>
     </form>
   </dialog>
+  <dialog id="remoteCreateEndpointDialog" class="remote-endpoint-dialog">
+    <form class="dialog-body" onsubmit="submitRemoteCreateEndpoint(event)">
+      <h2>新增远程端点</h2>
+      <div class="row">
+        <div><label for="remoteCreateName">端点名称</label><input id="remoteCreateName" required></div>
+        <div><label for="remoteCreateAuthMode">认证模式</label><select id="remoteCreateAuthMode" onchange="remoteSyncCreateAuthMode()"><option value="api_key">API Key</option><option value="token_pool">Token Pool</option><option value="codex_token_pool">Codex Token Pool</option><option value="claude_oauth_token_pool">Claude OAuth Token Pool</option></select></div>
+      </div>
+      <label for="remoteCreateAPIUrl">Base URL</label>
+      <input id="remoteCreateAPIUrl" required>
+      <label for="remoteCreateAPIKey">API Key</label>
+      <input id="remoteCreateAPIKey" type="password" autocomplete="new-password" placeholder="Token Pool 模式可留空">
+      <div class="row">
+        <div><label for="remoteCreateTransformer">转换器</label><select id="remoteCreateTransformer"><option value="claude">Claude</option><option value="openai">OpenAI Chat</option><option value="openai2">OpenAI Responses</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option><option value="kimi">Kimi</option><option value="poe">Poe</option></select></div>
+        <div><label for="remoteCreateModel">模型</label><input id="remoteCreateModel" value="gpt-5"></div>
+      </div>
+      <div class="row">
+        <div><label for="remoteCreateThinking">推理强度</label><select id="remoteCreateThinking"><option value="">上游默认</option><option value="off">关闭</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh / Max</option></select></div>
+        <div><label for="remoteCreateMaxConcurrentRequests">限制并发</label><input id="remoteCreateMaxConcurrentRequests" type="number" min="0" step="1" value="0"></div>
+      </div>
+      <label class="inline-check"><input id="remoteCreateCodexFastMode" type="checkbox" disabled> Codex 快速模式</label>
+      <div class="dialog-actions"><button type="button" class="secondary" onclick="remoteCreateEndpointDialog.close()">取消</button><button type="submit">下发新增命令</button></div>
+    </form>
+  </dialog>
+  <dialog id="remoteEditEndpointDialog">
+    <form class="dialog-body" onsubmit="submitRemoteEndpointEdit(event)">
+      <h2>修改模型与推理</h2>
+      <div id="remoteEditEndpointName" class="mono muted"></div>
+      <label for="remoteEditModel">模型</label>
+      <input id="remoteEditModel" placeholder="留空表示不强制覆盖请求模型">
+      <label for="remoteEditThinking">推理强度</label>
+      <select id="remoteEditThinking"><option value="__keep__">保持不变</option><option id="remoteEditThinkingDefault" value="">上游默认</option><option value="off">关闭</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh / Max</option></select>
+      <p id="remoteEditThinkingHelp" class="muted"></p>
+      <div class="dialog-actions"><button type="button" class="secondary" onclick="remoteEditEndpointDialog.close()">取消</button><button type="submit">下发修改命令</button></div>
+    </form>
+  </dialog>
   <script>
     let historyRows = [];
     let accountRows = [];
     let currentAccount = null;
     let editingDeviceId = '';
+    let remoteCreateDeviceIndex = -1;
+    let remoteEditContext = null;
     let revealedDeviceIndexes = new Set();
     const permissionCatalog = [
       ['cards:view','看卡密'],['cards:generate','生成卡密'],['cards:disable','禁用卡密'],['cards:delete','删除卡密'],
@@ -528,7 +565,21 @@ const adminHTML = `<!doctype html>
     function renderHistory(){const rows=showRefreshInput.checked?historyRows:historyRows.filter(h=>h.action!=='refresh');historyBody.innerHTML=rows.length?rows.map(h=>'<tr><td>'+h.id+'</td><td>'+esc(actionName(h.action))+'</td><td>'+esc(h.targetType)+' #'+h.targetId+'</td><td class="mono">'+esc(h.detail||'-')+'</td><td>'+dt(h.createdAt)+'</td></tr>').join(''):'<tr><td colspan="5" class="empty">暂无历史记录</td></tr>'}
     async function toggleDevice(index){const row=document.getElementById('device-detail-'+index);row.hidden=!row.hidden;if(!row.hidden&&can('devices:remote:view'))await loadRemoteDetail(index)}
     async function loadRemoteDetail(index){const box=document.getElementById('remote-detail-'+index);const device=window.deviceRows[index];if(!box||!device)return;box.innerHTML='<div class="detail-label">远程端点维护</div><div class="muted">加载中</div>';try{const data=await api('/api/admin/devices/'+encodeURIComponent(device.deviceId)+'/remote');const now=Date.now();const from24=new Date(now-24*60*60*1000).toISOString();const from7=new Date(now-7*24*60*60*1000).toISOString();let telemetry={summary24h:[],summary7d:[]};try{const base='/api/admin/telemetry/endpoint-errors/summary?deviceId='+encodeURIComponent(device.deviceId)+'&limit=50&from=';const results=await Promise.all([api(base+encodeURIComponent(from24)),api(base+encodeURIComponent(from7))]);telemetry={summary24h:results[0].summary||[],summary7d:results[1].summary||[]}}catch(telemetryErr){telemetry={summary24h:[],summary7d:[],error:telemetryErr.message||String(telemetryErr)}}data.endpointErrorSummary24h=telemetry.summary24h||[];data.endpointErrorSummary7d=telemetry.summary7d||[];data.endpointErrorTelemetryError=telemetry.error||'';window.remoteDetailData=window.remoteDetailData||{};window.remoteDetailData[index]=data;box.innerHTML=renderRemoteDetail(index,device,data)}catch(err){box.innerHTML='<div class="detail-label">远程端点维护</div><div class="status-disabled">'+esc(err.message||err)+'</div>'}}
-    function renderRemoteDetail(index,device,data){const state=(data&&data.state)||{};if(!state.supported)return '<div class="detail-label">远程端点维护</div><div class="muted">该客户端版本暂不支持远程维护，不影响正常授权和本地使用。</div>';const snap=state.snapshot||{};const endpoints=snap.endpoints||[];const pools=snap.tokenPools||[];const endpointErrorSummary24h=(data&&data.endpointErrorSummary24h)||[];const endpointErrorSummary7d=(data&&data.endpointErrorSummary7d)||[];const remoteStatus='<div class="detail-label">远程端点维护</div><div class="muted">状态：'+(state.enabled?'已启用':'已关闭')+' · 版本：'+esc(state.clientVersion||'-')+' · 心跳：'+dt(state.lastHeartbeatAt)+'</div>'+(can('devices:remote:write')?'<div class="actions"><button class="small-btn" onclick="remoteCreateEndpoint('+index+')">新增端点</button></div>':'');const endpointRows=endpoints.length?endpoints.map((ep,epIndex)=>'<tr><td>'+esc(ep.name)+'</td><td>'+esc(ep.enabled?'启用':'停用')+'</td><td class="mono">'+esc(ep.apiUrl||'-')+'</td><td class="mono">'+esc(ep.apiKeyMasked||'-')+'</td><td>'+esc(ep.authMode||'-')+'</td><td>'+esc(ep.codexFastMode?'开启':'关闭')+'</td><td>'+esc((ep.maxConcurrentRequests||0)>0?ep.maxConcurrentRequests:'不限')+'</td><td>'+remoteStats(ep.stats)+'</td><td><div class="actions">'+(can('devices:remote:write')?'<button class="secondary small-btn" '+(epIndex===0?'disabled ':'')+'onclick="remoteMoveEndpoint('+index+','+epIndex+',-1)">上移</button><button class="secondary small-btn" '+(epIndex===endpoints.length-1?'disabled ':'')+'onclick="remoteMoveEndpoint('+index+','+epIndex+',1)">下移</button><button class="secondary small-btn" onclick="remoteUpdateEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,&quot;apiUrl&quot;)">改URL</button><button class="secondary small-btn" onclick="remoteUpdateEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,&quot;apiKey&quot;)">改Key</button><button class="secondary small-btn" onclick="remoteUpdateEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,&quot;maxConcurrentRequests&quot;)">改并发</button>'+(ep.authMode==='codex_token_pool'?'<button class="secondary small-btn" onclick="remoteSetCodexFastMode('+index+',&quot;'+escAttr(ep.name)+'&quot;,'+(!ep.codexFastMode)+')">'+(ep.codexFastMode?'关闭快速':'开启快速')+'</button>':'')+'<button class="secondary small-btn" onclick="remoteToggleEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,'+(!ep.enabled)+')">'+(ep.enabled?'停用':'启用')+'</button><button class="danger small-btn" onclick="remoteDeleteEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;)">删除</button>':'')+(can('devices:remote:secrets')?'<button class="secondary small-btn" onclick="remoteRevealSecret('+index+',&quot;'+escAttr(ep.name)+'&quot;,0,&quot;apiKey&quot;)">查看Key</button>':'')+'</div></td></tr>').join(''):'<tr><td colspan="9" class="empty">暂无端点快照</td></tr>';const poolRows=pools.length?pools.map(pool=>'<tr><td>'+esc(pool.endpointName)+'</td><td colspan="6">'+renderRemoteCredentials(index,pool)+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">暂无 Token Pool 快照</td></tr>';return remoteStatus+'<table><thead><tr><th>端点</th><th>状态</th><th>Base URL</th><th>API Key</th><th>模式</th><th>快速</th><th>并发</th><th>用量</th><th>操作</th></tr></thead><tbody>'+endpointRows+'</tbody></table><div class="detail-label" style="margin-top:12px">端点错误遥测</div>'+renderEndpointErrorTelemetry(endpointErrorSummary24h,endpointErrorSummary7d,data.endpointErrorTelemetryError)+'<div class="detail-label" style="margin-top:12px">Codex Token Pool</div><table><thead><tr><th>端点</th><th colspan="6">账号/额度/维护</th></tr></thead><tbody>'+poolRows+'</tbody></table>'}
+    function remoteSupportsThinkingV2(state){return ((state&&state.capabilities)||[]).includes('endpoints:thinking:v2')}
+    function thinkingDisplay(state,ep){const hasThinking=Object.prototype.hasOwnProperty.call(ep,'thinking');if(!hasThinking&&!remoteSupportsThinkingV2(state))return '未上报';const value=String(ep.thinking||'').trim().toLowerCase();return ({'':'上游默认',off:'关闭',low:'Low',medium:'Medium',high:'High',xhigh:'XHigh / Max'}[value]||value)}
+    function renderRemoteDetail(index,device,data){
+      const state=(data&&data.state)||{};
+      if(!state.supported)return '<div class="detail-label">远程端点维护</div><div class="muted">该客户端版本暂不支持远程维护，不影响正常授权和本地使用。</div>';
+      const snap=state.snapshot||{};
+      const endpoints=snap.endpoints||[];
+      const pools=snap.tokenPools||[];
+      const endpointErrorSummary24h=(data&&data.endpointErrorSummary24h)||[];
+      const endpointErrorSummary7d=(data&&data.endpointErrorSummary7d)||[];
+      const remoteStatus='<div class="detail-label">远程端点维护</div><div class="muted">状态：'+(state.enabled?'已启用':'已关闭')+' · 版本：'+esc(state.clientVersion||'-')+' · 心跳：'+dt(state.lastHeartbeatAt)+'</div>'+(can('devices:remote:write')?'<div class="actions"><button class="small-btn" onclick="remoteCreateEndpoint('+index+')">新增端点</button></div>':'');
+      const endpointRows=endpoints.length?endpoints.map((ep,epIndex)=>'<tr><td>'+esc(ep.name)+'</td><td>'+esc(ep.enabled?'启用':'停用')+'</td><td class="mono">'+esc(ep.model||'-')+'</td><td>'+esc(thinkingDisplay(state,ep))+'</td><td class="mono">'+esc(ep.apiUrl||'-')+'</td><td class="mono">'+esc(ep.apiKeyMasked||'-')+'</td><td>'+esc(ep.authMode||'-')+'</td><td>'+esc(ep.codexFastMode?'开启':'关闭')+'</td><td>'+esc((ep.maxConcurrentRequests||0)>0?ep.maxConcurrentRequests:'不限')+'</td><td>'+remoteStats(ep.stats)+'</td><td><div class="actions">'+(can('devices:remote:write')?'<button class="secondary small-btn" '+(epIndex===0?'disabled ':'')+'onclick="remoteMoveEndpoint('+index+','+epIndex+',-1)">上移</button><button class="secondary small-btn" '+(epIndex===endpoints.length-1?'disabled ':'')+'onclick="remoteMoveEndpoint('+index+','+epIndex+',1)">下移</button><button class="secondary small-btn" onclick="remoteOpenEndpointEditor('+index+','+epIndex+')">模型/推理</button><button class="secondary small-btn" onclick="remoteUpdateEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,&quot;apiUrl&quot;)">改URL</button><button class="secondary small-btn" onclick="remoteUpdateEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,&quot;apiKey&quot;)">改Key</button><button class="secondary small-btn" onclick="remoteUpdateEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,&quot;maxConcurrentRequests&quot;)">改并发</button>'+(ep.authMode==='codex_token_pool'?'<button class="secondary small-btn" onclick="remoteSetCodexFastMode('+index+',&quot;'+escAttr(ep.name)+'&quot;,'+(!ep.codexFastMode)+')">'+(ep.codexFastMode?'关闭快速':'开启快速')+'</button>':'')+'<button class="secondary small-btn" onclick="remoteToggleEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,'+(!ep.enabled)+')">'+(ep.enabled?'停用':'启用')+'</button><button class="danger small-btn" onclick="remoteDeleteEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;)">删除</button>':'')+(can('devices:remote:secrets')?'<button class="secondary small-btn" onclick="remoteRevealSecret('+index+',&quot;'+escAttr(ep.name)+'&quot;,0,&quot;apiKey&quot;)">查看Key</button>':'')+'</div></td></tr>').join(''):'<tr><td colspan="11" class="empty">暂无端点快照</td></tr>';
+      const poolRows=pools.length?pools.map(pool=>'<tr><td>'+esc(pool.endpointName)+'</td><td colspan="6">'+renderRemoteCredentials(index,pool)+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">暂无 Token Pool 快照</td></tr>';
+      return remoteStatus+'<div class="remote-table-wrap"><table><thead><tr><th>端点</th><th>状态</th><th>模型</th><th>推理</th><th>Base URL</th><th>API Key</th><th>模式</th><th>快速</th><th>并发</th><th>用量</th><th>操作</th></tr></thead><tbody>'+endpointRows+'</tbody></table></div><div class="detail-label" style="margin-top:12px">端点错误遥测</div>'+renderEndpointErrorTelemetry(endpointErrorSummary24h,endpointErrorSummary7d,data.endpointErrorTelemetryError)+'<div class="detail-label" style="margin-top:12px">Codex Token Pool</div><table><thead><tr><th>端点</th><th colspan="6">账号/额度/维护</th></tr></thead><tbody>'+poolRows+'</tbody></table>';
+    }
     function renderRemoteCredentials(index,pool){const creds=pool.credentials||[];if(!creds.length)return '<span class="muted">暂无账号</span>';return '<table><thead><tr><th>ID</th><th>账号</th><th>邮箱</th><th>状态</th><th>用量</th><th>额度</th><th>操作</th></tr></thead><tbody>'+creds.map(c=>'<tr><td>'+c.id+'</td><td class="mono">'+esc(c.accountIdMasked||'-')+'</td><td>'+esc(c.emailMasked||'-')+'</td><td>'+esc(c.status||'-')+(c.enabled?'':' / 停用')+'</td><td>'+remoteStats(c.usage)+'</td><td class="mono">'+esc(remoteQuota(c.quota))+'</td><td><div class="actions">'+(can('devices:remote:write')?'<button class="secondary small-btn" onclick="remoteCredentialEnabled('+index+','+c.id+','+(!c.enabled)+')">'+(c.enabled?'停用':'启用')+'</button><button class="secondary small-btn" onclick="remoteUpdateCredentialToken('+index+','+c.id+')">改Token</button><button class="danger small-btn" onclick="remoteDeleteCredential('+index+','+c.id+')">删除</button>':'')+(can('devices:remote:secrets')?'<button class="secondary small-btn" onclick="remoteRevealSecret('+index+',&quot;'+escAttr(pool.endpointName)+'&quot;,'+c.id+',&quot;accessToken&quot;)">查看Token</button>':'')+'</div></td></tr>').join('')+'</tbody></table>'}
     function remoteStats(stats){stats=stats||{};return '请求 '+(stats.requests||0)+' / Token '+((stats.inputTokens||0)+(stats.outputTokens||0))+' / 错误 '+(stats.errors||0)}
     function renderEndpointErrorTelemetry(rows24h,rows7d,errorText){rows24h=rows24h||[];rows7d=rows7d||[];if(errorText)return '<div class="status-disabled">'+esc(errorText)+'</div>';if(!rows24h.length&&!rows7d.length)return '<div class="muted">暂无端点错误遥测</div>';return renderEndpointErrorTelemetryTable('近24小时',rows24h)+renderEndpointErrorTelemetryTable('近7天',rows7d)}
@@ -539,7 +590,61 @@ const adminHTML = `<!doctype html>
     async function remoteUpdateEndpoint(index,name,field){const label=field==='apiUrl'?'新的 Base URL':(field==='maxConcurrentRequests'?'限制并发（0 表示不限制）':'新的 API Key');const value=prompt(label);if(value===null)return;const payload={endpointName:name};if(field==='maxConcurrentRequests'){const n=Number(value);if(!Number.isInteger(n)||n<0){setError(new Error('限制并发必须是 0 或正整数'));return}payload[field]=n}else{payload[field]=value}try{await queueRemote(index,'endpoint.update',payload)}catch(err){setError(err)}}
     async function remoteToggleEndpoint(index,name,enabled){try{await queueRemote(index,'endpoint.update',{endpointName:name,enabled})}catch(err){setError(err)}}
     async function remoteSetCodexFastMode(index,name,enabled){try{await queueRemote(index,'endpoint.update',{endpointName:name,codexFastMode:enabled})}catch(err){setError(err)}}
-    async function remoteCreateEndpoint(index){const name=prompt('端点名称');if(name===null||!name.trim())return;const apiUrl=prompt('Base URL');if(apiUrl===null||!apiUrl.trim())return;const apiKey=prompt('API Key（Token Pool 模式可留空）')||'';const authMode=prompt('认证模式：api_key / token_pool / codex_token_pool','api_key')||'api_key';const transformer=prompt('转换器：openai / openai2 / gemini / Codex','openai')||'openai';const model=prompt('模型名','gpt-5')||'';const concurrentValue=prompt('限制并发（0 表示不限制）','0');if(concurrentValue===null)return;const maxConcurrentRequests=Number(concurrentValue||0);if(!Number.isInteger(maxConcurrentRequests)||maxConcurrentRequests<0){setError(new Error('限制并发必须是 0 或正整数'));return}const codexFastMode=authMode==='codex_token_pool'&&confirm('为该 Codex Token Pool 开启快速模式？可能消耗更高 Codex 额度。');try{await queueRemote(index,'endpoint.create',{name,apiUrl,apiKey,authMode,transformer,model,maxConcurrentRequests,enabled:true,codexFastMode})}catch(err){setError(err)}}
+    function remoteSyncCreateAuthMode(){const isCodex=remoteCreateAuthMode.value==='codex_token_pool';remoteCreateCodexFastMode.disabled=!isCodex;if(!isCodex)remoteCreateCodexFastMode.checked=false}
+    function remoteCreateEndpoint(index){remoteCreateDeviceIndex=index;remoteCreateName.value='';remoteCreateAPIUrl.value='';remoteCreateAPIKey.value='';remoteCreateAuthMode.value='api_key';remoteCreateTransformer.value='openai';remoteCreateModel.value='gpt-5';remoteCreateThinking.value='';remoteCreateMaxConcurrentRequests.value='0';remoteCreateCodexFastMode.checked=false;remoteSyncCreateAuthMode();remoteCreateEndpointDialog.showModal()}
+    async function submitRemoteCreateEndpoint(event){
+      event.preventDefault();
+      const name=remoteCreateName.value.trim();
+      const apiUrl=remoteCreateAPIUrl.value.trim();
+      const apiKey=remoteCreateAPIKey.value.trim();
+      const authMode=remoteCreateAuthMode.value;
+      const transformer=remoteCreateTransformer.value;
+      const model=remoteCreateModel.value.trim();
+      const thinking=remoteCreateThinking.value;
+      const maxConcurrentRequests=Number(remoteCreateMaxConcurrentRequests.value||0);
+      if(!name||!apiUrl){setError(new Error('端点名称和 Base URL 不能为空'));return}
+      if(authMode==='api_key'&&!apiKey){setError(new Error('API Key 模式必须填写 API Key'));return}
+      if(!Number.isInteger(maxConcurrentRequests)||maxConcurrentRequests<0){setError(new Error('限制并发必须是 0 或正整数'));return}
+      try{
+        await queueRemote(remoteCreateDeviceIndex,'endpoint.create',{name,apiUrl,apiKey,authMode,transformer,model,thinking,maxConcurrentRequests,enabled:true,codexFastMode:remoteCreateCodexFastMode.checked});
+        remoteCreateEndpointDialog.close();
+      }catch(err){setError(err)}
+    }
+    function remoteOpenEndpointEditor(index,endpointIndex){
+      const data=window.remoteDetailData&&window.remoteDetailData[index];
+      const state=((data||{}).state)||{};
+      const endpoints=((state.snapshot||{}).endpoints)||[];
+      const ep=endpoints[endpointIndex];
+      if(!ep)return;
+      const hasThinking=Object.prototype.hasOwnProperty.call(ep,'thinking');
+      const supportsThinkingV2=remoteSupportsThinkingV2(state);
+      const originalThinking=hasThinking?String(ep.thinking||''):'';
+      remoteEditContext={index,endpointName:ep.name,originalModel:String(ep.model||''),originalThinking,thinkingKnown:hasThinking||supportsThinkingV2,supportsNullableUpdates:supportsThinkingV2};
+      remoteEditEndpointName.textContent=ep.name;
+      remoteEditModel.value=remoteEditContext.originalModel;
+      document.getElementById('remoteEditThinkingDefault').disabled=!supportsThinkingV2;
+      remoteEditThinking.value=supportsThinkingV2?originalThinking:(hasThinking&&originalThinking?originalThinking:'__keep__');
+      remoteEditThinkingHelp.textContent=supportsThinkingV2?'该客户端支持显示推理强度并恢复上游默认。':'旧客户端未上报推理强度；默认保持不变，仍可下发明确强度。';
+      remoteEditEndpointDialog.showModal();
+    }
+    async function submitRemoteEndpointEdit(event){
+      event.preventDefault();
+      if(!remoteEditContext)return;
+      const model=remoteEditModel.value.trim();
+      const thinking=remoteEditThinking.value;
+      const payload={endpointName:remoteEditContext.endpointName};
+      let changed=false;
+      if(model===''&&remoteEditContext.originalModel!==''&&!remoteEditContext.supportsNullableUpdates){setError(new Error('旧客户端不支持远程清空模型，请升级客户端或填写新的模型名'));return}
+      if(model!==remoteEditContext.originalModel){payload.model=model;changed=true}
+      if(thinking!=='__keep__'){
+        if(!remoteEditContext.thinkingKnown||thinking!==remoteEditContext.originalThinking){payload.thinking=thinking;changed=true}
+      }
+      if(!changed){remoteEditEndpointDialog.close();message.textContent='模型和推理配置没有变化';return}
+      try{
+        await queueRemote(remoteEditContext.index,'endpoint.update',payload);
+        remoteEditEndpointDialog.close();
+      }catch(err){setError(err)}
+    }
     async function remoteDeleteEndpoint(index,name){if(!confirm('删除远程端点 '+name+'？'))return;try{await queueRemote(index,'endpoint.delete',{endpointName:name})}catch(err){setError(err)}}
     async function remoteMoveEndpoint(index,endpointIndex,direction){try{const data=window.remoteDetailData&&window.remoteDetailData[index];const endpoints=(((data||{}).state||{}).snapshot||{}).endpoints||[];const targetIndex=endpointIndex+direction;if(targetIndex<0||targetIndex>=endpoints.length)return;const names=endpoints.map(ep=>ep.name);const moved=names[endpointIndex];names[endpointIndex]=names[targetIndex];names[targetIndex]=moved;await queueRemote(index,'endpoint.reorder',{names})}catch(err){setError(err)}}
     async function remoteCredentialEnabled(index,id,enabled){try{await queueRemote(index,'credential.setEnabled',{credentialId:id,enabled})}catch(err){setError(err)}}

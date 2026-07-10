@@ -16,8 +16,8 @@ func TestAdminRemoteEndpointCodexFastModeControls(t *testing.T) {
 		"ep.codexFastMode?'开启':'关闭'",
 		"remoteSetCodexFastMode(",
 		"codexFastMode:enabled",
-		"const codexFastMode=authMode==='codex_token_pool'&&confirm",
-		"codexFastMode})",
+		"id=\"remoteCreateCodexFastMode\"",
+		"codexFastMode:remoteCreateCodexFastMode.checked",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("admin remote endpoint UI missing %q", want)
@@ -25,6 +25,48 @@ func TestAdminRemoteEndpointCodexFastModeControls(t *testing.T) {
 	}
 	if strings.Contains(body, "1.5倍") || strings.Contains(body, "1.5x") {
 		t.Fatalf("admin copy must not hard-code a 1.5x fast-mode multiplier")
+	}
+}
+
+func TestAdminRemoteEndpointModelAndThinkingControls(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	body := string(source)
+	for _, want := range []string{
+		"id=\"remoteCreateEndpointDialog\"",
+		"id=\"remoteEditEndpointDialog\"",
+		"id=\"remoteCreateModel\"",
+		"id=\"remoteCreateThinking\"",
+		"<option value=\"\">上游默认</option>",
+		"<option value=\"off\">关闭</option>",
+		"<option value=\"low\">Low</option>",
+		"<option value=\"medium\">Medium</option>",
+		"<option value=\"high\">High</option>",
+		"<option value=\"xhigh\">XHigh / Max</option>",
+		"submitRemoteCreateEndpoint(event)",
+		"submitRemoteEndpointEdit(event)",
+		"remoteOpenEndpointEditor(",
+		"Object.prototype.hasOwnProperty.call(ep,'thinking')",
+		"endpoints:thinking:v2",
+		"value=\"__keep__\"",
+		"if(thinking!=='__keep__')",
+		"payload.thinking=thinking",
+		"payload.model=model",
+		"旧客户端不支持远程清空模型",
+		"thinkingDisplay(state,ep)",
+		"<th>模型</th><th>推理</th>",
+		"max-width:calc(100vw - 340px)",
+		"contain:inline-size",
+		"overflow-x:hidden",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("admin remote model/thinking UI missing %q", want)
+		}
+	}
+	if strings.Contains(body, "const name=prompt('端点名称')") {
+		t.Fatal("remote endpoint creation must not use the legacy prompt chain")
 	}
 }
 

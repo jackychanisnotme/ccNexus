@@ -32,9 +32,10 @@ func TestRemoteManagementExecutorCreatesEndpoint(t *testing.T) {
 		"name":"Remote Added",
 		"apiUrl":"https://remote-added.example.com/v1",
 		"apiKey":"remote-secret",
-		"authMode":"api_key",
+			"authMode":"api_key",
 			"transformer":"openai",
-			"model":"gpt-5",
+			"model":"gpt-5.2",
+			"thinking":"high",
 			"maxConcurrentRequests":2,
 			"enabled":true,
 			"remark":"created remotely"
@@ -51,11 +52,42 @@ func TestRemoteManagementExecutorCreatesEndpoint(t *testing.T) {
 	}
 
 	got := cfg.GetEndpoints()
-	if len(got) != 2 || got[1].Name != "Remote Added" || got[1].APIUrl != "https://remote-added.example.com/v1" || got[1].APIKey != "remote-secret" || got[1].MaxConcurrentRequests != 2 {
+	if len(got) != 2 || got[1].Name != "Remote Added" || got[1].APIUrl != "https://remote-added.example.com/v1" || got[1].APIKey != "remote-secret" ||
+		got[1].Model != "gpt-5.2" || got[1].Thinking != config.ThinkingHigh || got[1].MaxConcurrentRequests != 2 {
 		t.Fatalf("created endpoints = %#v", got)
 	}
-	if outcome.Snapshot == nil || len(outcome.Snapshot.Endpoints) != 2 || outcome.Snapshot.Endpoints[1].APIKeyMasked == "remote-secret" || outcome.Snapshot.Endpoints[1].MaxConcurrentRequests != 2 {
+	if outcome.Snapshot == nil || len(outcome.Snapshot.Endpoints) != 2 || outcome.Snapshot.Endpoints[1].APIKeyMasked == "remote-secret" ||
+		outcome.Snapshot.Endpoints[1].Model != "gpt-5.2" || outcome.Snapshot.Endpoints[1].Thinking != config.ThinkingHigh ||
+		outcome.Snapshot.Endpoints[1].MaxConcurrentRequests != 2 {
 		t.Fatalf("snapshot after create = %#v", outcome.Snapshot)
+	}
+}
+
+func TestRemoteManagementSnapshotIncludesModelAndThinking(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "Reasoning",
+		APIUrl:      "https://reasoning.example.com/v1",
+		APIKey:      "secret-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai2",
+		Model:       "gpt-5.2",
+		Thinking:    config.ThinkingXHigh,
+	}})
+	p := proxy.New(cfg, nil, nil, "remote-test-device")
+	executor := NewRemoteManagementExecutor(cfg, nil, NewEndpointService(cfg, p, nil))
+
+	snapshot, err := executor.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot() error: %v", err)
+	}
+	if len(snapshot.Endpoints) != 1 {
+		t.Fatalf("snapshot endpoints = %#v, want one", snapshot.Endpoints)
+	}
+	got := snapshot.Endpoints[0]
+	if got.Model != "gpt-5.2" || got.Thinking != config.ThinkingXHigh {
+		t.Fatalf("snapshot endpoint = %#v, want model and thinking", got)
 	}
 }
 
@@ -102,6 +134,68 @@ func TestRemoteManagementExecutorUpdatePreservesOmittedFields(t *testing.T) {
 	if updated.APIKey != "existing-key" || updated.Model != "gpt-5" || updated.Thinking != config.ThinkingHigh ||
 		!updated.ForceStream || updated.ProxyURL != "http://127.0.0.1:7890" || updated.Remark != "keep remark" || updated.MaxConcurrentRequests != 4 || !updated.CodexFastMode || !updated.Enabled {
 		t.Fatalf("endpoint update did not preserve omitted fields: %#v", updated)
+	}
+}
+
+func TestRemoteManagementExecutorUpdatesModelWithoutChangingThinking(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "Existing",
+		APIUrl:      "https://existing.example.com/v1",
+		APIKey:      "existing-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai2",
+		Model:       "gpt-5",
+		Thinking:    config.ThinkingHigh,
+	}})
+	p := proxy.New(cfg, nil, nil, "remote-test-device")
+	executor := NewRemoteManagementExecutor(cfg, nil, NewEndpointService(cfg, p, nil))
+
+	outcome, err := executor.ExecuteRemoteCommand(onlinelicense.RemoteCommandPayload{
+		CommandType: "endpoint.update",
+		Payload:     json.RawMessage(`{"endpointName":"Existing","model":"gpt-5.2"}`),
+	})
+	if err != nil {
+		t.Fatalf("execute endpoint.update: %v", err)
+	}
+	got := cfg.GetEndpoints()[0]
+	if got.Model != "gpt-5.2" || got.Thinking != config.ThinkingHigh {
+		t.Fatalf("updated endpoint = %#v, want new model and preserved thinking", got)
+	}
+	if outcome.Snapshot == nil || outcome.Snapshot.Endpoints[0].Model != "gpt-5.2" || outcome.Snapshot.Endpoints[0].Thinking != config.ThinkingHigh {
+		t.Fatalf("snapshot after model update = %#v", outcome.Snapshot)
+	}
+}
+
+func TestRemoteManagementExecutorClearsThinkingToProviderDefault(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "Existing",
+		APIUrl:      "https://existing.example.com/v1",
+		APIKey:      "existing-key",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai2",
+		Model:       "gpt-5.2",
+		Thinking:    config.ThinkingHigh,
+	}})
+	p := proxy.New(cfg, nil, nil, "remote-test-device")
+	executor := NewRemoteManagementExecutor(cfg, nil, NewEndpointService(cfg, p, nil))
+
+	outcome, err := executor.ExecuteRemoteCommand(onlinelicense.RemoteCommandPayload{
+		CommandType: "endpoint.update",
+		Payload:     json.RawMessage(`{"endpointName":"Existing","thinking":""}`),
+	})
+	if err != nil {
+		t.Fatalf("execute endpoint.update: %v", err)
+	}
+	got := cfg.GetEndpoints()[0]
+	if got.Model != "gpt-5.2" || got.Thinking != "" {
+		t.Fatalf("updated endpoint = %#v, want provider default thinking and preserved model", got)
+	}
+	if outcome.Snapshot == nil || outcome.Snapshot.Endpoints[0].Thinking != "" {
+		t.Fatalf("snapshot after thinking clear = %#v", outcome.Snapshot)
 	}
 }
 

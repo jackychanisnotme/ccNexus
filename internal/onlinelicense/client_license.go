@@ -489,6 +489,7 @@ func (s *ClientService) remoteCapabilityReport() RemoteCapabilityReport {
 		Capabilities: []string{
 			"endpoints:view",
 			"endpoints:write",
+			"endpoints:thinking:v2",
 			"token_pool:view",
 			"token_pool:write",
 			"secrets:reveal",

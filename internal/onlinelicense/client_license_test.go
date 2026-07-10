@@ -104,6 +104,23 @@ func TestClientDefaultLicenseServerURLsUseDomainThenIP(t *testing.T) {
 	}
 }
 
+func TestClientRemoteCapabilityReportsThinkingV2(t *testing.T) {
+	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{})
+	client.SetRemoteExecutor(&testRemoteExecutor{})
+
+	report := client.remoteCapabilityReport()
+	found := false
+	for _, capability := range report.Capabilities {
+		if capability == "endpoints:thinking:v2" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("remote capabilities = %#v, want endpoints:thinking:v2", report.Capabilities)
+	}
+}
+
 func TestClientLicenseServerURLIPAddsDomainBackup(t *testing.T) {
 	t.Setenv("CCNEXUS_LICENSE_SERVER_URL", "http://207.57.134.147:24220")
 	t.Setenv("CCNEXUS_LICENSE_SERVER_URLS", "")
