@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ecdh"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,183 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRemoteCommandSummaryMigrationIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "license.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy database: %v", err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE license_remote_commands (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			device_id TEXT NOT NULL,
+			command_type TEXT NOT NULL,
+			status TEXT NOT NULL,
+			actor_account_id INTEGER NOT NULL DEFAULT 0,
+			actor_username TEXT,
+			owner_account_id INTEGER NOT NULL DEFAULT 0,
+			envelope_json TEXT NOT NULL DEFAULT '{}',
+			result TEXT,
+			result_json TEXT,
+			error TEXT,
+			expires_at DATETIME,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)
+	`); err != nil {
+		t.Fatalf("create legacy remote command table: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO license_remote_commands (
+			device_id, command_type, status, envelope_json, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?)
+	`, "legacy-device", "endpoint.update", "queued", `{"ciphertext":"legacy"}`,
+		"2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z"); err != nil {
+		t.Fatalf("insert legacy remote command: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		store, err := NewSQLiteStore(path)
+		if err != nil {
+			t.Fatalf("open migrated store attempt %d: %v", attempt+1, err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("close migrated store attempt %d: %v", attempt+1, err)
+		}
+	}
+
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("reopen migrated database: %v", err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`PRAGMA table_info(license_remote_commands)`)
+	if err != nil {
+		t.Fatalf("list remote command columns: %v", err)
+	}
+	defer rows.Close()
+	summaryColumns := 0
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatalf("scan remote command column: %v", err)
+		}
+		if name == "summary_json" {
+			summaryColumns++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate remote command columns: %v", err)
+	}
+	if summaryColumns != 1 {
+		t.Fatalf("summary_json columns = %d, want 1", summaryColumns)
+	}
+	var deviceID, commandType, status, envelopeJSON string
+	if err := db.QueryRow(`
+		SELECT device_id, command_type, status, envelope_json
+		FROM license_remote_commands
+		WHERE id=1
+	`).Scan(&deviceID, &commandType, &status, &envelopeJSON); err != nil {
+		t.Fatalf("read migrated legacy command: %v", err)
+	}
+	if deviceID != "legacy-device" || commandType != "endpoint.update" || status != "queued" ||
+		envelopeJSON != `{"ciphertext":"legacy"}` {
+		t.Fatalf("legacy command changed during migration: device=%q type=%q status=%q envelope=%q",
+			deviceID, commandType, status, envelopeJSON)
+	}
+}
+
+func TestBuildRemoteCommandSummaryUsesSafeWhitelistedMetadata(t *testing.T) {
+	tests := []struct {
+		name        string
+		commandType string
+		payload     map[string]interface{}
+		want        RemoteCommandSummary
+	}{
+		{
+			name:        "endpoint update",
+			commandType: "endpoint.update",
+			payload: map[string]interface{}{
+				"endpointName": "OpenAI",
+				"apiUrl":       "https://user:password@example.test/v1?token=secret",
+				"apiKey":       "sk-secret",
+				"model":        "gpt-5.2",
+				"thinking":     "xhigh",
+				"unexpected":   "must-not-be-recorded",
+			},
+			want: RemoteCommandSummary{
+				TargetType:    "endpoint",
+				TargetName:    "OpenAI",
+				ChangedFields: []string{"apiKey", "apiUrl", "model", "thinking"},
+				RiskLevel:     "sensitive",
+			},
+		},
+		{
+			name:        "endpoint delete",
+			commandType: "endpoint.delete",
+			payload:     map[string]interface{}{"endpointName": "Legacy"},
+			want: RemoteCommandSummary{
+				TargetType: "endpoint",
+				TargetName: "Legacy",
+				RiskLevel:  "destructive",
+			},
+		},
+		{
+			name:        "credential token",
+			commandType: "credential.updateToken",
+			payload: map[string]interface{}{
+				"credentialId": float64(42),
+				"accessToken":  "access-secret",
+				"refreshToken": "refresh-secret",
+			},
+			want: RemoteCommandSummary{
+				TargetType:    "credential",
+				CredentialID:  42,
+				ChangedFields: []string{"accessToken"},
+				RiskLevel:     "sensitive",
+			},
+		},
+		{
+			name:        "endpoint reorder",
+			commandType: "endpoint.reorder",
+			payload:     map[string]interface{}{"names": []string{"B", "A"}},
+			want: RemoteCommandSummary{
+				TargetType:    "endpoint",
+				ChangedFields: []string{"order"},
+				RiskLevel:     "normal",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := buildRemoteCommandSummary(test.commandType, test.payload)
+			if got == nil {
+				t.Fatalf("summary = nil")
+			}
+			if mustJSON(t, got) != mustJSON(t, &test.want) {
+				t.Fatalf("summary = %s, want %s", mustJSON(t, got), mustJSON(t, &test.want))
+			}
+			wire := mustJSON(t, got)
+			for _, secret := range []string{"password", "token=secret", "sk-secret", "gpt-5.2", "xhigh", "access-secret", "refresh-secret", "must-not-be-recorded"} {
+				if strings.Contains(wire, secret) {
+					t.Fatalf("summary leaked %q: %s", secret, wire)
+				}
+			}
+		})
+	}
+
+	if got := buildRemoteCommandSummary("unsupported.command", map[string]interface{}{}); got != nil {
+		t.Fatalf("unsupported command summary = %#v, want nil", got)
+	}
+}
 
 func TestRemoteStateMigrationAndSnapshotAreBackwardCompatible(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "license.db")
@@ -146,6 +324,53 @@ func TestRemoteCommandPayloadIsEncryptedAndTamperRejected(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("queue command status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var queued struct {
+		Data RemoteCommandRecord `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode queued command: %v", err)
+	}
+	if queued.Data.Summary == nil {
+		t.Fatalf("queued command summary = nil")
+	}
+	if queued.Data.Summary.TargetType != "endpoint" || queued.Data.Summary.TargetName != "OpenAI" ||
+		queued.Data.Summary.RiskLevel != "sensitive" {
+		t.Fatalf("queued command summary = %#v", queued.Data.Summary)
+	}
+	if got := strings.Join(queued.Data.Summary.ChangedFields, ","); got != "apiKey,model,thinking" {
+		t.Fatalf("changed fields = %q", got)
+	}
+	summaryWire := mustJSON(t, queued.Data.Summary)
+	for _, secret := range []string{"sk-secret-value", "gpt-5.2", "xhigh", "https://"} {
+		if strings.Contains(summaryWire, secret) {
+			t.Fatalf("summary leaked %q: %s", secret, summaryWire)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/devices/device-a/remote", nil)
+	req.AddCookie(rootCookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remote detail status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	for _, secret := range []string{"sk-secret-value", "gpt-5.2", "xhigh", "https://"} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Fatalf("remote detail leaked %q: %s", secret, rec.Body.String())
+		}
+	}
+	var detail struct {
+		Data RemoteAdminDetail `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode remote detail: %v", err)
+	}
+	if len(detail.Data.Commands) != 1 || detail.Data.Commands[0].Summary == nil {
+		t.Fatalf("remote detail command summary = %#v", detail.Data.Commands)
+	}
+	if got := mustJSON(t, detail.Data.Commands[0].Summary); got != summaryWire {
+		t.Fatalf("persisted summary = %s, want %s", got, summaryWire)
 	}
 
 	pollBody := `{"ticket":"` + activated.Ticket + `","deviceId":"device-a"}`

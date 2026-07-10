@@ -238,11 +238,12 @@ const adminHTML = `<!doctype html>
     button{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:9px 13px;font-weight:650;cursor:pointer;white-space:nowrap;transition:background .18s,border-color .18s,color .18s,transform .18s,box-shadow .18s}button:hover{background:var(--accent-hover);box-shadow:0 8px 20px rgba(0,113,227,.18)}button:active{transform:translateY(1px)}button.secondary{background:#fff;color:var(--text);border-color:var(--line)}button.secondary:hover{background:#f9f9fb;box-shadow:none}button.danger{border-color:var(--danger);background:var(--danger);color:#fff}button.danger:hover{background:#c40012}.small-btn{padding:6px 9px;font-size:12px}
     table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}th,td{border-bottom:1px solid var(--soft-line);padding:10px 9px;text-align:left;vertical-align:top}th{font-size:11px;color:var(--muted);background:rgba(251,251,253,.96);position:sticky;top:0;z-index:1;font-weight:700}tbody tr:hover td{background:#fbfbfd}
     .table-wrap{overflow:auto;max-height:520px;border:1px solid var(--soft-line);border-radius:8px;background:#fff}.mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.muted{color:var(--muted)}.status-active,.status-disabled,.status-expired{display:inline-flex;border-radius:999px;padding:3px 8px;font-weight:650;font-size:12px}.status-active{background:var(--ok-bg);color:var(--ok)}.status-disabled,.status-expired{background:var(--danger-bg);color:var(--danger)}
-    .device-detail td{padding:0;background:#fbfbfd}.device-detail[hidden]{display:none}.detail-inner{padding:14px 16px}.detail-inner table{background:#fff}.detail-inner th{position:static}.detail-label{font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 8px}
-    dialog{width:min(480px,calc(100% - 32px));border:1px solid var(--line);border-radius:8px;padding:0;color:var(--text);box-shadow:0 28px 80px rgba(29,29,31,.22)}dialog::backdrop{background:rgba(29,29,31,.34);backdrop-filter:blur(2px)}.dialog-body{padding:20px}.dialog-body h2{font-size:18px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.remote-endpoint-dialog{width:min(680px,calc(100% - 32px))}.remote-table-wrap{width:100%;max-width:calc(100vw - 340px);min-width:0;overflow:auto;contain:inline-size;border:1px solid var(--soft-line);border-radius:8px;background:#fff}.remote-table-wrap table{min-width:1180px}
+    .detail-label{font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 8px}
+    dialog{width:min(480px,calc(100% - 32px));border:1px solid var(--line);border-radius:8px;padding:0;color:var(--text);box-shadow:0 28px 80px rgba(29,29,31,.22)}dialog::backdrop{background:rgba(29,29,31,.34);backdrop-filter:blur(2px)}.dialog-body{padding:20px}.dialog-body h2{font-size:18px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.remote-endpoint-dialog{width:min(720px,calc(100% - 32px))}.remote-table-wrap{width:100%;min-width:0;overflow:auto;contain:inline-size;border:1px solid var(--soft-line);border-radius:8px;background:#fff}.remote-table-wrap table{min-width:920px}
+    body.workspace-open{overflow:hidden}.workspace-backdrop{position:fixed;inset:0;z-index:20;background:rgba(29,29,31,.34);backdrop-filter:blur(2px)}.workspace-backdrop[hidden],.device-workspace[hidden]{display:none!important}.device-workspace{position:fixed;z-index:21;top:0;right:0;width:min(1100px,calc(100vw - 40px));height:100dvh;background:#f7f7f9;border-left:1px solid var(--line);box-shadow:-24px 0 70px rgba(29,29,31,.18);display:grid;grid-template-rows:auto auto auto minmax(0,1fr);overflow:hidden}.workspace-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 22px 14px;background:#fff;border-bottom:1px solid var(--soft-line)}.workspace-header h2{font-size:22px}.workspace-meta{display:flex;gap:8px 14px;flex-wrap:wrap;margin-top:8px;color:var(--muted);font-size:12px}.workspace-close{min-width:38px;padding:7px 10px}.workspace-tabs{display:flex;gap:4px;padding:10px 14px;background:#fff;border-bottom:1px solid var(--soft-line);overflow:auto}.workspace-tabs button{background:transparent;border-color:transparent;color:var(--muted);box-shadow:none}.workspace-tabs button.active{background:var(--panel-soft);border-color:var(--line);color:var(--text)}.workspace-task-bar{display:grid;gap:6px;padding:0 18px;background:#fff}.workspace-task-bar:not(:empty){padding-top:10px;padding-bottom:10px;border-bottom:1px solid var(--soft-line)}.workspace-task{display:flex;align-items:center;justify-content:space-between;gap:10px;border-left:3px solid var(--accent);padding:7px 10px;background:#f4f8ff}.workspace-task.error{border-left-color:var(--danger);background:var(--danger-bg)}.workspace-body{min-height:0;overflow:auto;padding:18px 20px}.workspace-panel[hidden]{display:none!important}.workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.workspace-toolbar h3{margin:0;font-size:16px}.workspace-toolbar .actions{margin-top:0}.workspace-empty{padding:34px 12px;text-align:center;color:var(--muted)}.status-online,.status-stale,.status-offline,.status-queued,.status-delivered,.status-applied,.status-failed{display:inline-flex;border-radius:999px;padding:3px 8px;font-weight:650;font-size:12px}.status-online,.status-applied{background:var(--ok-bg);color:var(--ok)}.status-stale,.status-queued,.status-delivered{background:#fff7e8;color:var(--warn)}.status-offline,.status-failed{background:var(--danger-bg);color:var(--danger)}.endpoint-main{display:grid;gap:3px}.endpoint-main strong{font-size:13px}.endpoint-config{max-width:310px;word-break:break-word}.pending-note{color:var(--warn);font-size:11px;font-weight:650}.action-menu{position:relative}.action-menu summary{list-style:none;cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:#fff;font-size:12px;font-weight:650}.action-menu summary::-webkit-details-marker{display:none}.action-menu[open] .action-menu-popover{display:grid}.action-menu-popover{display:none;position:absolute;z-index:5;right:0;top:36px;width:140px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 16px 36px rgba(29,29,31,.16)}.action-menu-popover button{width:100%;justify-content:flex-start;background:#fff;color:var(--text);border-color:transparent;box-shadow:none}.action-menu-popover button.danger{color:var(--danger)}.sort-list{display:grid;gap:8px;margin-top:12px}.sort-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;border:1px solid var(--soft-line);border-radius:8px;padding:8px 10px}.change-summary{margin:12px 0 0;padding:10px 12px;background:var(--panel-soft);border:1px solid var(--soft-line);border-radius:8px}.secret-value{white-space:pre-wrap;word-break:break-all;padding:12px;background:#111;color:#fff;border-radius:8px;min-height:48px}.telemetry-range{display:flex;gap:6px}.telemetry-range button.active{background:var(--accent);border-color:var(--accent);color:#fff}
     #generated{white-space:pre-wrap;word-break:break-all;background:#fff;border:1px solid var(--soft-line);border-radius:8px;padding:12px;margin-top:12px;min-height:188px;max-height:280px;overflow:auto}.message{min-height:20px;margin-top:12px;color:var(--danger);font-size:13px}.empty{text-align:center;color:var(--muted);padding:26px!important}
-    @media(max-width:1100px){.admin-shell{grid-template-columns:1fr}.sidebar{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--soft-line)}.page-tabs{grid-template-columns:repeat(5,minmax(0,1fr))}.content{padding:20px}.topbar{margin:-20px -20px 18px;padding:16px 20px}.overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.generate-grid{grid-template-columns:1fr}.remote-table-wrap{max-width:calc(100vw - 40px)}}
-    @media(max-width:720px){html,body{overflow-x:hidden}.topbar{align-items:flex-start;flex-direction:column}.toolbar{width:100%;justify-content:space-between}.page-tabs{grid-template-columns:1fr 1fr}.overview-grid,.row{grid-template-columns:1fr}.content{width:100%;max-width:100vw;overflow-x:hidden;padding:14px}.topbar{margin:-14px -14px 16px;padding:14px}.sidebar{padding:16px}.permission-grid{grid-template-columns:1fr}.remote-table-wrap{max-width:calc(100vw - 28px)}}
+    @media(max-width:1100px){.admin-shell{grid-template-columns:1fr}.sidebar{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--soft-line)}.page-tabs{grid-template-columns:repeat(5,minmax(0,1fr))}.content{padding:20px}.topbar{margin:-20px -20px 18px;padding:16px 20px}.overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.generate-grid{grid-template-columns:1fr}}
+    @media(max-width:720px){html,body{overflow-x:hidden}.topbar{align-items:flex-start;flex-direction:column}.toolbar{width:100%;justify-content:space-between}.page-tabs{grid-template-columns:1fr 1fr}.overview-grid,.row{grid-template-columns:1fr}.content{width:100%;max-width:100vw;overflow-x:hidden;padding:14px}.topbar{margin:-14px -14px 16px;padding:14px}.sidebar{padding:16px}.permission-grid{grid-template-columns:1fr}.device-workspace{width:100vw;border-left:0}.workspace-header{padding:16px 14px 12px}.workspace-tabs{padding:8px}.workspace-body{padding:14px}.workspace-toolbar{align-items:flex-start;flex-direction:column}.workspace-toolbar .actions{width:100%}.remote-endpoint-dialog{width:calc(100% - 20px)}}
   </style>
 </head>
 <body>
@@ -333,6 +334,31 @@ const adminHTML = `<!doctype html>
       </div>
     </main>
   </div>
+  <div id="deviceWorkspaceBackdrop" class="workspace-backdrop" hidden onclick="closeDeviceWorkspace()"></div>
+  <aside id="deviceWorkspace" class="device-workspace" aria-label="设备远程管理操作台" hidden>
+    <header class="workspace-header">
+      <div>
+        <h2 id="workspaceDeviceTitle">设备管理</h2>
+        <div id="workspaceDeviceMeta" class="workspace-meta"></div>
+      </div>
+      <button type="button" class="secondary workspace-close" onclick="closeDeviceWorkspace()" aria-label="关闭设备操作台">关闭</button>
+    </header>
+    <nav class="workspace-tabs" aria-label="设备操作台模块">
+      <button type="button" data-workspace-tab="endpoints" onclick="showWorkspaceTab('endpoints')">端点</button>
+      <button type="button" data-workspace-tab="tokens" onclick="showWorkspaceTab('tokens')">Token Pool</button>
+      <button type="button" data-workspace-tab="errors" onclick="showWorkspaceTab('errors')">错误诊断</button>
+      <button type="button" data-workspace-tab="commands" onclick="showWorkspaceTab('commands')">命令记录</button>
+      <button type="button" data-workspace-tab="licenses" onclick="showWorkspaceTab('licenses')">授权明细</button>
+    </nav>
+    <div id="workspaceTaskBar" class="workspace-task-bar"></div>
+    <div class="workspace-body">
+      <section id="workspacePanelEndpoints" class="workspace-panel" data-workspace-panel="endpoints"></section>
+      <section id="workspacePanelTokens" class="workspace-panel" data-workspace-panel="tokens" hidden></section>
+      <section id="workspacePanelErrors" class="workspace-panel" data-workspace-panel="errors" hidden></section>
+      <section id="workspacePanelCommands" class="workspace-panel" data-workspace-panel="commands" hidden></section>
+      <section id="workspacePanelLicenses" class="workspace-panel" data-workspace-panel="licenses" hidden></section>
+    </div>
+  </aside>
   <dialog id="expiryDialog">
     <form class="dialog-body" onsubmit="submitExpiry(event)">
       <h2>修改设备到期时间</h2>
@@ -351,48 +377,88 @@ const adminHTML = `<!doctype html>
       <div class="dialog-actions"><button type="button" class="secondary" onclick="remarkDialog.close()">取消</button><button type="submit">保存</button></div>
     </form>
   </dialog>
-  <dialog id="remoteCreateEndpointDialog" class="remote-endpoint-dialog">
-    <form class="dialog-body" onsubmit="submitRemoteCreateEndpoint(event)">
-      <h2>新增远程端点</h2>
+  <dialog id="remoteEndpointDialog" class="remote-endpoint-dialog">
+    <form class="dialog-body" onsubmit="submitRemoteEndpoint(event)">
+      <h2 id="remoteEndpointDialogTitle">新增远程端点</h2>
       <div class="row">
-        <div><label for="remoteCreateName">端点名称</label><input id="remoteCreateName" required></div>
-        <div><label for="remoteCreateAuthMode">认证模式</label><select id="remoteCreateAuthMode" onchange="remoteSyncCreateAuthMode()"><option value="api_key">API Key</option><option value="token_pool">Token Pool</option><option value="codex_token_pool">Codex Token Pool</option><option value="claude_oauth_token_pool">Claude OAuth Token Pool</option></select></div>
+        <div><label for="remoteEndpointName">端点名称</label><input id="remoteEndpointName" required></div>
+        <div><label for="remoteEndpointAuthMode">认证模式</label><select id="remoteEndpointAuthMode" onchange="remoteSyncEndpointAuthMode()"><option value="api_key">API Key</option><option value="token_pool">Token Pool</option><option value="codex_token_pool">Codex Token Pool</option><option value="claude_oauth_token_pool">Claude OAuth Token Pool</option></select></div>
       </div>
-      <label for="remoteCreateAPIUrl">Base URL</label>
-      <input id="remoteCreateAPIUrl" required>
-      <label for="remoteCreateAPIKey">API Key</label>
-      <input id="remoteCreateAPIKey" type="password" autocomplete="new-password" placeholder="Token Pool 模式可留空">
+      <label for="remoteEndpointAPIUrl">Base URL</label>
+      <input id="remoteEndpointAPIUrl" required>
+      <label for="remoteEndpointAPIKey">API Key</label>
+      <input id="remoteEndpointAPIKey" type="password" autocomplete="new-password" placeholder="编辑时留空表示保持不变">
+      <div id="remoteEndpointAPIKeyHelp" class="muted">Token Pool 模式可留空</div>
       <div class="row">
-        <div><label for="remoteCreateTransformer">转换器</label><select id="remoteCreateTransformer"><option value="claude">Claude</option><option value="openai">OpenAI Chat</option><option value="openai2">OpenAI Responses</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option><option value="kimi">Kimi</option><option value="poe">Poe</option></select></div>
-        <div><label for="remoteCreateModel">模型</label><input id="remoteCreateModel" value="gpt-5"></div>
+        <div><label for="remoteEndpointTransformer">转换器</label><select id="remoteEndpointTransformer"><option value="claude">Claude</option><option value="openai">OpenAI Chat</option><option value="openai2">OpenAI Responses</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option><option value="kimi">Kimi</option><option value="poe">Poe</option></select></div>
+        <div><label for="remoteEndpointModel">模型</label><input id="remoteEndpointModel" value="gpt-5" placeholder="留空表示不强制覆盖请求模型"></div>
       </div>
       <div class="row">
-        <div><label for="remoteCreateThinking">推理强度</label><select id="remoteCreateThinking"><option value="">上游默认</option><option value="off">关闭</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh / Max</option></select></div>
-        <div><label for="remoteCreateMaxConcurrentRequests">限制并发</label><input id="remoteCreateMaxConcurrentRequests" type="number" min="0" step="1" value="0"></div>
+        <div><label for="remoteEndpointThinking">推理强度</label><select id="remoteEndpointThinking"><option value="__keep__">保持不变</option><option id="remoteEndpointThinkingDefault" value="">上游默认</option><option value="off">关闭</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh / Max</option></select></div>
+        <div><label for="remoteEndpointMaxConcurrentRequests">限制并发</label><input id="remoteEndpointMaxConcurrentRequests" type="number" min="0" step="1" value="0"></div>
       </div>
-      <label class="inline-check"><input id="remoteCreateCodexFastMode" type="checkbox" disabled> Codex 快速模式</label>
-      <div class="dialog-actions"><button type="button" class="secondary" onclick="remoteCreateEndpointDialog.close()">取消</button><button type="submit">下发新增命令</button></div>
+      <div class="row">
+        <label class="inline-check"><input id="remoteEndpointCodexFastMode" type="checkbox" disabled> Codex 快速模式</label>
+        <label class="inline-check"><input id="remoteEndpointEnabled" type="checkbox" checked> 启用端点</label>
+      </div>
+      <p id="remoteEndpointThinkingHelp" class="muted"></p>
+      <div class="dialog-actions"><button type="button" class="secondary" onclick="remoteEndpointDialog.close()">取消</button><button type="submit">查看变更并下发</button></div>
     </form>
   </dialog>
-  <dialog id="remoteEditEndpointDialog">
-    <form class="dialog-body" onsubmit="submitRemoteEndpointEdit(event)">
-      <h2>修改模型与推理</h2>
-      <div id="remoteEditEndpointName" class="mono muted"></div>
-      <label for="remoteEditModel">模型</label>
-      <input id="remoteEditModel" placeholder="留空表示不强制覆盖请求模型">
-      <label for="remoteEditThinking">推理强度</label>
-      <select id="remoteEditThinking"><option value="__keep__">保持不变</option><option id="remoteEditThinkingDefault" value="">上游默认</option><option value="off">关闭</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh / Max</option></select>
-      <p id="remoteEditThinkingHelp" class="muted"></p>
-      <div class="dialog-actions"><button type="button" class="secondary" onclick="remoteEditEndpointDialog.close()">取消</button><button type="submit">下发修改命令</button></div>
+  <dialog id="remoteSortDialog">
+    <form class="dialog-body" onsubmit="submitRemoteSort(event)">
+      <h2>调整端点顺序</h2>
+      <div class="muted">完成全部调整后只下发一次排序命令。</div>
+      <div id="remoteSortList" class="sort-list"></div>
+      <div class="dialog-actions"><button type="button" class="secondary" onclick="remoteSortDialog.close()">取消</button><button type="submit">保存顺序</button></div>
     </form>
+  </dialog>
+  <dialog id="remoteTokenDialog">
+    <form class="dialog-body" onsubmit="submitRemoteToken(event)">
+      <h2>更新凭证 Token</h2>
+      <div id="remoteTokenCredentialLabel" class="mono muted"></div>
+      <label for="remoteTokenAccessToken">新的 access token</label>
+      <input id="remoteTokenAccessToken" type="password" autocomplete="new-password" required>
+      <div class="dialog-actions"><button type="button" class="secondary" onclick="remoteTokenDialog.close()">取消</button><button type="submit">下发更新</button></div>
+    </form>
+  </dialog>
+  <dialog id="remoteConfirmDialog">
+    <div class="dialog-body">
+      <h2 id="remoteConfirmTitle">确认远程操作</h2>
+      <div id="remoteConfirmMessage" class="muted"></div>
+      <div id="remoteConfirmSummary" class="change-summary"></div>
+      <label id="remoteConfirmInputLabel" for="remoteConfirmInput" hidden>确认内容</label>
+      <input id="remoteConfirmInput" hidden>
+      <div class="dialog-actions"><button type="button" class="secondary" onclick="resolveRemoteConfirmation(false)">取消</button><button id="remoteConfirmButton" type="button" onclick="resolveRemoteConfirmation(true)">确认下发</button></div>
+    </div>
+  </dialog>
+  <dialog id="remoteSecretDialog">
+    <div class="dialog-body">
+      <h2>一次性敏感信息</h2>
+      <div id="remoteSecretStatus" class="muted">等待客户端返回加密结果</div>
+      <div id="remoteSecretValue" class="secret-value">等待中</div>
+      <div id="remoteSecretCountdown" class="muted"></div>
+      <div class="dialog-actions"><button type="button" class="secondary" onclick="clearRemoteSecret()">立即清除</button><button id="remoteSecretCopyButton" type="button" onclick="copyRemoteSecret()" disabled>复制</button></div>
+    </div>
   </dialog>
   <script>
     let historyRows = [];
     let accountRows = [];
     let currentAccount = null;
     let editingDeviceId = '';
-    let remoteCreateDeviceIndex = -1;
-    let remoteEditContext = null;
+    let workspaceDeviceIndex = -1;
+    let workspaceData = null;
+    let workspaceTab = 'endpoints';
+    let workspaceTelemetry = {loaded:false,loading:false,range:'24h',summary24h:[],summary7d:[],error:''};
+    let workspaceCommandPollError = '';
+    let remoteEndpointEditorContext = null;
+    let remoteSortNames = [];
+    let remoteTokenCredentialID = 0;
+    let remoteConfirmationResolve = null;
+    let remoteConfirmationExpected = '';
+    let remoteSecretPlaintext = '';
+    let remoteSecretClearTimer = 0;
+    const remoteCommandPollers = new Map();
     let revealedDeviceIndexes = new Set();
     const permissionCatalog = [
       ['cards:view','看卡密'],['cards:generate','生成卡密'],['cards:disable','禁用卡密'],['cards:delete','删除卡密'],
@@ -552,7 +618,7 @@ const adminHTML = `<!doctype html>
       const rows = window.deviceRows || [];
       devices.innerHTML = rows.length ? rows.map((d,index) => {
         const revealed = devicePrivacyRevealed(index);
-        return '<tr><td>'+ownerLabel(d)+'</td><td class="mono"><span id="deviceIdValue-'+index+'">'+privateValue(d.deviceId, revealed)+'</span> <button id="devicePrivacyButton-'+index+'" class="secondary small-btn" onclick="toggleDevicePrivacy('+index+')" title="'+esc(revealed ? '隐藏该行设备ID和IP' : '显示该行设备ID和IP')+'" aria-label="'+esc(revealed ? '隐藏该行设备ID和IP' : '显示该行设备ID和IP')+'">'+(revealed ? '🙈' : '👁')+'</button></td><td>'+esc(d.remark||'-')+'</td><td>'+statusCell(d.status)+'</td><td>'+dt(d.expiresAt)+'</td><td>'+dt(d.lastCheckedAt)+'</td><td>'+esc(d.platform)+'<br><span class="muted">'+esc(d.appVersion)+'</span></td><td class="mono"><span id="deviceIpValue-'+index+'">'+privateValue(d.ipAddress, revealed)+'</span></td><td>'+d.licenses.length+'</td><td><div class="actions"><button class="secondary small-btn" onclick="toggleDevice('+index+')">明细</button>'+(can('devices:remark')?'<button class="secondary small-btn" onclick="openRemark('+index+')">备注</button>':'')+(can('devices:expiry')?'<button class="small-btn" onclick="openExpiry('+index+')">修改到期</button>':'')+(d.status==='active'&&can('activations:disable')?'<button class="danger small-btn" onclick="disableActivation('+d.currentActivationId+')">禁用当前</button>':'')+'</div></td></tr><tr id="device-detail-'+index+'" class="device-detail" hidden><td colspan="10"><div class="detail-inner"><div id="remote-detail-'+index+'">'+(can('devices:remote:view')?'<div class="detail-label">远程端点维护</div><div class="muted">展开后加载远程状态</div>':'')+'</div><div class="detail-label">卡密兑换与失效明细</div><table><thead><tr><th>卡ID</th><th>状态</th><th>套餐</th><th>兑换时间</th><th>该次累计到期</th><th>客户/备注</th><th>操作</th></tr></thead><tbody>'+licenseRows(d)+'</tbody></table></div></td></tr>';
+        return '<tr><td>'+ownerLabel(d)+'</td><td class="mono"><span id="deviceIdValue-'+index+'">'+privateValue(d.deviceId, revealed)+'</span> <button id="devicePrivacyButton-'+index+'" class="secondary small-btn" onclick="toggleDevicePrivacy('+index+')" title="'+esc(revealed ? '隐藏该行设备ID和IP' : '显示该行设备ID和IP')+'" aria-label="'+esc(revealed ? '隐藏该行设备ID和IP' : '显示该行设备ID和IP')+'">'+(revealed ? '🙈' : '👁')+'</button></td><td>'+esc(d.remark||'-')+'</td><td>'+statusCell(d.status)+'</td><td>'+dt(d.expiresAt)+'</td><td>'+dt(d.lastCheckedAt)+'</td><td>'+esc(d.platform)+'<br><span class="muted">'+esc(d.appVersion)+'</span></td><td class="mono"><span id="deviceIpValue-'+index+'">'+privateValue(d.ipAddress, revealed)+'</span></td><td>'+d.licenses.length+'</td><td><div class="actions"><button class="secondary small-btn" onclick="openDeviceWorkspace('+index+')">管理</button>'+(can('devices:remark')?'<button class="secondary small-btn" onclick="openRemark('+index+')">备注</button>':'')+(can('devices:expiry')?'<button class="small-btn" onclick="openExpiry('+index+')">修改到期</button>':'')+(d.status==='active'&&can('activations:disable')?'<button class="danger small-btn" onclick="disableActivation('+d.currentActivationId+')">禁用当前</button>':'')+'</div></td></tr>';
       }).join('') : '<tr><td colspan="10" class="empty">暂无授权设备</td></tr>';
       syncDevicePrivacyBulkButton();
       renderOverview();
@@ -563,95 +629,481 @@ const adminHTML = `<!doctype html>
       renderOverview();
     }
     function renderHistory(){const rows=showRefreshInput.checked?historyRows:historyRows.filter(h=>h.action!=='refresh');historyBody.innerHTML=rows.length?rows.map(h=>'<tr><td>'+h.id+'</td><td>'+esc(actionName(h.action))+'</td><td>'+esc(h.targetType)+' #'+h.targetId+'</td><td class="mono">'+esc(h.detail||'-')+'</td><td>'+dt(h.createdAt)+'</td></tr>').join(''):'<tr><td colspan="5" class="empty">暂无历史记录</td></tr>'}
-    async function toggleDevice(index){const row=document.getElementById('device-detail-'+index);row.hidden=!row.hidden;if(!row.hidden&&can('devices:remote:view'))await loadRemoteDetail(index)}
-    async function loadRemoteDetail(index){const box=document.getElementById('remote-detail-'+index);const device=window.deviceRows[index];if(!box||!device)return;box.innerHTML='<div class="detail-label">远程端点维护</div><div class="muted">加载中</div>';try{const data=await api('/api/admin/devices/'+encodeURIComponent(device.deviceId)+'/remote');const now=Date.now();const from24=new Date(now-24*60*60*1000).toISOString();const from7=new Date(now-7*24*60*60*1000).toISOString();let telemetry={summary24h:[],summary7d:[]};try{const base='/api/admin/telemetry/endpoint-errors/summary?deviceId='+encodeURIComponent(device.deviceId)+'&limit=50&from=';const results=await Promise.all([api(base+encodeURIComponent(from24)),api(base+encodeURIComponent(from7))]);telemetry={summary24h:results[0].summary||[],summary7d:results[1].summary||[]}}catch(telemetryErr){telemetry={summary24h:[],summary7d:[],error:telemetryErr.message||String(telemetryErr)}}data.endpointErrorSummary24h=telemetry.summary24h||[];data.endpointErrorSummary7d=telemetry.summary7d||[];data.endpointErrorTelemetryError=telemetry.error||'';window.remoteDetailData=window.remoteDetailData||{};window.remoteDetailData[index]=data;box.innerHTML=renderRemoteDetail(index,device,data)}catch(err){box.innerHTML='<div class="detail-label">远程端点维护</div><div class="status-disabled">'+esc(err.message||err)+'</div>'}}
+    function currentWorkspaceDevice(){return workspaceDeviceIndex>=0?(window.deviceRows||[])[workspaceDeviceIndex]:null}
+    function maskedDeviceID(value){const text=String(value||'');if(text.length<=10)return text?'**':'-';return text.slice(0,5)+'…'+text.slice(-5)}
+    async function openDeviceWorkspace(index){
+      const device=(window.deviceRows||[])[index];
+      if(!device)return;
+      stopRemoteCommandPollers();
+      workspaceDeviceIndex=index;
+      workspaceData=null;
+      workspaceTab='endpoints';
+      workspaceTelemetry={loaded:false,loading:false,range:'24h',summary24h:[],summary7d:[],error:''};
+      workspaceCommandPollError='';
+      deviceWorkspaceBackdrop.hidden=false;
+      deviceWorkspace.hidden=false;
+      document.body.classList.add('workspace-open');
+      renderWorkspaceHeader();
+      renderWorkspaceLicenses();
+      workspacePanelEndpoints.innerHTML='<div class="workspace-empty">正在加载远程状态</div>';
+      workspacePanelTokens.innerHTML='<div class="workspace-empty">正在加载远程状态</div>';
+      workspacePanelCommands.innerHTML='<div class="workspace-empty">正在加载命令记录</div>';
+      workspacePanelErrors.innerHTML='<div class="workspace-empty">进入此标签后加载错误诊断</div>';
+      showWorkspaceTab('endpoints');
+      await loadWorkspaceRemote();
+    }
+    function closeDeviceWorkspace(){
+      stopRemoteCommandPollers();
+      clearRemoteSecret();
+      deviceWorkspace.hidden=true;
+      deviceWorkspaceBackdrop.hidden=true;
+      document.body.classList.remove('workspace-open');
+      workspaceDeviceIndex=-1;
+      workspaceData=null;
+    }
+    function showWorkspaceTab(tab){
+      const allowed=new Set(['endpoints','tokens','errors','commands','licenses']);
+      workspaceTab=allowed.has(tab)?tab:'endpoints';
+      document.querySelectorAll('[data-workspace-tab]').forEach(button=>button.classList.toggle('active',button.getAttribute('data-workspace-tab')===workspaceTab));
+      document.querySelectorAll('[data-workspace-panel]').forEach(panel=>{panel.hidden=panel.getAttribute('data-workspace-panel')!==workspaceTab});
+      if(workspaceTab==='errors')loadWorkspaceTelemetry();
+    }
+    function workspaceOnlineState(state){
+      state=state||{};
+      const values=[state.lastSnapshotAt,state.lastHeartbeatAt].map(v=>v?Date.parse(v):0).filter(v=>Number.isFinite(v)&&v>0);
+      const latest=values.length?Math.max(...values):0;
+      const age=latest?Date.now()-latest:Number.POSITIVE_INFINITY;
+      if(age<=2*60*1000)return {key:'online',label:'在线'};
+      if(age<=10*60*1000)return {key:'stale',label:'状态较旧'};
+      return {key:'offline',label:'可能离线'};
+    }
+    function renderWorkspaceHeader(){
+      const device=currentWorkspaceDevice();
+      if(!device)return;
+      const state=(workspaceData&&workspaceData.state)||{};
+      const online=workspaceOnlineState(state);
+      workspaceDeviceTitle.textContent=device.remark||'设备管理';
+      workspaceDeviceMeta.innerHTML='<span class="mono">'+esc(maskedDeviceID(device.deviceId))+'</span><span class="status-'+online.key+'">'+online.label+'</span><span>客户端 '+esc(state.clientVersion||device.appVersion||'-')+'</span><span>快照 '+dt(state.lastSnapshotAt)+'</span><span>心跳 '+dt(state.lastHeartbeatAt)+'</span><span>能力 '+esc((state.capabilities||[]).join(', ')||'-')+'</span>';
+    }
+    async function loadWorkspaceRemote(){
+      const device=currentWorkspaceDevice();
+      if(!device||!can('devices:remote:view'))return;
+      try{
+        workspaceData=await api('/api/admin/devices/'+encodeURIComponent(device.deviceId)+'/remote');
+        workspaceCommandPollError='';
+        renderWorkspaceHeader();
+        renderWorkspaceEndpoints();
+        renderWorkspaceTokenPools();
+        renderWorkspaceCommands();
+        renderWorkspaceTasks();
+        resumeWorkspaceCommands();
+      }catch(err){
+        workspacePanelEndpoints.innerHTML='<div class="status-failed">'+esc(err.message||err)+'</div>';
+        workspacePanelTokens.innerHTML='<div class="status-failed">'+esc(err.message||err)+'</div>';
+        workspacePanelCommands.innerHTML='<div class="status-failed">'+esc(err.message||err)+'</div>';
+      }
+    }
     function remoteSupportsThinkingV2(state){return ((state&&state.capabilities)||[]).includes('endpoints:thinking:v2')}
     function thinkingDisplay(state,ep){const hasThinking=Object.prototype.hasOwnProperty.call(ep,'thinking');if(!hasThinking&&!remoteSupportsThinkingV2(state))return '未上报';const value=String(ep.thinking||'').trim().toLowerCase();return ({'':'上游默认',off:'关闭',low:'Low',medium:'Medium',high:'High',xhigh:'XHigh / Max'}[value]||value)}
-    function renderRemoteDetail(index,device,data){
-      const state=(data&&data.state)||{};
-      if(!state.supported)return '<div class="detail-label">远程端点维护</div><div class="muted">该客户端版本暂不支持远程维护，不影响正常授权和本地使用。</div>';
-      const snap=state.snapshot||{};
-      const endpoints=snap.endpoints||[];
-      const pools=snap.tokenPools||[];
-      const endpointErrorSummary24h=(data&&data.endpointErrorSummary24h)||[];
-      const endpointErrorSummary7d=(data&&data.endpointErrorSummary7d)||[];
-      const remoteStatus='<div class="detail-label">远程端点维护</div><div class="muted">状态：'+(state.enabled?'已启用':'已关闭')+' · 版本：'+esc(state.clientVersion||'-')+' · 心跳：'+dt(state.lastHeartbeatAt)+'</div>'+(can('devices:remote:write')?'<div class="actions"><button class="small-btn" onclick="remoteCreateEndpoint('+index+')">新增端点</button></div>':'');
-      const endpointRows=endpoints.length?endpoints.map((ep,epIndex)=>'<tr><td>'+esc(ep.name)+'</td><td>'+esc(ep.enabled?'启用':'停用')+'</td><td class="mono">'+esc(ep.model||'-')+'</td><td>'+esc(thinkingDisplay(state,ep))+'</td><td class="mono">'+esc(ep.apiUrl||'-')+'</td><td class="mono">'+esc(ep.apiKeyMasked||'-')+'</td><td>'+esc(ep.authMode||'-')+'</td><td>'+esc(ep.codexFastMode?'开启':'关闭')+'</td><td>'+esc((ep.maxConcurrentRequests||0)>0?ep.maxConcurrentRequests:'不限')+'</td><td>'+remoteStats(ep.stats)+'</td><td><div class="actions">'+(can('devices:remote:write')?'<button class="secondary small-btn" '+(epIndex===0?'disabled ':'')+'onclick="remoteMoveEndpoint('+index+','+epIndex+',-1)">上移</button><button class="secondary small-btn" '+(epIndex===endpoints.length-1?'disabled ':'')+'onclick="remoteMoveEndpoint('+index+','+epIndex+',1)">下移</button><button class="secondary small-btn" onclick="remoteOpenEndpointEditor('+index+','+epIndex+')">模型/推理</button><button class="secondary small-btn" onclick="remoteUpdateEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,&quot;apiUrl&quot;)">改URL</button><button class="secondary small-btn" onclick="remoteUpdateEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,&quot;apiKey&quot;)">改Key</button><button class="secondary small-btn" onclick="remoteUpdateEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,&quot;maxConcurrentRequests&quot;)">改并发</button>'+(ep.authMode==='codex_token_pool'?'<button class="secondary small-btn" onclick="remoteSetCodexFastMode('+index+',&quot;'+escAttr(ep.name)+'&quot;,'+(!ep.codexFastMode)+')">'+(ep.codexFastMode?'关闭快速':'开启快速')+'</button>':'')+'<button class="secondary small-btn" onclick="remoteToggleEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;,'+(!ep.enabled)+')">'+(ep.enabled?'停用':'启用')+'</button><button class="danger small-btn" onclick="remoteDeleteEndpoint('+index+',&quot;'+escAttr(ep.name)+'&quot;)">删除</button>':'')+(can('devices:remote:secrets')?'<button class="secondary small-btn" onclick="remoteRevealSecret('+index+',&quot;'+escAttr(ep.name)+'&quot;,0,&quot;apiKey&quot;)">查看Key</button>':'')+'</div></td></tr>').join(''):'<tr><td colspan="11" class="empty">暂无端点快照</td></tr>';
-      const poolRows=pools.length?pools.map(pool=>'<tr><td>'+esc(pool.endpointName)+'</td><td colspan="6">'+renderRemoteCredentials(index,pool)+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">暂无 Token Pool 快照</td></tr>';
-      return remoteStatus+'<div class="remote-table-wrap"><table><thead><tr><th>端点</th><th>状态</th><th>模型</th><th>推理</th><th>Base URL</th><th>API Key</th><th>模式</th><th>快速</th><th>并发</th><th>用量</th><th>操作</th></tr></thead><tbody>'+endpointRows+'</tbody></table></div><div class="detail-label" style="margin-top:12px">端点错误遥测</div>'+renderEndpointErrorTelemetry(endpointErrorSummary24h,endpointErrorSummary7d,data.endpointErrorTelemetryError)+'<div class="detail-label" style="margin-top:12px">Codex Token Pool</div><table><thead><tr><th>端点</th><th colspan="6">账号/额度/维护</th></tr></thead><tbody>'+poolRows+'</tbody></table>';
+    function renderWorkspaceEndpoints(){
+      const state=(workspaceData&&workspaceData.state)||{};
+      if(!state.supported){workspacePanelEndpoints.innerHTML='<div class="workspace-empty">该客户端版本暂不支持远程维护，不影响授权和本地配置。</div>';return}
+      const endpoints=((state.snapshot||{}).endpoints)||[];
+      const toolbar=can('devices:remote:write')?'<div class="actions"><button class="secondary small-btn" onclick="openRemoteSortDialog()" '+(endpoints.length<2||hasPendingRemoteOrder()?'disabled':'')+'>调整顺序</button><button class="small-btn" onclick="openRemoteEndpointEditor(workspaceDeviceIndex,-1)">新增端点</button></div>':'';
+      const rows=endpoints.length?endpoints.map((ep,epIndex)=>{
+        const pending=hasPendingRemoteTarget('endpoint',ep.name,0);
+        const disabled=pending?'disabled':'';
+        const actions=can('devices:remote:write')?'<div class="actions"><button class="secondary small-btn" '+disabled+' onclick="remoteToggleEndpoint(workspaceDeviceIndex,&quot;'+escAttr(ep.name)+'&quot;,'+(!ep.enabled)+')">'+(pending?'处理中':(ep.enabled?'停用':'启用'))+'</button><button class="small-btn" '+disabled+' onclick="openRemoteEndpointEditor(workspaceDeviceIndex,'+epIndex+')">编辑</button><details class="action-menu"><summary>更多</summary><div class="action-menu-popover">'+(can('devices:remote:secrets')?'<button type="button" onclick="remoteRevealSecret(workspaceDeviceIndex,&quot;'+escAttr(ep.name)+'&quot;,0,&quot;apiKey&quot;)">查看 Key</button>':'')+'<button type="button" class="danger" '+disabled+' onclick="remoteDeleteEndpoint(workspaceDeviceIndex,&quot;'+escAttr(ep.name)+'&quot;)">删除端点</button></div></details></div>':'-';
+        return '<tr><td><div class="endpoint-main"><strong>'+esc(ep.name)+'</strong><span class="status-'+(ep.enabled?'online':'offline')+'">'+(ep.enabled?'启用':'停用')+'</span>'+(pending?'<span class="pending-note">远程命令处理中</span>':'')+'</div></td><td class="endpoint-config"><div class="mono">'+esc(ep.apiUrl||'-')+'</div><div class="muted">'+esc(ep.authMode||'-')+' · '+esc(ep.transformer||'-')+' · Key '+esc(ep.apiKeyMasked||'-')+'</div></td><td><div class="mono">'+esc(ep.model||'-')+'</div><div class="muted">'+esc(thinkingDisplay(state,ep))+'</div></td><td>'+esc(ep.codexFastMode?'开启':'关闭')+'<br><span class="muted">并发 '+esc((ep.maxConcurrentRequests||0)>0?ep.maxConcurrentRequests:'不限')+'</span></td><td>'+remoteStats(ep.stats)+'</td><td>'+actions+'</td></tr>';
+      }).join(''):'<tr><td colspan="6" class="empty">暂无端点快照</td></tr>';
+      workspacePanelEndpoints.innerHTML='<div class="workspace-toolbar"><div><h3>远程端点</h3><div class="muted">配置以客户端回传快照为准，不对尚未应用的命令做乐观更新。</div></div>'+toolbar+'</div><div class="remote-table-wrap"><table><thead><tr><th>端点</th><th>目标与模式</th><th>模型</th><th>快速/并发</th><th>用量</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
     }
-    function renderRemoteCredentials(index,pool){const creds=pool.credentials||[];if(!creds.length)return '<span class="muted">暂无账号</span>';return '<table><thead><tr><th>ID</th><th>账号</th><th>邮箱</th><th>状态</th><th>用量</th><th>额度</th><th>操作</th></tr></thead><tbody>'+creds.map(c=>'<tr><td>'+c.id+'</td><td class="mono">'+esc(c.accountIdMasked||'-')+'</td><td>'+esc(c.emailMasked||'-')+'</td><td>'+esc(c.status||'-')+(c.enabled?'':' / 停用')+'</td><td>'+remoteStats(c.usage)+'</td><td class="mono">'+esc(remoteQuota(c.quota))+'</td><td><div class="actions">'+(can('devices:remote:write')?'<button class="secondary small-btn" onclick="remoteCredentialEnabled('+index+','+c.id+','+(!c.enabled)+')">'+(c.enabled?'停用':'启用')+'</button><button class="secondary small-btn" onclick="remoteUpdateCredentialToken('+index+','+c.id+')">改Token</button><button class="danger small-btn" onclick="remoteDeleteCredential('+index+','+c.id+')">删除</button>':'')+(can('devices:remote:secrets')?'<button class="secondary small-btn" onclick="remoteRevealSecret('+index+',&quot;'+escAttr(pool.endpointName)+'&quot;,'+c.id+',&quot;accessToken&quot;)">查看Token</button>':'')+'</div></td></tr>').join('')+'</tbody></table>'}
+    function renderWorkspaceTokenPools(){
+      const state=(workspaceData&&workspaceData.state)||{};
+      if(!state.supported){workspacePanelTokens.innerHTML='<div class="workspace-empty">该客户端未提供 Token Pool 快照。</div>';return}
+      const pools=((state.snapshot||{}).tokenPools)||[];
+      if(!pools.length){workspacePanelTokens.innerHTML='<div class="workspace-empty">暂无 Token Pool 快照。</div>';return}
+      workspacePanelTokens.innerHTML='<div class="workspace-toolbar"><div><h3>Token Pool</h3><div class="muted">只提供现有凭证的启停、Token 更新、删除和一次性查看。</div></div></div>'+pools.map(pool=>'<div class="detail-label">'+esc(pool.endpointName)+' · '+esc(pool.authMode||'-')+'</div>'+renderWorkspaceCredentials(pool)).join('');
+    }
+    function renderWorkspaceCredentials(pool){
+      const creds=pool.credentials||[];
+      if(!creds.length)return '<div class="workspace-empty">该端点暂无凭证</div>';
+      const rows=creds.map(c=>{
+        const pending=hasPendingRemoteTarget('credential','',c.id);
+        const disabled=pending?'disabled':'';
+        const actions=can('devices:remote:write')?'<div class="actions"><button class="secondary small-btn" '+disabled+' onclick="remoteCredentialEnabled(workspaceDeviceIndex,'+c.id+','+(!c.enabled)+')">'+(pending?'处理中':(c.enabled?'停用':'启用'))+'</button><button class="small-btn" '+disabled+' onclick="openRemoteTokenDialog('+c.id+')">更新 Token</button><details class="action-menu"><summary>更多</summary><div class="action-menu-popover">'+(can('devices:remote:secrets')?'<button type="button" onclick="remoteRevealSecret(workspaceDeviceIndex,&quot;'+escAttr(pool.endpointName)+'&quot;,'+c.id+',&quot;accessToken&quot;)">查看 Token</button>':'')+'<button type="button" class="danger" '+disabled+' onclick="remoteDeleteCredential(workspaceDeviceIndex,'+c.id+')">删除凭证</button></div></details></div>':'-';
+        return '<tr><td>'+c.id+(pending?'<div class="pending-note">处理中</div>':'')+'</td><td class="mono">'+esc(c.accountIdMasked||'-')+'</td><td>'+esc(c.emailMasked||'-')+'</td><td>'+esc(c.status||'-')+(c.enabled?'':' / 停用')+'</td><td>'+remoteStats(c.usage)+'</td><td class="mono">'+esc(remoteQuota(c.quota))+'</td><td>'+actions+'</td></tr>';
+      }).join('');
+      return '<div class="remote-table-wrap"><table><thead><tr><th>ID</th><th>账号</th><th>邮箱</th><th>状态</th><th>用量</th><th>额度</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    }
     function remoteStats(stats){stats=stats||{};return '请求 '+(stats.requests||0)+' / Token '+((stats.inputTokens||0)+(stats.outputTokens||0))+' / 错误 '+(stats.errors||0)}
-    function renderEndpointErrorTelemetry(rows24h,rows7d,errorText){rows24h=rows24h||[];rows7d=rows7d||[];if(errorText)return '<div class="status-disabled">'+esc(errorText)+'</div>';if(!rows24h.length&&!rows7d.length)return '<div class="muted">暂无端点错误遥测</div>';return renderEndpointErrorTelemetryTable('近24小时',rows24h)+renderEndpointErrorTelemetryTable('近7天',rows7d)}
+    async function loadWorkspaceTelemetry(){
+      const device=currentWorkspaceDevice();
+      if(!device||workspaceTelemetry.loading)return;
+      if(workspaceTelemetry.loaded){renderWorkspaceTelemetry();return}
+      workspaceTelemetry.loading=true;
+      workspacePanelErrors.innerHTML='<div class="workspace-empty">正在加载端点错误遥测</div>';
+      try{
+        const now=Date.now();
+        const from24=new Date(now-24*60*60*1000).toISOString();
+        const from7=new Date(now-7*24*60*60*1000).toISOString();
+        const base='/api/admin/telemetry/endpoint-errors/summary?deviceId='+encodeURIComponent(device.deviceId)+'&limit=50&from=';
+        const results=await Promise.all([api(base+encodeURIComponent(from24)),api(base+encodeURIComponent(from7))]);
+        workspaceTelemetry.summary24h=results[0].summary||[];
+        workspaceTelemetry.summary7d=results[1].summary||[];
+        workspaceTelemetry.error='';
+        workspaceTelemetry.loaded=true;
+      }catch(err){
+        workspaceTelemetry.error=err.message||String(err);
+        workspaceTelemetry.loaded=true;
+      }finally{
+        workspaceTelemetry.loading=false;
+        renderWorkspaceTelemetry();
+      }
+    }
+    function setWorkspaceTelemetryRange(range){workspaceTelemetry.range=range==='7d'?'7d':'24h';renderWorkspaceTelemetry()}
+    function renderWorkspaceTelemetry(){
+      const rows=workspaceTelemetry.range==='7d'?workspaceTelemetry.summary7d:workspaceTelemetry.summary24h;
+      const title=workspaceTelemetry.range==='7d'?'近7天':'近24小时';
+      const content=workspaceTelemetry.error?'<div class="status-failed">'+esc(workspaceTelemetry.error)+'</div>':(rows.length?renderEndpointErrorTelemetryTable(title,rows):'<div class="workspace-empty">暂无端点错误遥测</div>');
+      workspacePanelErrors.innerHTML='<div class="workspace-toolbar"><div><h3>端点错误遥测</h3><div class="muted">诊断数据按需加载，不影响端点配置刷新。</div></div><div class="telemetry-range"><button class="secondary small-btn '+(workspaceTelemetry.range==='24h'?'active':'')+'" onclick="setWorkspaceTelemetryRange(&quot;24h&quot;)">近24小时</button><button class="secondary small-btn '+(workspaceTelemetry.range==='7d'?'active':'')+'" onclick="setWorkspaceTelemetryRange(&quot;7d&quot;)">近7天</button></div></div>'+content;
+    }
     function renderEndpointErrorTelemetryTable(title,rows){rows=rows||[];return '<div class="muted" style="margin:6px 0">'+esc(title)+'</div><table><thead><tr><th>端点</th><th>API Host</th><th>原因</th><th>状态码</th><th>次数</th><th>最近</th><th>样例</th></tr></thead><tbody>'+(rows.length?rows.map(row=>'<tr><td>'+esc(row.endpointName||'-')+'</td><td>'+esc(row.apiHost||'-')+'</td><td>'+esc(row.reason||'-')+'</td><td>'+esc(row.statusCode||'-')+'</td><td>'+esc(row.count||0)+'</td><td>'+dt(row.lastAt)+'</td><td class="mono">'+esc(row.sample||'-')+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">暂无</td></tr>')+'</tbody></table>'}
     function remoteQuota(q){if(!q)return '-';try{return JSON.stringify(q.data||q).slice(0,160)}catch(e){return '-'}}
     function escAttr(v){return String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-    async function queueRemote(index,commandType,payload){const device=window.deviceRows[index];const command=await api('/api/admin/devices/'+encodeURIComponent(device.deviceId)+'/remote/commands',{method:'POST',body:JSON.stringify({commandType,payload})});message.textContent='远程命令已下发，等待客户端拉取';await pollRemoteCommand(device.deviceId,command.id,null);await loadRemoteDetail(index)}
-    async function remoteUpdateEndpoint(index,name,field){const label=field==='apiUrl'?'新的 Base URL':(field==='maxConcurrentRequests'?'限制并发（0 表示不限制）':'新的 API Key');const value=prompt(label);if(value===null)return;const payload={endpointName:name};if(field==='maxConcurrentRequests'){const n=Number(value);if(!Number.isInteger(n)||n<0){setError(new Error('限制并发必须是 0 或正整数'));return}payload[field]=n}else{payload[field]=value}try{await queueRemote(index,'endpoint.update',payload)}catch(err){setError(err)}}
-    async function remoteToggleEndpoint(index,name,enabled){try{await queueRemote(index,'endpoint.update',{endpointName:name,enabled})}catch(err){setError(err)}}
-    async function remoteSetCodexFastMode(index,name,enabled){try{await queueRemote(index,'endpoint.update',{endpointName:name,codexFastMode:enabled})}catch(err){setError(err)}}
-    function remoteSyncCreateAuthMode(){const isCodex=remoteCreateAuthMode.value==='codex_token_pool';remoteCreateCodexFastMode.disabled=!isCodex;if(!isCodex)remoteCreateCodexFastMode.checked=false}
-    function remoteCreateEndpoint(index){remoteCreateDeviceIndex=index;remoteCreateName.value='';remoteCreateAPIUrl.value='';remoteCreateAPIKey.value='';remoteCreateAuthMode.value='api_key';remoteCreateTransformer.value='openai';remoteCreateModel.value='gpt-5';remoteCreateThinking.value='';remoteCreateMaxConcurrentRequests.value='0';remoteCreateCodexFastMode.checked=false;remoteSyncCreateAuthMode();remoteCreateEndpointDialog.showModal()}
-    async function submitRemoteCreateEndpoint(event){
-      event.preventDefault();
-      const name=remoteCreateName.value.trim();
-      const apiUrl=remoteCreateAPIUrl.value.trim();
-      const apiKey=remoteCreateAPIKey.value.trim();
-      const authMode=remoteCreateAuthMode.value;
-      const transformer=remoteCreateTransformer.value;
-      const model=remoteCreateModel.value.trim();
-      const thinking=remoteCreateThinking.value;
-      const maxConcurrentRequests=Number(remoteCreateMaxConcurrentRequests.value||0);
-      if(!name||!apiUrl){setError(new Error('端点名称和 Base URL 不能为空'));return}
-      if(authMode==='api_key'&&!apiKey){setError(new Error('API Key 模式必须填写 API Key'));return}
-      if(!Number.isInteger(maxConcurrentRequests)||maxConcurrentRequests<0){setError(new Error('限制并发必须是 0 或正整数'));return}
-      try{
-        await queueRemote(remoteCreateDeviceIndex,'endpoint.create',{name,apiUrl,apiKey,authMode,transformer,model,thinking,maxConcurrentRequests,enabled:true,codexFastMode:remoteCreateCodexFastMode.checked});
-        remoteCreateEndpointDialog.close();
-      }catch(err){setError(err)}
+    function remoteCommandStatusName(status){return ({queued:'等待客户端',delivered:'客户端执行中',applied:'已应用',failed:'失败',expired:'已过期'}[status]||status||'-')}
+    function remoteCommandStatusClass(status){return ({queued:'queued',delivered:'delivered',applied:'applied',failed:'failed',expired:'failed'}[status]||'offline')}
+    function remoteFieldName(field){return ({name:'名称',apiUrl:'Base URL',apiKey:'API Key',authMode:'认证模式',transformer:'转换器',model:'模型',thinking:'推理强度',codexFastMode:'快速模式',maxConcurrentRequests:'限制并发',enabled:'启停状态',order:'端点顺序',accessToken:'Token',secret:'敏感信息'}[field]||field)}
+    function remoteCommandSummaryText(command){
+      const summary=(command&&command.summary)||{};
+      let target=summary.targetName||'';
+      if(!target&&summary.credentialId)target='凭证 #'+summary.credentialId;
+      if(!target)target=summary.targetType==='endpoint'?'端点':'远程配置';
+      const fields=(summary.changedFields||[]).map(remoteFieldName);
+      return target+(fields.length?'：'+fields.join('、'):'');
     }
-    function remoteOpenEndpointEditor(index,endpointIndex){
-      const data=window.remoteDetailData&&window.remoteDetailData[index];
-      const state=((data||{}).state)||{};
-      const endpoints=((state.snapshot||{}).endpoints)||[];
-      const ep=endpoints[endpointIndex];
-      if(!ep)return;
-      const hasThinking=Object.prototype.hasOwnProperty.call(ep,'thinking');
-      const supportsThinkingV2=remoteSupportsThinkingV2(state);
-      const originalThinking=hasThinking?String(ep.thinking||''):'';
-      remoteEditContext={index,endpointName:ep.name,originalModel:String(ep.model||''),originalThinking,thinkingKnown:hasThinking||supportsThinkingV2,supportsNullableUpdates:supportsThinkingV2};
-      remoteEditEndpointName.textContent=ep.name;
-      remoteEditModel.value=remoteEditContext.originalModel;
-      document.getElementById('remoteEditThinkingDefault').disabled=!supportsThinkingV2;
-      remoteEditThinking.value=supportsThinkingV2?originalThinking:(hasThinking&&originalThinking?originalThinking:'__keep__');
-      remoteEditThinkingHelp.textContent=supportsThinkingV2?'该客户端支持显示推理强度并恢复上游默认。':'旧客户端未上报推理强度；默认保持不变，仍可下发明确强度。';
-      remoteEditEndpointDialog.showModal();
+    function renderWorkspaceCommands(){
+      const commands=(workspaceData&&workspaceData.commands)||[];
+      if(!commands.length){workspacePanelCommands.innerHTML='<div class="workspace-empty">暂无远程命令记录</div>';return}
+      const rows=commands.map(command=>{
+        const retry=(command.status==='failed'||command.status==='expired')?remoteRetryButton(command):'';
+        return '<tr><td><span class="status-'+remoteCommandStatusClass(command.status)+'">'+esc(remoteCommandStatusName(command.status))+'</span></td><td>'+esc(remoteCommandSummaryText(command))+'<br><span class="mono muted">'+esc(command.commandType)+'</span></td><td>'+esc(command.actorName||'-')+'</td><td>'+dt(command.createdAt)+'<br><span class="muted">更新 '+dt(command.updatedAt)+'</span></td><td class="status-failed">'+esc(command.error||'-')+'</td><td>'+retry+'</td></tr>';
+      }).join('');
+      workspacePanelCommands.innerHTML='<div class="workspace-toolbar"><div><h3>命令记录</h3><div class="muted">最近 20 条远程操作；摘要不包含密钥、Token、URL 或修改值。</div></div><button class="secondary small-btn" onclick="loadWorkspaceRemote()">刷新</button></div><div class="remote-table-wrap"><table><thead><tr><th>状态</th><th>操作摘要</th><th>操作者</th><th>时间</th><th>错误</th><th>重试</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
     }
-    async function submitRemoteEndpointEdit(event){
-      event.preventDefault();
-      if(!remoteEditContext)return;
-      const model=remoteEditModel.value.trim();
-      const thinking=remoteEditThinking.value;
-      const payload={endpointName:remoteEditContext.endpointName};
-      let changed=false;
-      if(model===''&&remoteEditContext.originalModel!==''&&!remoteEditContext.supportsNullableUpdates){setError(new Error('旧客户端不支持远程清空模型，请升级客户端或填写新的模型名'));return}
-      if(model!==remoteEditContext.originalModel){payload.model=model;changed=true}
-      if(thinking!=='__keep__'){
-        if(!remoteEditContext.thinkingKnown||thinking!==remoteEditContext.originalThinking){payload.thinking=thinking;changed=true}
+    function remoteRetryButton(command){
+      const summary=command.summary||{};
+      if(command.commandType==='endpoint.update'&&summary.targetName)return '<button class="secondary small-btn" onclick="retryRemoteCommand('+command.id+')">重新编辑</button>';
+      if(command.commandType==='endpoint.create')return '<button class="secondary small-btn" onclick="retryRemoteCommand('+command.id+')">重新新增</button>';
+      if(command.commandType==='endpoint.reorder')return '<button class="secondary small-btn" onclick="retryRemoteCommand('+command.id+')">重新排序</button>';
+      if(command.commandType==='credential.updateToken'&&summary.credentialId)return '<button class="secondary small-btn" onclick="retryRemoteCommand('+command.id+')">重新编辑</button>';
+      return '-';
+    }
+    function retryRemoteCommand(commandID){
+      const command=((workspaceData&&workspaceData.commands)||[]).find(item=>item.id===commandID);
+      if(!command)return;
+      const summary=command.summary||{};
+      if(command.commandType==='endpoint.update'){
+        const endpoints=((((workspaceData||{}).state||{}).snapshot||{}).endpoints)||[];
+        const index=endpoints.findIndex(ep=>ep.name===summary.targetName);
+        if(index>=0)openRemoteEndpointEditor(workspaceDeviceIndex,index);
+      }else if(command.commandType==='endpoint.create'){
+        openRemoteEndpointEditor(workspaceDeviceIndex,-1);
+      }else if(command.commandType==='endpoint.reorder'){
+        openRemoteSortDialog();
+      }else if(command.commandType==='credential.updateToken'&&summary.credentialId){
+        openRemoteTokenDialog(summary.credentialId);
       }
-      if(!changed){remoteEditEndpointDialog.close();message.textContent='模型和推理配置没有变化';return}
+    }
+    function renderWorkspaceLicenses(){
+      const device=currentWorkspaceDevice();
+      if(!device)return;
+      const rows=(device.licenses||[]).length?licenseRows(device):'<tr><td colspan="7" class="empty">暂无授权明细</td></tr>';
+      workspacePanelLicenses.innerHTML='<div class="workspace-toolbar"><div><h3>授权明细</h3><div class="muted">卡密兑换、累计到期和失效记录。</div></div></div><div class="remote-table-wrap"><table><thead><tr><th>卡ID</th><th>状态</th><th>套餐</th><th>兑换时间</th><th>该次累计到期</th><th>客户/备注</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    }
+    function renderWorkspaceTasks(){
+      const commands=(workspaceData&&workspaceData.commands)||[];
+      const active=commands.filter(command=>command.status==='queued'||command.status==='delivered');
+      let html=active.slice(0,4).map(command=>'<div class="workspace-task"><div><strong>'+esc(remoteCommandStatusName(command.status))+'</strong> · '+esc(remoteCommandSummaryText(command))+'<div class="muted">'+(command.status==='queued'?'前 5 分钟内上线即可执行':'客户端已经领取命令')+'</div></div><span class="mono">#'+command.id+'</span></div>').join('');
+      if(workspaceCommandPollError)html+='<div class="workspace-task error"><div><strong>状态暂不可用</strong><div>'+esc(workspaceCommandPollError)+'</div></div></div>';
+      workspaceTaskBar.innerHTML=html;
+    }
+    function pendingRemoteCommands(){return ((workspaceData&&workspaceData.commands)||[]).filter(command=>command.status==='queued'||command.status==='delivered')}
+    function hasPendingRemoteTarget(targetType,targetName,credentialID){
+      return pendingRemoteCommands().some(command=>{
+        const summary=command.summary||{};
+        if(summary.targetType!==targetType)return false;
+        if(targetType==='credential')return Number(summary.credentialId||0)===Number(credentialID||0);
+        return String(summary.targetName||'')===String(targetName||'');
+      });
+    }
+    function hasPendingRemoteOrder(){return pendingRemoteCommands().some(command=>((command.summary||{}).changedFields||[]).includes('order'))}
+    function upsertWorkspaceCommand(command){
+      if(!workspaceData)workspaceData={state:{},commands:[]};
+      workspaceData.commands=workspaceData.commands||[];
+      const index=workspaceData.commands.findIndex(item=>item.id===command.id);
+      if(index>=0)workspaceData.commands[index]=command;else workspaceData.commands.unshift(command);
+    }
+    async function queueRemote(index,commandType,payload){
+      const device=(window.deviceRows||[])[index];
+      if(!device)throw new Error('设备不存在');
+      const command=await api('/api/admin/devices/'+encodeURIComponent(device.deviceId)+'/remote/commands',{method:'POST',body:JSON.stringify({commandType,payload})});
+      upsertWorkspaceCommand(command);
+      workspaceCommandPollError='';
+      renderWorkspaceTasks();
+      renderWorkspaceCommands();
+      renderWorkspaceEndpoints();
+      renderWorkspaceTokenPools();
+      trackRemoteCommand(device.deviceId,command);
+      message.textContent='远程命令已排队，可在设备操作台查看状态';
+      return command;
+    }
+    function trackRemoteCommand(deviceID,command){
+      if(!command||!(command.status==='queued'||command.status==='delivered')||remoteCommandPollers.has(command.id))return;
+      remoteCommandPollers.set(command.id,{deviceID,startedAt:Date.now(),timer:0});
+      scheduleRemoteCommandPoll(command.id,1000);
+    }
+    function scheduleRemoteCommandPoll(commandID,delay){
+      const tracked=remoteCommandPollers.get(commandID);
+      if(!tracked)return;
+      clearTimeout(tracked.timer);
+      tracked.timer=setTimeout(()=>pollTrackedRemoteCommand(commandID),delay);
+    }
+    async function pollTrackedRemoteCommand(commandID){
+      const tracked=remoteCommandPollers.get(commandID);
+      const device=currentWorkspaceDevice();
+      if(!tracked||deviceWorkspace.hidden||!device||device.deviceId!==tracked.deviceID){remoteCommandPollers.delete(commandID);return}
       try{
-        await queueRemote(remoteEditContext.index,'endpoint.update',payload);
-        remoteEditEndpointDialog.close();
+        const command=await api('/api/admin/devices/'+encodeURIComponent(tracked.deviceID)+'/remote/commands/'+commandID);
+        upsertWorkspaceCommand(command);
+        workspaceCommandPollError='';
+        renderWorkspaceTasks();
+        renderWorkspaceCommands();
+        renderWorkspaceEndpoints();
+        renderWorkspaceTokenPools();
+        if(command.status==='queued'||command.status==='delivered'){
+          scheduleRemoteCommandPoll(commandID,Date.now()-tracked.startedAt<15000?1000:3000);
+        }else{
+          remoteCommandPollers.delete(commandID);
+          if(command.status==='applied')await loadWorkspaceRemote();
+        }
+      }catch(err){
+        workspaceCommandPollError=err.message||String(err);
+        renderWorkspaceTasks();
+        scheduleRemoteCommandPoll(commandID,3000);
+      }
+    }
+    function resumeWorkspaceCommands(){
+      const device=currentWorkspaceDevice();
+      if(!device)return;
+      pendingRemoteCommands().forEach(command=>trackRemoteCommand(device.deviceId,command));
+    }
+    function stopRemoteCommandPollers(){
+      remoteCommandPollers.forEach(tracked=>clearTimeout(tracked.timer));
+      remoteCommandPollers.clear();
+    }
+    function remoteSyncEndpointAuthMode(){
+      const isCodex=remoteEndpointAuthMode.value==='codex_token_pool';
+      remoteEndpointCodexFastMode.disabled=!isCodex;
+      if(!isCodex)remoteEndpointCodexFastMode.checked=false;
+    }
+    function openRemoteEndpointEditor(index,endpointIndex){
+      const state=(workspaceData&&workspaceData.state)||{};
+      const endpoints=((state.snapshot||{}).endpoints)||[];
+      const ep=endpointIndex>=0?endpoints[endpointIndex]:null;
+      const hasThinking=!!ep&&Object.prototype.hasOwnProperty.call(ep,'thinking');
+      const supportsThinkingV2=remoteSupportsThinkingV2(state);
+      const originalThinking=ep&&hasThinking?String(ep.thinking||''):'';
+      remoteEndpointEditorContext={index,mode:ep?'edit':'create',endpointName:ep?ep.name:'',original:ep?Object.assign({},ep):null,thinkingKnown:!!ep&&(hasThinking||supportsThinkingV2),supportsNullableUpdates:!ep||supportsThinkingV2};
+      remoteEndpointDialogTitle.textContent=ep?'编辑远程端点':'新增远程端点';
+      remoteEndpointName.value=ep?ep.name:'';
+      remoteEndpointAPIUrl.value=ep?ep.apiUrl:'';
+      remoteEndpointAPIKey.value='';
+      remoteEndpointAPIKeyHelp.textContent=ep?'留空保持当前 Key；输入新值将覆盖客户端配置。':'API Key 模式必须填写；Token Pool 模式可留空。';
+      remoteEndpointAuthMode.value=ep?(ep.authMode||'api_key'):'api_key';
+      remoteEndpointTransformer.value=ep?(ep.transformer||'openai'):'openai';
+      remoteEndpointModel.value=ep?String(ep.model||''):'gpt-5';
+      document.getElementById('remoteEndpointThinkingDefault').disabled=!!ep&&!supportsThinkingV2;
+      remoteEndpointThinking.value=ep?(supportsThinkingV2?originalThinking:(hasThinking&&originalThinking?originalThinking:'__keep__')):'';
+      remoteEndpointMaxConcurrentRequests.value=ep?String(ep.maxConcurrentRequests||0):'0';
+      remoteEndpointCodexFastMode.checked=!!(ep&&ep.codexFastMode);
+      remoteEndpointEnabled.checked=ep?!!ep.enabled:true;
+      remoteEndpointThinkingHelp.textContent=!ep||supportsThinkingV2?'该客户端支持显示推理强度并恢复上游默认。':'旧客户端未上报推理强度；默认保持不变，仍可下发明确强度。';
+      remoteSyncEndpointAuthMode();
+      remoteEndpointDialog.showModal();
+    }
+    async function submitRemoteEndpoint(event){
+      event.preventDefault();
+      if(!remoteEndpointEditorContext)return;
+      const context=remoteEndpointEditorContext;
+      const name=remoteEndpointName.value.trim();
+      const apiUrl=remoteEndpointAPIUrl.value.trim();
+      const apiKey=remoteEndpointAPIKey.value.trim();
+      const authMode=remoteEndpointAuthMode.value;
+      const transformer=remoteEndpointTransformer.value;
+      const model=remoteEndpointModel.value.trim();
+      const thinking=remoteEndpointThinking.value;
+      const maxConcurrentRequests=Number(remoteEndpointMaxConcurrentRequests.value||0);
+      const enabled=remoteEndpointEnabled.checked;
+      const codexFastMode=remoteEndpointCodexFastMode.checked;
+      if(!name||!apiUrl){setError(new Error('端点名称和 Base URL 不能为空'));return}
+      if(context.mode==='create'&&authMode==='api_key'&&!apiKey){setError(new Error('API Key 模式必须填写 API Key'));return}
+      if(!Number.isInteger(maxConcurrentRequests)||maxConcurrentRequests<0){setError(new Error('限制并发必须是 0 或正整数'));return}
+      const pendingTarget=context.mode==='create'?name:context.endpointName;
+      if(hasPendingRemoteTarget('endpoint',pendingTarget,0)){setError(new Error('该端点已有待执行远程命令，请等待完成后重试'));return}
+      const payload=context.mode==='create'?{name,apiUrl,apiKey,authMode,transformer,model,thinking:thinking==='__keep__'?'':thinking,maxConcurrentRequests,enabled,codexFastMode}:{endpointName:context.endpointName};
+      const changed=[];
+      if(context.mode==='edit'){
+        const original=context.original||{};
+        if(name!==original.name){payload.name=name;changed.push('name')}
+        if(apiUrl!==String(original.apiUrl||'')){payload.apiUrl=apiUrl;changed.push('apiUrl')}
+        if(apiKey){payload.apiKey=apiKey;changed.push('apiKey')}
+        if(authMode!==String(original.authMode||'')){payload.authMode=authMode;changed.push('authMode')}
+        if(transformer!==String(original.transformer||'')){payload.transformer=transformer;changed.push('transformer')}
+        if(model===''&&String(original.model||'')!==''&&!context.supportsNullableUpdates){setError(new Error('旧客户端不支持远程清空模型，请升级客户端或填写新的模型名'));return}
+        if(model!==String(original.model||'')){payload.model=model;changed.push('model')}
+        if(thinking!=='__keep__'&&(!context.thinkingKnown||thinking!==String(original.thinking||''))){payload.thinking=thinking;changed.push('thinking')}
+        if(maxConcurrentRequests!==Number(original.maxConcurrentRequests||0)){payload.maxConcurrentRequests=maxConcurrentRequests;changed.push('maxConcurrentRequests')}
+        if(enabled!==!!original.enabled){payload.enabled=enabled;changed.push('enabled')}
+        if(codexFastMode!==!!original.codexFastMode){payload.codexFastMode=codexFastMode;changed.push('codexFastMode')}
+        if(!changed.length){remoteEndpointDialog.close();message.textContent='端点配置没有变化';return}
+      }else{
+        changed.push('name','apiUrl');
+        if(apiKey)changed.push('apiKey');
+        changed.push('authMode','transformer','model','thinking','maxConcurrentRequests','enabled','codexFastMode');
+      }
+      const risk=changed.includes('apiKey')||changed.includes('authMode')?'sensitive':'normal';
+      const confirmed=await confirmRemoteAction(context.mode==='create'?'确认新增远程端点':'确认修改远程端点',workspaceOfflineMessage(),changed.map(remoteFieldName),risk,'');
+      if(!confirmed)return;
+      try{
+        await queueRemote(context.index,context.mode==='create'?'endpoint.create':'endpoint.update',payload);
+        remoteEndpointDialog.close();
       }catch(err){setError(err)}
     }
-    async function remoteDeleteEndpoint(index,name){if(!confirm('删除远程端点 '+name+'？'))return;try{await queueRemote(index,'endpoint.delete',{endpointName:name})}catch(err){setError(err)}}
-    async function remoteMoveEndpoint(index,endpointIndex,direction){try{const data=window.remoteDetailData&&window.remoteDetailData[index];const endpoints=(((data||{}).state||{}).snapshot||{}).endpoints||[];const targetIndex=endpointIndex+direction;if(targetIndex<0||targetIndex>=endpoints.length)return;const names=endpoints.map(ep=>ep.name);const moved=names[endpointIndex];names[endpointIndex]=names[targetIndex];names[targetIndex]=moved;await queueRemote(index,'endpoint.reorder',{names})}catch(err){setError(err)}}
+    function workspaceOfflineMessage(){const online=workspaceOnlineState((workspaceData&&workspaceData.state)||{});return online.key==='online'?'客户端在线，命令将在下一次轮询时执行。':'设备当前'+online.label+'；命令会排队，前 5 分钟内上线即可执行。'}
+    async function remoteToggleEndpoint(index,name,enabled){try{await queueRemote(index,'endpoint.update',{endpointName:name,enabled})}catch(err){setError(err)}}
+    async function remoteDeleteEndpoint(index,name){
+      const confirmed=await confirmRemoteAction('删除远程端点','删除后需要客户端重新创建才能恢复。',[name],'destructive',name);
+      if(!confirmed)return;
+      try{await queueRemote(index,'endpoint.delete',{endpointName:name})}catch(err){setError(err)}
+    }
+    function openRemoteSortDialog(){
+      const endpoints=((workspaceData&&workspaceData.state&&workspaceData.state.snapshot)||{}).endpoints||[];
+      remoteSortNames=endpoints.map(ep=>ep.name);
+      renderRemoteSortList();
+      remoteSortDialog.showModal();
+    }
+    function renderRemoteSortList(){remoteSortList.innerHTML=remoteSortNames.map((name,index)=>'<div class="sort-row"><span>'+esc(name)+'</span><button type="button" class="secondary small-btn" '+(index===0?'disabled':'')+' onclick="moveRemoteSortItem('+index+',-1)">上移</button><button type="button" class="secondary small-btn" '+(index===remoteSortNames.length-1?'disabled':'')+' onclick="moveRemoteSortItem('+index+',1)">下移</button></div>').join('')}
+    function moveRemoteSortItem(index,direction){const target=index+direction;if(target<0||target>=remoteSortNames.length)return;const value=remoteSortNames[index];remoteSortNames[index]=remoteSortNames[target];remoteSortNames[target]=value;renderRemoteSortList()}
+    async function submitRemoteSort(event){
+      event.preventDefault();
+      const current=((((workspaceData||{}).state||{}).snapshot||{}).endpoints||[]).map(ep=>ep.name);
+      if(JSON.stringify(current)===JSON.stringify(remoteSortNames)){remoteSortDialog.close();return}
+      if(!await confirmRemoteAction('确认调整端点顺序',workspaceOfflineMessage(),['端点顺序'],'normal',''))return;
+      try{await queueRemote(workspaceDeviceIndex,'endpoint.reorder',{names:remoteSortNames});remoteSortDialog.close()}catch(err){setError(err)}
+    }
     async function remoteCredentialEnabled(index,id,enabled){try{await queueRemote(index,'credential.setEnabled',{credentialId:id,enabled})}catch(err){setError(err)}}
-    async function remoteUpdateCredentialToken(index,id){const accessToken=prompt('新的 access token');if(accessToken===null)return;try{await queueRemote(index,'credential.updateToken',{credentialId:id,accessToken})}catch(err){setError(err)}}
-    async function remoteDeleteCredential(index,id){if(!confirm('删除该远程 Token Pool 凭证？'))return;try{await queueRemote(index,'credential.delete',{credentialId:id})}catch(err){setError(err)}}
-    async function remoteRevealSecret(index,endpointName,credentialId,field){const device=window.deviceRows[index];try{if(!window.isSecureContext||!crypto.subtle){throw new Error('查看明文需要 HTTPS 安全后台；当前 HTTP 页面只允许远程维护，不展示密钥明文。')}const keyPair=await createRevealKeyPair();const command=await api('/api/admin/devices/'+encodeURIComponent(device.deviceId)+'/remote/secrets/reveal',{method:'POST',body:JSON.stringify({endpointName,credentialId,field,adminPublicKey:keyPair.publicKey})});message.textContent='已下发一次性查看命令，等待客户端拉取';const done=await pollRemoteCommand(device.deviceId,command.id,keyPair);await loadRemoteDetail(index);if(done&&done.value){alert('一次性明文（请立即使用，勿转存）：\n'+done.value)}}catch(err){setError(err)}}
-    async function pollRemoteCommand(deviceId,commandId,keyPair){const started=Date.now();const deadline=started+90000;while(Date.now()<deadline){const elapsed=Date.now()-started;await sleep(elapsed<10000?500:1500);let command;try{command=await api('/api/admin/devices/'+encodeURIComponent(deviceId)+'/remote/commands/'+commandId)}catch(err){if(String(err.message||err).includes('expired'))throw new Error('远程命令结果已过期，请重试');throw err}if(command.status==='queued'){message.textContent=elapsed>10000?'等待客户端拉取；客户端可能网络较慢或版本较旧':'远程命令等待客户端拉取';continue}if(command.status==='delivered'){message.textContent='客户端已领取命令，正在执行';continue}if(command.status==='expired')throw new Error(command.error||'远程命令已过期，请重试');if(command.status==='failed')throw new Error(command.error||'远程命令执行失败');if(command.status==='applied'){message.textContent='远程命令已应用';const reveal=command.resultJson&&command.resultJson.secretReveal;if(reveal&&keyPair){return await decryptRevealResult(keyPair,reveal)}return command}}throw new Error('客户端未在 90 秒内回传结果，可能离线、版本不支持或网络不可达')}
+    function openRemoteTokenDialog(id){remoteTokenCredentialID=id;remoteTokenCredentialLabel.textContent='凭证 #'+id;remoteTokenAccessToken.value='';remoteTokenDialog.showModal()}
+    async function submitRemoteToken(event){
+      event.preventDefault();
+      const accessToken=remoteTokenAccessToken.value.trim();
+      if(!accessToken)return;
+      if(!await confirmRemoteAction('确认更新 Token',workspaceOfflineMessage(),['凭证 #'+remoteTokenCredentialID,'Token'],'sensitive',''))return;
+      try{await queueRemote(workspaceDeviceIndex,'credential.updateToken',{credentialId:remoteTokenCredentialID,accessToken});remoteTokenDialog.close()}catch(err){setError(err)}
+    }
+    async function remoteDeleteCredential(index,id){
+      const expected=String(id);
+      if(!await confirmRemoteAction('删除远程凭证','删除后无法通过后台恢复。',['凭证 #'+id],'destructive',expected))return;
+      try{await queueRemote(index,'credential.delete',{credentialId:id})}catch(err){setError(err)}
+    }
+    function confirmRemoteAction(title,message,summary,risk,expected){
+      remoteConfirmTitle.textContent=title;
+      remoteConfirmMessage.textContent=message||'';
+      remoteConfirmSummary.innerHTML=(summary||[]).map(item=>'<div>• '+esc(item)+'</div>').join('')||'<div>无字段变化</div>';
+      remoteConfirmButton.className=risk==='normal'?'':'danger';
+      remoteConfirmButton.textContent=risk==='destructive'?'确认删除':'确认下发';
+      remoteConfirmationExpected=String(expected||'');
+      remoteConfirmInput.value='';
+      remoteConfirmInput.hidden=!remoteConfirmationExpected;
+      remoteConfirmInputLabel.hidden=!remoteConfirmationExpected;
+      remoteConfirmInputLabel.textContent=remoteConfirmationExpected?'请输入 '+remoteConfirmationExpected+' 以确认':'确认内容';
+      remoteConfirmDialog.showModal();
+      return new Promise(resolve=>{remoteConfirmationResolve=resolve});
+    }
+    function resolveRemoteConfirmation(confirmed){
+      if(confirmed&&remoteConfirmationExpected&&remoteConfirmInput.value.trim()!==remoteConfirmationExpected){remoteConfirmInput.setCustomValidity('输入内容不匹配');remoteConfirmInput.reportValidity();remoteConfirmInput.setCustomValidity('');return}
+      remoteConfirmDialog.close();
+      const resolve=remoteConfirmationResolve;
+      remoteConfirmationResolve=null;
+      remoteConfirmationExpected='';
+      if(resolve)resolve(!!confirmed);
+    }
+    async function remoteRevealSecret(index,endpointName,credentialId,field){
+      const device=(window.deviceRows||[])[index];
+      if(!device)return;
+      try{
+        if(!window.isSecureContext||!crypto.subtle)throw new Error('查看明文需要 HTTPS 安全后台；当前 HTTP 页面只允许远程维护，不展示密钥明文。');
+        clearRemoteSecret();
+        remoteSecretStatus.textContent='等待客户端返回加密结果';
+        remoteSecretValue.textContent='等待中';
+        remoteSecretCopyButton.disabled=true;
+        remoteSecretDialog.showModal();
+        const keyPair=await createRevealKeyPair();
+        const command=await api('/api/admin/devices/'+encodeURIComponent(device.deviceId)+'/remote/secrets/reveal',{method:'POST',body:JSON.stringify({endpointName,credentialId,field,adminPublicKey:keyPair.publicKey})});
+        upsertWorkspaceCommand(command);
+        renderWorkspaceTasks();
+        renderWorkspaceCommands();
+        await waitForRemoteSecretCommand(device.deviceId,command,keyPair);
+      }catch(err){
+        remoteSecretStatus.textContent=err.message||String(err);
+        remoteSecretValue.textContent='无法显示';
+      }
+    }
+    async function waitForRemoteSecretCommand(deviceID,queued,keyPair){
+      const deadline=queued.expiresAt?Date.parse(queued.expiresAt):Date.now()+2*60*1000;
+      const started=Date.now();
+      while(Date.now()<deadline&&remoteSecretDialog.open){
+        await sleep(Date.now()-started<15000?1000:3000);
+        const command=await api('/api/admin/devices/'+encodeURIComponent(deviceID)+'/remote/commands/'+queued.id);
+        upsertWorkspaceCommand(command);
+        renderWorkspaceTasks();
+        renderWorkspaceCommands();
+        remoteSecretStatus.textContent=remoteCommandStatusName(command.status);
+        if(command.status==='failed'||command.status==='expired')throw new Error(command.error||remoteCommandStatusName(command.status));
+        if(command.status==='applied'){
+          const reveal=command.resultJson&&command.resultJson.secretReveal;
+          if(!reveal)throw new Error('客户端未返回加密敏感信息');
+          const plain=await decryptRevealResult(keyPair,reveal);
+          showRemoteSecret(plain.value,reveal.expiresAt);
+          await loadWorkspaceRemote();
+          return;
+        }
+      }
+      throw new Error('一次性敏感信息已过期，请重新请求');
+    }
+    function showRemoteSecret(value,expiresAt){
+      remoteSecretPlaintext=String(value||'');
+      remoteSecretValue.textContent=remoteSecretPlaintext||'空值';
+      remoteSecretCopyButton.disabled=!remoteSecretPlaintext;
+      remoteSecretStatus.textContent='仅在当前安全弹窗中临时显示';
+      const update=()=>{
+        const remaining=Math.max(0,Math.ceil((Date.parse(expiresAt)-Date.now())/1000));
+        remoteSecretCountdown.textContent='剩余有效时间 '+remaining+' 秒';
+        if(remaining<=0){clearRemoteSecret();return}
+        remoteSecretClearTimer=setTimeout(update,1000);
+      };
+      update();
+    }
+    function clearRemoteSecret(closeDialog=true){
+      clearTimeout(remoteSecretClearTimer);
+      remoteSecretClearTimer=0;
+      remoteSecretPlaintext='';
+      if(typeof remoteSecretValue!=='undefined')remoteSecretValue.textContent='已清除';
+      if(typeof remoteSecretCountdown!=='undefined')remoteSecretCountdown.textContent='';
+      if(typeof remoteSecretCopyButton!=='undefined')remoteSecretCopyButton.disabled=true;
+      if(closeDialog&&typeof remoteSecretDialog!=='undefined'&&remoteSecretDialog.open)remoteSecretDialog.close();
+    }
+    async function copyRemoteSecret(){if(remoteSecretPlaintext)await navigator.clipboard.writeText(remoteSecretPlaintext)}
     function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
     function b64u(bytes){return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
     function b64uBytes(value){value=String(value||'').replace(/-/g,'+').replace(/_/g,'/');while(value.length%4)value+='=';return Uint8Array.from(atob(value),c=>c.charCodeAt(0))}

@@ -484,19 +484,28 @@ type RemotePollOutcome struct {
 }
 
 type RemoteCommandRecord struct {
-	ID          int64                `json:"id"`
-	DeviceID    string               `json:"deviceId"`
-	CommandType string               `json:"commandType"`
-	Status      string               `json:"status"`
-	ActorID     int64                `json:"actorId,omitempty"`
-	ActorName   string               `json:"actorName,omitempty"`
-	Envelope    RemoteEnvelope       `json:"envelope,omitempty"`
-	Result      string               `json:"result,omitempty"`
-	ResultJSON  *RemoteCommandResult `json:"resultJson,omitempty"`
-	Error       string               `json:"error,omitempty"`
-	ExpiresAt   time.Time            `json:"expiresAt,omitempty"`
-	CreatedAt   time.Time            `json:"createdAt"`
-	UpdatedAt   time.Time            `json:"updatedAt"`
+	ID          int64                 `json:"id"`
+	DeviceID    string                `json:"deviceId"`
+	CommandType string                `json:"commandType"`
+	Status      string                `json:"status"`
+	ActorID     int64                 `json:"actorId,omitempty"`
+	ActorName   string                `json:"actorName,omitempty"`
+	Summary     *RemoteCommandSummary `json:"summary,omitempty"`
+	Envelope    RemoteEnvelope        `json:"envelope,omitempty"`
+	Result      string                `json:"result,omitempty"`
+	ResultJSON  *RemoteCommandResult  `json:"resultJson,omitempty"`
+	Error       string                `json:"error,omitempty"`
+	ExpiresAt   time.Time             `json:"expiresAt,omitempty"`
+	CreatedAt   time.Time             `json:"createdAt"`
+	UpdatedAt   time.Time             `json:"updatedAt"`
+}
+
+type RemoteCommandSummary struct {
+	TargetType    string   `json:"targetType,omitempty"`
+	TargetName    string   `json:"targetName,omitempty"`
+	CredentialID  int64    `json:"credentialId,omitempty"`
+	ChangedFields []string `json:"changedFields,omitempty"`
+	RiskLevel     string   `json:"riskLevel,omitempty"`
 }
 
 type RemoteEnvelope struct {

@@ -14,10 +14,8 @@ func TestAdminRemoteEndpointCodexFastModeControls(t *testing.T) {
 	body := string(source)
 	for _, want := range []string{
 		"ep.codexFastMode?'开启':'关闭'",
-		"remoteSetCodexFastMode(",
-		"codexFastMode:enabled",
-		"id=\"remoteCreateCodexFastMode\"",
-		"codexFastMode:remoteCreateCodexFastMode.checked",
+		"id=\"remoteEndpointCodexFastMode\"",
+		"const codexFastMode=remoteEndpointCodexFastMode.checked",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("admin remote endpoint UI missing %q", want)
@@ -35,30 +33,27 @@ func TestAdminRemoteEndpointModelAndThinkingControls(t *testing.T) {
 	}
 	body := string(source)
 	for _, want := range []string{
-		"id=\"remoteCreateEndpointDialog\"",
-		"id=\"remoteEditEndpointDialog\"",
-		"id=\"remoteCreateModel\"",
-		"id=\"remoteCreateThinking\"",
-		"<option value=\"\">上游默认</option>",
+		"id=\"remoteEndpointDialog\"",
+		"id=\"remoteEndpointModel\"",
+		"id=\"remoteEndpointThinking\"",
+		"上游默认</option>",
 		"<option value=\"off\">关闭</option>",
 		"<option value=\"low\">Low</option>",
 		"<option value=\"medium\">Medium</option>",
 		"<option value=\"high\">High</option>",
 		"<option value=\"xhigh\">XHigh / Max</option>",
-		"submitRemoteCreateEndpoint(event)",
-		"submitRemoteEndpointEdit(event)",
-		"remoteOpenEndpointEditor(",
+		"submitRemoteEndpoint(event)",
+		"openRemoteEndpointEditor(",
 		"Object.prototype.hasOwnProperty.call(ep,'thinking')",
 		"endpoints:thinking:v2",
 		"value=\"__keep__\"",
-		"if(thinking!=='__keep__')",
+		"thinking!=='__keep__'",
 		"payload.thinking=thinking",
 		"payload.model=model",
+		"payload.apiKey=apiKey",
 		"旧客户端不支持远程清空模型",
 		"thinkingDisplay(state,ep)",
-		"<th>模型</th><th>推理</th>",
-		"max-width:calc(100vw - 340px)",
-		"contain:inline-size",
+		"<th>模型</th>",
 		"overflow-x:hidden",
 	} {
 		if !strings.Contains(body, want) {
@@ -70,6 +65,62 @@ func TestAdminRemoteEndpointModelAndThinkingControls(t *testing.T) {
 	}
 }
 
+func TestAdminRemoteDeviceWorkspaceInteraction(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	body := string(source)
+	for _, want := range []string{
+		"id=\"deviceWorkspaceBackdrop\"",
+		"id=\"deviceWorkspace\"",
+		"class=\"device-workspace\"",
+		"data-workspace-tab=\"endpoints\"",
+		"data-workspace-tab=\"tokens\"",
+		"data-workspace-tab=\"errors\"",
+		"data-workspace-tab=\"commands\"",
+		"data-workspace-tab=\"licenses\"",
+		"openDeviceWorkspace(",
+		"closeDeviceWorkspace()",
+		"showWorkspaceTab(",
+		"loadWorkspaceRemote(",
+		"loadWorkspaceTelemetry(",
+		"renderWorkspaceEndpoints(",
+		"renderWorkspaceTokenPools(",
+		"renderWorkspaceCommands(",
+		"renderWorkspaceLicenses(",
+		"workspaceOnlineState(",
+		"id=\"workspaceTaskBar\"",
+		"id=\"remoteSortDialog\"",
+		"id=\"remoteConfirmDialog\"",
+		"id=\"remoteSecretDialog\"",
+		"id=\"remoteTokenDialog\"",
+		"trackRemoteCommand(",
+		"resumeWorkspaceCommands(",
+		"hasPendingRemoteTarget(",
+		"hasPendingRemoteTarget('endpoint',pendingTarget,0)",
+		"remoteCommandStatusName(",
+		"summary.changedFields",
+		"前 5 分钟内上线即可执行",
+		"状态暂不可用",
+		"remoteSecretCountdown",
+		"window.isSecureContext",
+		"width:min(1100px,calc(100vw - 40px))",
+		"@media(max-width:720px)",
+		"width:100vw",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("admin remote device workspace missing %q", want)
+		}
+	}
+	if strings.Contains(body, "onclick=\"toggleDevice(") {
+		t.Fatal("device list must open the workspace instead of inline detail rows")
+	}
+	if strings.Contains(body, "await pollRemoteCommand(device.deviceId,command.id,null)") {
+		t.Fatal("remote writes must not synchronously block on command completion")
+	}
+}
+
 func TestAdminRemoteEndpointErrorTelemetrySection(t *testing.T) {
 	source, err := os.ReadFile("main.go")
 	if err != nil {
@@ -78,14 +129,14 @@ func TestAdminRemoteEndpointErrorTelemetrySection(t *testing.T) {
 	body := string(source)
 	for _, want := range []string{
 		"/api/admin/telemetry/endpoint-errors/summary?deviceId=",
-		"renderEndpointErrorTelemetry(",
+		"loadWorkspaceTelemetry(",
 		"renderEndpointErrorTelemetryTable(",
 		"端点错误遥测",
 		"近24小时",
 		"近7天",
 		"暂无端点错误遥测",
-		"endpointErrorSummary24h",
-		"endpointErrorSummary7d",
+		"workspaceTelemetry.summary24h",
+		"workspaceTelemetry.summary7d",
 		"row.apiHost||'-'",
 		"esc(row.sample||'-')",
 	} {

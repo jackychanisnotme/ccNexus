@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -875,6 +876,7 @@ func (s *Service) queueRemoteCommandFor(actor *AdminAccount, deviceID string, re
 		Status:      RemoteCommandStatusQueued,
 		ActorID:     actor.ID,
 		ActorName:   actor.Username,
+		Summary:     buildRemoteCommandSummary(commandType, req.Payload),
 		Envelope:    envelope,
 		ExpiresAt:   expiresAt,
 		CreatedAt:   now,
@@ -885,6 +887,92 @@ func (s *Service) queueRemoteCommandFor(actor *AdminAccount, deviceID string, re
 	}
 	_ = s.store.AddAudit("remote_command", "device", 0, fmt.Sprintf("device=%s command=%s actor=%s", command.DeviceID, command.CommandType, actor.Username), now)
 	return command, nil
+}
+
+func buildRemoteCommandSummary(commandType string, payload interface{}) *RemoteCommandSummary {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	var values map[string]interface{}
+	if err := json.Unmarshal(data, &values); err != nil {
+		return nil
+	}
+	summary := &RemoteCommandSummary{RiskLevel: "normal"}
+	switch strings.TrimSpace(commandType) {
+	case "endpoint.create":
+		summary.TargetType = "endpoint"
+		summary.TargetName = remoteSummaryString(values["name"])
+		summary.ChangedFields = remoteSummaryFields(values, "name")
+	case "endpoint.update":
+		summary.TargetType = "endpoint"
+		summary.TargetName = remoteSummaryString(values["endpointName"])
+		summary.ChangedFields = remoteSummaryFields(values, "endpointName")
+	case "endpoint.delete":
+		summary.TargetType = "endpoint"
+		summary.TargetName = remoteSummaryString(values["endpointName"])
+		summary.RiskLevel = "destructive"
+	case "endpoint.reorder":
+		summary.TargetType = "endpoint"
+		summary.ChangedFields = []string{"order"}
+	case "credential.setEnabled":
+		summary.TargetType = "credential"
+		summary.CredentialID = remoteSummaryInt64(values["credentialId"])
+		summary.ChangedFields = []string{"enabled"}
+	case "credential.updateToken":
+		summary.TargetType = "credential"
+		summary.CredentialID = remoteSummaryInt64(values["credentialId"])
+		summary.ChangedFields = []string{"accessToken"}
+		summary.RiskLevel = "sensitive"
+	case "credential.delete":
+		summary.TargetType = "credential"
+		summary.CredentialID = remoteSummaryInt64(values["credentialId"])
+		summary.RiskLevel = "destructive"
+	case "secret.reveal":
+		summary.TargetType = "endpoint"
+		summary.TargetName = remoteSummaryString(values["endpointName"])
+		summary.CredentialID = remoteSummaryInt64(values["credentialId"])
+		if summary.CredentialID > 0 {
+			summary.TargetType = "credential"
+		}
+		summary.ChangedFields = []string{"secret"}
+		summary.RiskLevel = "sensitive"
+	default:
+		return nil
+	}
+	for _, field := range summary.ChangedFields {
+		if field == "apiKey" || field == "authMode" || field == "accessToken" {
+			summary.RiskLevel = "sensitive"
+			break
+		}
+	}
+	return summary
+}
+
+func remoteSummaryFields(values map[string]interface{}, excluded string) []string {
+	fields := make([]string, 0, len(values))
+	for key := range values {
+		if key == excluded {
+			continue
+		}
+		switch key {
+		case "name", "apiUrl", "apiKey", "authMode", "transformer", "model", "thinking",
+			"codexFastMode", "maxConcurrentRequests", "enabled":
+			fields = append(fields, key)
+		}
+	}
+	sort.Strings(fields)
+	return fields
+}
+
+func remoteSummaryString(value interface{}) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
+}
+
+func remoteSummaryInt64(value interface{}) int64 {
+	number, _ := value.(float64)
+	return int64(number)
 }
 
 func (s *Service) QueueRemoteSecretRevealFor(actor *AdminAccount, deviceID string, req RemoteSecretRevealRequest) (*RemoteCommandRecord, error) {
