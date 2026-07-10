@@ -657,6 +657,18 @@ func isOpenAIPythonClient(r *http.Request) bool {
 	return false
 }
 
+func shouldNormalizeStandardOpenAIResponsesStream(r *http.Request, clientFormat ClientFormat) bool {
+	if clientFormat != ClientFormatOpenAIResponses {
+		return false
+	}
+	for _, value := range openAIResponsesClientAgentValues(r) {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(value)), "codex") {
+			return false
+		}
+	}
+	return true
+}
+
 func shouldTolerateMissingOpenAIResponsesCompleted(r *http.Request, clientFormat ClientFormat) bool {
 	if clientFormat != ClientFormatOpenAIResponses {
 		return false
@@ -856,6 +868,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		streamSession = newDownstreamStreamSession(w, p.streamHeartbeatIntervalOrDefault(), clientFormat)
+		streamSession.strictResponsesProtocol = shouldNormalizeStandardOpenAIResponsesStream(r, clientFormat)
 		streamSession.synthesizeMissingDone = !shouldTolerateMissingOpenAIResponsesCompleted(r, clientFormat)
 		if err := streamSession.Start(); err != nil {
 			logger.Error("Failed to start downstream stream: %v %s", err, requestLogFields(obs, "", 0, http.StatusInternalServerError, "downstream_stream_start_failed"))

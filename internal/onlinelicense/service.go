@@ -82,6 +82,7 @@ type Store interface {
 	ListRemoteCommands(deviceID string, limit int) ([]RemoteCommandRecord, error)
 	ListQueuedRemoteCommands(deviceID string, limit int) ([]RemoteCommandRecord, error)
 	GetRemoteCommand(deviceID string, commandID int64) (*RemoteCommandRecord, error)
+	UpdateRemoteCommandSignature(deviceID string, commandID int64, commandNonce, signature string, now time.Time) error
 	MarkRemoteCommandsDelivered(deviceID string, commandIDs []int64, now time.Time) error
 	UpdateRemoteCommandResult(deviceID string, commandID int64, status, resultText, errorText string, resultJSON *RemoteCommandResult, expiresAt time.Time, now time.Time) error
 	RecordEndpointErrorTelemetry(deviceID string, activationID, ownerAccountID int64, platform, appVersion string, items []EndpointErrorTelemetryItem, now time.Time) (int, error)
@@ -90,10 +91,11 @@ type Store interface {
 }
 
 type Service struct {
-	store      Store
-	privateKey ed25519.PrivateKey
-	publicKey  ed25519.PublicKey
-	now        func() time.Time
+	store                     Store
+	privateKey                ed25519.PrivateKey
+	publicKey                 ed25519.PublicKey
+	now                       func() time.Time
+	remoteSecretRevealEnabled bool
 }
 
 type ticketPayload struct {
@@ -114,7 +116,12 @@ type ticketEnvelope struct {
 }
 
 func NewService(store Store, privateKey ed25519.PrivateKey, opts Options) *Service {
-	service := &Service{store: store, privateKey: privateKey, now: time.Now}
+	service := &Service{
+		store:                     store,
+		privateKey:                privateKey,
+		now:                       time.Now,
+		remoteSecretRevealEnabled: opts.RemoteSecretRevealEnabled,
+	}
 	if opts.Now != nil {
 		service.now = opts.Now
 	}
@@ -226,17 +233,20 @@ func (s *Service) CreateAdminAccount(actor *AdminAccount, req CreateAdminAccount
 	if level < AdminLevelRoot || level > AdminLevelDistributor {
 		return nil, fmt.Errorf("unsupported admin level")
 	}
-	parentID := req.ParentID
-	if parentID == 0 && level != AdminLevelRoot {
-		parentID = actor.ID
+	if actor.Level != AdminLevelRoot && level <= actor.Level {
+		return nil, ErrForbidden
 	}
-	if actor.Level != AdminLevelRoot && parentID != actor.ID {
-		if ok, err := s.accountInScope(actor, parentID); err != nil || !ok {
-			if err != nil {
-				return nil, err
-			}
+	parentID := req.ParentID
+	if level == AdminLevelRoot {
+		if actor.Level != AdminLevelRoot {
 			return nil, ErrForbidden
 		}
+		parentID = 0
+	} else if parentID == 0 {
+		parentID = actor.ID
+	}
+	if err := s.validateAdminParent(actor, 0, level, parentID); err != nil {
+		return nil, err
 	}
 	permissions := req.Permissions
 	if len(permissions) == 0 {
@@ -281,6 +291,9 @@ func (s *Service) UpdateAdminAccount(actor *AdminAccount, id int64, req UpdateAd
 			}
 			return nil, ErrForbidden
 		}
+		if account.Level <= actor.Level {
+			return nil, ErrForbidden
+		}
 	}
 	if actor.ID == id && selfPrivilegeUpdateRequested(req) {
 		return nil, ErrForbidden
@@ -288,18 +301,41 @@ func (s *Service) UpdateAdminAccount(actor *AdminAccount, id int64, req UpdateAd
 	if strings.TrimSpace(req.DisplayName) != "" {
 		account.DisplayName = strings.TrimSpace(req.DisplayName)
 	}
-	if req.Level != 0 {
-		account.Level = req.Level
+	level := account.Level
+	if req.hasLevel || req.Level != 0 {
+		level = req.Level
 	}
-	if req.ParentID != 0 {
-		account.ParentID = req.ParentID
+	if level < AdminLevelRoot || level > AdminLevelDistributor {
+		return nil, fmt.Errorf("unsupported admin level")
+	}
+	if actor.Level != AdminLevelRoot && level <= actor.Level {
+		return nil, ErrForbidden
+	}
+	parentID := account.ParentID
+	if req.hasParentID || req.ParentID != 0 {
+		parentID = req.ParentID
+	}
+	if level == AdminLevelRoot {
+		if actor.Level != AdminLevelRoot {
+			return nil, ErrForbidden
+		}
+		parentID = 0
+	}
+	if err := s.validateAdminParent(actor, account.ID, level, parentID); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(req.Status) != "" {
-		account.Status = strings.TrimSpace(req.Status)
+		status := strings.TrimSpace(req.Status)
+		if status != AdminAccountStatusActive && status != AdminAccountStatusDisabled {
+			return nil, fmt.Errorf("unsupported admin status")
+		}
+		account.Status = status
 	}
 	if len(req.Permissions) > 0 {
 		account.Permissions = permissionsForActor(actor, req.Permissions)
 	}
+	account.Level = level
+	account.ParentID = parentID
 	account.UpdatedAt = s.currentTime()
 	passwordHash := ""
 	if strings.TrimSpace(req.Password) != "" {
@@ -313,6 +349,45 @@ func (s *Service) UpdateAdminAccount(actor *AdminAccount, id int64, req UpdateAd
 	}
 	_ = s.store.AddAudit("update_admin_account", "admin_account", account.ID, fmt.Sprintf("username=%s status=%s level=%d parent=%d", account.Username, account.Status, account.Level, account.ParentID), account.UpdatedAt)
 	return account, nil
+}
+
+func (s *Service) validateAdminParent(actor *AdminAccount, targetID int64, level int, parentID int64) error {
+	if actor == nil {
+		return ErrForbidden
+	}
+	if level == AdminLevelRoot {
+		if parentID != 0 || actor.Level != AdminLevelRoot {
+			return ErrForbidden
+		}
+		return nil
+	}
+	if parentID == 0 || parentID == targetID {
+		return fmt.Errorf("invalid admin parent")
+	}
+	accounts, err := s.store.ListAdminAccounts()
+	if err != nil {
+		return err
+	}
+	var parent *AdminAccount
+	var target *AdminAccount
+	for i := range accounts {
+		if accounts[i].ID == parentID {
+			parent = &accounts[i]
+		}
+		if accounts[i].ID == targetID {
+			target = &accounts[i]
+		}
+	}
+	if parent == nil || parent.Level >= level {
+		return fmt.Errorf("invalid admin parent hierarchy")
+	}
+	if actor.Level != AdminLevelRoot && !accountScopeMap(actor, accounts)[parentID] {
+		return ErrForbidden
+	}
+	if target != nil && accountScopeMap(target, accounts)[parentID] {
+		return fmt.Errorf("admin hierarchy cycle")
+	}
+	return nil
 }
 
 func selfPrivilegeUpdateRequested(req UpdateAdminAccountRequest) bool {
@@ -840,6 +915,9 @@ func (s *Service) QueueRemoteCommandFor(actor *AdminAccount, deviceID string, re
 	if actor == nil || !hasPermission(actor, PermissionDevicesRemoteWrite) {
 		return nil, ErrForbidden
 	}
+	if strings.TrimSpace(req.CommandType) == "secret.reveal" {
+		return nil, ErrForbidden
+	}
 	return s.queueRemoteCommandFor(actor, deviceID, req)
 }
 
@@ -881,6 +959,9 @@ func (s *Service) queueRemoteCommandFor(actor *AdminAccount, deviceID string, re
 		ExpiresAt:   expiresAt,
 		CreatedAt:   now,
 		UpdatedAt:   now,
+	}
+	if err := signRemoteCommand(s.privateKey, command); err != nil {
+		return nil, err
 	}
 	if err := s.store.CreateRemoteCommand(command, device.OwnerAccountID); err != nil {
 		return nil, err
@@ -979,6 +1060,9 @@ func (s *Service) QueueRemoteSecretRevealFor(actor *AdminAccount, deviceID strin
 	if actor == nil || !hasPermission(actor, PermissionDevicesRemoteSecrets) {
 		return nil, ErrForbidden
 	}
+	if !s.remoteSecretRevealEnabled {
+		return nil, ErrForbidden
+	}
 	adminPublicKey := strings.TrimSpace(req.AdminPublicKey)
 	if adminPublicKey == "" {
 		return nil, fmt.Errorf("admin public key is required")
@@ -1063,6 +1147,15 @@ func (s *Service) PollRemoteCommands(req RemotePollRequest) (*RemotePollResponse
 			_ = s.store.UpdateRemoteCommandResult(strings.TrimSpace(req.DeviceID), command.ID, RemoteCommandStatusExpired, "", "remote command expired", nil, time.Time{}, now)
 			continue
 		}
+		if strings.TrimSpace(command.CommandNonce) == "" || strings.TrimSpace(command.Signature) == "" {
+			if err := signRemoteCommand(s.privateKey, &command); err != nil {
+				_ = s.store.UpdateRemoteCommandResult(strings.TrimSpace(req.DeviceID), command.ID, RemoteCommandStatusFailed, "", "legacy remote command could not be signed", nil, time.Time{}, now)
+				continue
+			}
+			if err := s.store.UpdateRemoteCommandSignature(command.DeviceID, command.ID, command.CommandNonce, command.Signature, now); err != nil {
+				return nil, err
+			}
+		}
 		command.Status = RemoteCommandStatusDelivered
 		command.UpdatedAt = now.UTC()
 		deliverable = append(deliverable, command)
@@ -1120,15 +1213,8 @@ func (s *Service) SubmitRemoteResult(req RemoteResultRequest) error {
 }
 
 func (s *Service) SubmitEndpointErrorTelemetry(req EndpointErrorTelemetryRequest) (*EndpointErrorTelemetryResult, error) {
-	payload, err := s.decodeAndVerifyTicket(req.Ticket)
-	if err != nil {
-		return nil, err
-	}
 	deviceID := strings.TrimSpace(req.DeviceID)
-	if deviceID == "" || payload.DeviceID != deviceID {
-		return nil, ErrInvalidTicket
-	}
-	activation, err := s.store.GetActivation(payload.ActivationID)
+	_, activation, err := s.validateOnlineTicket(req.Ticket, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1257,14 +1343,50 @@ func (s *Service) remoteDeviceForWrite(actor *AdminAccount, deviceID string) (*R
 }
 
 func (s *Service) verifyRemoteTicketDevice(ticket, deviceID string) error {
+	_, _, err := s.validateOnlineTicket(ticket, strings.TrimSpace(deviceID))
+	return err
+}
+
+func (s *Service) validateOnlineTicket(ticket, deviceID string) (*ticketPayload, *ActivationRecord, error) {
 	payload, err := s.decodeAndVerifyTicket(ticket)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	if strings.TrimSpace(deviceID) == "" || payload.DeviceID != strings.TrimSpace(deviceID) {
-		return ErrInvalidTicket
+	deviceID = strings.TrimSpace(deviceID)
+	if payload.Product != ProductCCNexusPro || deviceID == "" || payload.DeviceID != deviceID {
+		return nil, nil, ErrInvalidTicket
 	}
-	return nil
+	now := s.currentTime().UTC()
+	if now.After(payload.GraceUntil.UTC()) || now.After(payload.ExpiresAt.UTC()) {
+		return nil, nil, ErrTicketExpired
+	}
+	activation, err := s.store.GetActivation(payload.ActivationID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, ErrInvalidTicket
+		}
+		return nil, nil, err
+	}
+	if activation.ID != payload.ActivationID || activation.CardID != payload.LicenseID || activation.DeviceID != payload.DeviceID {
+		return nil, nil, ErrInvalidTicket
+	}
+	if activation.Status != ActivationStatusActive {
+		return nil, nil, ErrActivationBlocked
+	}
+	if now.After(activation.ExpiresAt.UTC()) {
+		return nil, nil, ErrTicketExpired
+	}
+	card, err := s.store.GetCard(activation.CardID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, ErrInvalidTicket
+		}
+		return nil, nil, err
+	}
+	if card.Status != CardStatusActive {
+		return nil, nil, ErrCardDisabled
+	}
+	return payload, activation, nil
 }
 
 func (s *Service) RecordAudit(action, targetType string, targetID int64, detail string) error {

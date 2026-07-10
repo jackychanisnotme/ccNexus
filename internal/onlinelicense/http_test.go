@@ -145,6 +145,89 @@ func TestAdminLoginRateLimit(t *testing.T) {
 	}
 }
 
+func TestAdminLoginRateLimitIgnoresUntrustedForwardedFor(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	body := `{"username":"admin","password":"wrong"}`
+
+	for i := 0; i < 6; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(body))
+		req.RemoteAddr = "203.0.113.10:41000"
+		req.Header.Set("X-Forwarded-For", "198.51.100."+strconv.Itoa(i+1))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if i < 5 && rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want 401 body=%s", i+1, rec.Code, rec.Body.String())
+		}
+		if i == 5 && rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("attempt %d status = %d, want 429 body=%s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestAdminCookieTrustsHTTPSOnlyFromLoopbackProxy(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "http://license.wenche.xyz/api/admin/login", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	req.RemoteAddr = "127.0.0.1:51000"
+	req.Host = "license.wenche.xyz"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Real-IP", "203.0.113.20")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) == 0 || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("unexpected session cookie: %#v", cookies)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "http://license.wenche.xyz/api/admin/login", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	req.RemoteAddr = "203.0.113.20:51000"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if len(rec.Result().Cookies()) == 0 || rec.Result().Cookies()[0].Secure {
+		t.Fatalf("untrusted proxy marked cookie secure: %#v", rec.Result().Cookies())
+	}
+}
+
+func TestAdminMutationRejectsCrossSiteOrigin(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	cookie := loginAdmin(t, handler)
+	req := httptest.NewRequest(http.MethodPost, "https://license.wenche.xyz/api/admin/logout", nil)
+	req.Host = "license.wenche.xyz"
+	req.Header.Set("Origin", "https://attacker.example")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-site logout status = %d, want 403 body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminLoginRequestBodyLimit(t *testing.T) {
+	handler := newTestHTTPHandler(t)
+	body := `{"username":"admin","password":"` + strings.Repeat("x", defaultRequestBodyLimit) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("oversized login status = %d, want 400 body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRateLimiterCleansExpiredBuckets(t *testing.T) {
+	limiter := &rateLimiter{buckets: map[string]rateBucket{}}
+	now := time.Date(2026, 7, 10, 8, 0, 0, 0, time.UTC)
+	for i := 0; i < 100; i++ {
+		limiter.allow("key-"+strconv.Itoa(i), 1, time.Second, now)
+	}
+	limiter.allow("fresh", 1, time.Second, now.Add(2*time.Minute))
+	if len(limiter.buckets) != 1 {
+		t.Fatalf("bucket count = %d, want 1 after cleanup", len(limiter.buckets))
+	}
+}
+
 func TestActivationEndpointReturnsBadRequestForDeviceLimit(t *testing.T) {
 	handler := newTestHTTPHandler(t)
 	cardKey := generateHTTPCard(t, handler, 1)
@@ -329,7 +412,7 @@ func newTestHTTPHandler(t *testing.T) http.Handler {
 	}
 	service := NewService(store, privateKey, Options{Now: func() time.Time {
 		return time.Date(2026, 6, 19, 8, 0, 0, 0, time.UTC)
-	}})
+	}, RemoteSecretRevealEnabled: true})
 	return NewHTTPHandler(service, AdminConfig{Username: "admin", Password: "secret"})
 }
 

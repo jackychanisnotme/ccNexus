@@ -3,6 +3,8 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -34,7 +36,7 @@ func (e *RemoteManagementExecutor) Snapshot() (onlinelicense.RemoteSnapshot, err
 	for _, endpoint := range endpoints {
 		item := onlinelicense.RemoteEndpointSnapshot{
 			Name:                  endpoint.Name,
-			APIUrl:                endpoint.APIUrl,
+			APIUrl:                sanitizeRemoteAPIURL(endpoint.APIUrl),
 			APIKeyMasked:          maskRemoteSecret(endpoint.APIKey),
 			AuthMode:              endpoint.AuthMode,
 			Enabled:               endpoint.Enabled,
@@ -134,6 +136,9 @@ func (e *RemoteManagementExecutor) ExecuteRemoteCommand(command onlinelicense.Re
 		}
 		outcome.ConfigChanged = true
 	case "secret.reveal":
+		if !remoteSecretRevealEnabled() {
+			return nil, fmt.Errorf("remote secret reveal is disabled")
+		}
 		reveal, err := e.executeSecretReveal(command.Payload)
 		if err != nil {
 			return nil, err
@@ -151,6 +156,27 @@ func (e *RemoteManagementExecutor) ExecuteRemoteCommand(command onlinelicense.Re
 	outcome.SnapshotUpdated = true
 	outcome.Message = "ok"
 	return outcome, nil
+}
+
+func sanitizeRemoteAPIURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func remoteSecretRevealEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AINEXUS_ALLOW_REMOTE_SECRET_REVEAL"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *RemoteManagementExecutor) executeEndpointCreate(raw json.RawMessage) error {

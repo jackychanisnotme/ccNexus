@@ -89,13 +89,13 @@ func TestClientActivateRequiresVerifierBeforeContactingServer(t *testing.T) {
 	}
 }
 
-func TestClientDefaultLicenseServerURLsUseDomainThenIP(t *testing.T) {
+func TestClientDefaultLicenseServerURLsUseHTTPSDomainOnly(t *testing.T) {
 	t.Setenv("CCNEXUS_LICENSE_SERVER_URL", "")
 	t.Setenv("CCNEXUS_LICENSE_SERVER_URLS", "")
 
 	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{})
 
-	want := []string{"https://license.wenche.xyz", "http://207.57.134.147:24220"}
+	want := []string{"https://license.wenche.xyz"}
 	if !equalStrings(client.serverURLs, want) {
 		t.Fatalf("serverURLs = %#v, want %#v", client.serverURLs, want)
 	}
@@ -121,13 +121,24 @@ func TestClientRemoteCapabilityReportsThinkingV2(t *testing.T) {
 	}
 }
 
-func TestClientLicenseServerURLIPAddsDomainBackup(t *testing.T) {
+func TestClientRejectsPublicInsecureLicenseServerURL(t *testing.T) {
 	t.Setenv("CCNEXUS_LICENSE_SERVER_URL", "http://207.57.134.147:24220")
 	t.Setenv("CCNEXUS_LICENSE_SERVER_URLS", "")
 
 	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{})
 
-	want := []string{"http://207.57.134.147:24220", "https://license.wenche.xyz"}
+	want := []string{"https://license.wenche.xyz"}
+	if !equalStrings(client.serverURLs, want) {
+		t.Fatalf("serverURLs = %#v, want %#v", client.serverURLs, want)
+	}
+}
+
+func TestClientAllowsPublicInsecureLicenseServerURLOnlyWithExplicitOptIn(t *testing.T) {
+	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{
+		ServerURL:         "http://207.57.134.147:24220",
+		AllowInsecureHTTP: true,
+	})
+	want := []string{"http://207.57.134.147:24220"}
 	if !equalStrings(client.serverURLs, want) {
 		t.Fatalf("serverURLs = %#v, want %#v", client.serverURLs, want)
 	}
@@ -139,7 +150,7 @@ func TestClientLicenseServerURLSDeduplicatesAndPreservesOrder(t *testing.T) {
 
 	client := NewClientService(newMemoryConfigStore(), "device-a", ClientOptions{})
 
-	want := []string{"http://a.example.test", "https://b.example.test"}
+	want := []string{"https://b.example.test"}
 	if !equalStrings(client.serverURLs, want) {
 		t.Fatalf("serverURLs = %#v, want %#v", client.serverURLs, want)
 	}
@@ -163,7 +174,7 @@ func TestConfiguredClientServiceLicenseServerURLSOverridesSingleURL(t *testing.T
 		t.Fatalf("NewConfiguredClientService error: %v", err)
 	}
 
-	want := []string{"https://primary.example.test", "http://backup.example.test"}
+	want := []string{"https://primary.example.test"}
 	if !equalStrings(client.serverURLs, want) {
 		t.Fatalf("serverURLs = %#v, want %#v", client.serverURLs, want)
 	}
@@ -663,14 +674,19 @@ func TestPollRemoteCommandsOnlyExecutesDeliveredCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encrypt command: %v", err)
 	}
-	if err := store.CreateRemoteCommand(&RemoteCommandRecord{
+	command := &RemoteCommandRecord{
 		DeviceID:    "device-a",
 		CommandType: "endpoint.update",
 		Status:      "queued",
 		Envelope:    envelope,
+		ExpiresAt:   now.Add(5 * time.Minute),
 		CreatedAt:   now,
 		UpdatedAt:   now,
-	}, 0); err != nil {
+	}
+	if err := signRemoteCommand(privateKey, command); err != nil {
+		t.Fatalf("sign command: %v", err)
+	}
+	if err := store.CreateRemoteCommand(command, 0); err != nil {
 		t.Fatalf("create command: %v", err)
 	}
 

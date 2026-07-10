@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -18,9 +20,11 @@ import (
 )
 
 const (
-	clientStateConfigKey     = "online_license_state"
-	clientRemoteKeyConfigKey = "online_license_remote_x25519_private_key"
-	licenseServerURLCooldown = time.Minute
+	clientStateConfigKey        = "online_license_state"
+	clientRemoteKeyConfigKey    = "online_license_remote_x25519_private_key"
+	clientRemoteReplayConfigKey = "online_license_remote_command_nonces"
+	licenseServerURLCooldown    = time.Minute
+	maxRememberedRemoteCommands = 256
 )
 
 var AppPublicKey string
@@ -47,12 +51,13 @@ type ClientService struct {
 }
 
 type ClientOptions struct {
-	ServerURL  string
-	ServerURLs []string
-	PublicKey  ed25519.PublicKey
-	Version    string
-	Now        func() time.Time
-	Client     *http.Client
+	ServerURL         string
+	ServerURLs        []string
+	PublicKey         ed25519.PublicKey
+	Version           string
+	Now               func() time.Time
+	Client            *http.Client
+	AllowInsecureHTTP bool
 }
 
 type RemoteExecutor interface {
@@ -107,46 +112,47 @@ func NewClientService(store ConfigStore, deviceID string, opts ClientOptions) *C
 }
 
 func configuredLicenseServerURLs(opts ClientOptions) []string {
+	allowInsecureHTTP := opts.AllowInsecureHTTP || envBool("CCNEXUS_LICENSE_ALLOW_INSECURE_HTTP")
 	if len(opts.ServerURLs) > 0 {
-		return normalizeLicenseServerURLs(opts.ServerURLs, false)
+		return normalizeLicenseServerURLs(opts.ServerURLs, false, allowInsecureHTTP)
 	}
 	if strings.TrimSpace(opts.ServerURL) != "" {
-		return normalizeLicenseServerURLs([]string{opts.ServerURL}, true)
+		return normalizeLicenseServerURLs([]string{opts.ServerURL}, false, allowInsecureHTTP)
 	}
 	if raw := strings.TrimSpace(os.Getenv("CCNEXUS_LICENSE_SERVER_URLS")); raw != "" {
-		return normalizeLicenseServerURLs(strings.Split(raw, ","), false)
+		return normalizeLicenseServerURLs(strings.Split(raw, ","), false, allowInsecureHTTP)
 	}
 	if raw := strings.TrimSpace(os.Getenv("CCNEXUS_LICENSE_SERVER_URL")); raw != "" {
-		return normalizeLicenseServerURLs([]string{raw}, true)
+		return normalizeLicenseServerURLs([]string{raw}, false, allowInsecureHTTP)
 	}
-	return normalizeLicenseServerURLs(DefaultLicenseServerURLs, false)
+	return normalizeLicenseServerURLs(DefaultLicenseServerURLs, false, false)
 }
 
-func normalizeLicenseServerURLs(values []string, addDefaultPeer bool) []string {
+func normalizeLicenseServerURLs(values []string, addDefaultPeer, allowInsecureHTTP bool) []string {
 	result := make([]string, 0, len(values)+1)
 	for _, value := range values {
-		addLicenseServerURL(&result, value)
+		addLicenseServerURL(&result, value, allowInsecureHTTP)
 	}
 	if len(result) == 0 {
 		for _, value := range DefaultLicenseServerURLs {
-			addLicenseServerURL(&result, value)
+			addLicenseServerURL(&result, value, false)
 		}
 		return result
 	}
 	if addDefaultPeer {
 		switch result[0] {
 		case DefaultLicenseServerDomainURL:
-			addLicenseServerURL(&result, DefaultLicenseServerIPURL)
+			addLicenseServerURL(&result, DefaultLicenseServerIPURL, allowInsecureHTTP)
 		case DefaultLicenseServerIPURL:
-			addLicenseServerURL(&result, DefaultLicenseServerDomainURL)
+			addLicenseServerURL(&result, DefaultLicenseServerDomainURL, allowInsecureHTTP)
 		}
 	}
 	return result
 }
 
-func addLicenseServerURL(urls *[]string, value string) {
+func addLicenseServerURL(urls *[]string, value string, allowInsecureHTTP bool) {
 	clean := strings.TrimRight(strings.TrimSpace(value), "/")
-	if clean == "" {
+	if clean == "" || !licenseServerURLAllowed(clean, allowInsecureHTTP) {
 		return
 	}
 	for _, existing := range *urls {
@@ -155,6 +161,23 @@ func addLicenseServerURL(urls *[]string, value string) {
 		}
 	}
 	*urls = append(*urls, clean)
+}
+
+func licenseServerURLAllowed(value string, allowInsecureHTTP bool) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "https":
+		return true
+	case "http":
+		host := parsed.Hostname()
+		ip := net.ParseIP(host)
+		return allowInsecureHTTP || strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback())
+	default:
+		return false
+	}
 }
 
 func (s *ClientService) SetRemoteExecutor(executor RemoteExecutor) {
@@ -412,7 +435,14 @@ func (s *ClientService) pollRemote(commandsOnly bool) (*RemotePollOutcome, error
 		return outcome, err
 	}
 	for _, command := range response.Commands {
-		plain, err := DecryptRemoteEnvelope(key, command.Envelope)
+		err := s.verifier.VerifyRemoteCommand(command, s.deviceID, s.currentTime())
+		if err == nil {
+			err = s.rememberRemoteCommand(command)
+		}
+		var plain []byte
+		if err == nil {
+			plain, err = DecryptRemoteEnvelope(key, command.Envelope)
+		}
 		status := RemoteCommandStatusFailed
 		var snapshot *RemoteSnapshot
 		var result *RemoteCommandResult
@@ -482,7 +512,7 @@ func (s *ClientService) remoteCapabilityReport() RemoteCapabilityReport {
 	if err != nil {
 		return RemoteCapabilityReport{}
 	}
-	return RemoteCapabilityReport{
+	report := RemoteCapabilityReport{
 		Supported: true,
 		Enabled:   true,
 		PublicKey: EncodeRemotePublicKey(key.PublicKey()),
@@ -492,9 +522,58 @@ func (s *ClientService) remoteCapabilityReport() RemoteCapabilityReport {
 			"endpoints:thinking:v2",
 			"token_pool:view",
 			"token_pool:write",
-			"secrets:reveal",
 		},
 	}
+	if envBool("AINEXUS_ALLOW_REMOTE_SECRET_REVEAL") {
+		report.Capabilities = append(report.Capabilities, "secrets:reveal")
+	}
+	return report
+}
+
+type rememberedRemoteCommand struct {
+	Nonce     string    `json:"nonce"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+func (s *ClientService) rememberRemoteCommand(command RemoteCommandRecord) error {
+	if s == nil || s.store == nil {
+		return fmt.Errorf("remote replay protection storage unavailable")
+	}
+	now := s.currentTime().UTC()
+	var remembered []rememberedRemoteCommand
+	raw, err := s.store.GetConfig(clientRemoteReplayConfigKey)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &remembered); err != nil {
+			return fmt.Errorf("load remote replay state: %w", err)
+		}
+	}
+	filtered := make([]rememberedRemoteCommand, 0, len(remembered)+1)
+	for _, item := range remembered {
+		if strings.TrimSpace(item.Nonce) == strings.TrimSpace(command.CommandNonce) {
+			return fmt.Errorf("remote command replay detected")
+		}
+		if item.ExpiresAt.IsZero() || now.Before(item.ExpiresAt.UTC()) {
+			filtered = append(filtered, item)
+		}
+	}
+	filtered = append(filtered, rememberedRemoteCommand{
+		Nonce:     strings.TrimSpace(command.CommandNonce),
+		ExpiresAt: command.ExpiresAt.UTC().Add(24 * time.Hour),
+	})
+	if len(filtered) > maxRememberedRemoteCommands {
+		filtered = filtered[len(filtered)-maxRememberedRemoteCommands:]
+	}
+	data, err := json.Marshal(filtered)
+	if err != nil {
+		return err
+	}
+	if err := s.store.SetConfig(clientRemoteReplayConfigKey, string(data)); err != nil {
+		return fmt.Errorf("persist remote replay state: %w", err)
+	}
+	return nil
 }
 
 func (s *ClientService) ensureRemoteKey() (*ecdh.PrivateKey, error) {
@@ -663,6 +742,15 @@ func serverURLInList(values []string, value string) bool {
 		}
 	}
 	return false
+}
+
+func envBool(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *ClientService) loadState() (*ClientState, error) {

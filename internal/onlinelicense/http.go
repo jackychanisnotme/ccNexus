@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,8 +19,10 @@ import (
 )
 
 const (
-	adminSessionCookieName = "ccnexus_admin_session"
-	defaultAdminSessionTTL = 12 * time.Hour
+	adminSessionCookieName  = "ccnexus_admin_session"
+	defaultAdminSessionTTL  = 12 * time.Hour
+	defaultRequestBodyLimit = 128 << 10
+	remoteRequestBodyLimit  = 2 << 20
 )
 
 type AdminConfig struct {
@@ -49,8 +52,9 @@ type adminSessionStore struct {
 }
 
 type rateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]rateBucket
+	mu          sync.Mutex
+	buckets     map[string]rateBucket
+	lastCleanup time.Time
 }
 
 type rateBucket struct {
@@ -86,6 +90,9 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimRight(r.URL.Path, "/")
 	if path == "" {
 		path = "/"
+	}
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, requestBodyLimit(path))
 	}
 	switch {
 	case path == "/api/license/activate":
@@ -166,6 +173,10 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.allowRate(w, r, "admin_login", 5, time.Minute) {
+		return
+	}
+	if !validAdminRequestOrigin(r) {
+		writeJSONError(w, http.StatusForbidden, "cross-site request rejected")
 		return
 	}
 	var req AdminLoginRequest
@@ -773,6 +784,10 @@ func (h *HTTPHandler) serveAdmin(w http.ResponseWriter, r *http.Request, handler
 
 func (h *HTTPHandler) serveAdminMutation(w http.ResponseWriter, r *http.Request, handler http.HandlerFunc) {
 	h.withAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validAdminRequestOrigin(r) {
+			writeJSONError(w, http.StatusForbidden, "cross-site request rejected")
+			return
+		}
 		if !h.allowRate(w, r, "admin_mutation", 60, time.Minute) {
 			return
 		}
@@ -855,8 +870,8 @@ func (h *HTTPHandler) sessionCookie(r *http.Request, token string, expiresAt tim
 		Expires:  expiresAt,
 		MaxAge:   int(h.admin.SessionTTL.Seconds()),
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   requestIsSecure(r),
 	}
 }
 
@@ -868,8 +883,8 @@ func (h *HTTPHandler) expiredSessionCookie(r *http.Request) *http.Cookie {
 		Expires:  time.Unix(0, 0).UTC(),
 		MaxAge:   -1,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   requestIsSecure(r),
 	}
 }
 
@@ -934,6 +949,14 @@ func (l *rateLimiter) allow(key string, limit int, window time.Duration, now tim
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.lastCleanup.IsZero() || now.Sub(l.lastCleanup) >= time.Minute {
+		for bucketKey, candidate := range l.buckets {
+			if !now.Before(candidate.ResetAt) {
+				delete(l.buckets, bucketKey)
+			}
+		}
+		l.lastCleanup = now
+	}
 	bucket := l.buckets[key]
 	if bucket.ResetAt.IsZero() || !now.Before(bucket.ResetAt) {
 		bucket = rateBucket{ResetAt: now.Add(window)}
@@ -994,13 +1017,70 @@ func pathID(path, prefix, suffix string) (int64, error) {
 }
 
 func clientIP(r *http.Request) string {
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-		parts := strings.Split(forwarded, ",")
-		return strings.TrimSpace(parts[0])
+	if trustedLoopbackProxy(r) {
+		if realIP := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); realIP != nil {
+			return realIP.String()
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		return host
 	}
 	return r.RemoteAddr
+}
+
+func requestBodyLimit(path string) int64 {
+	switch path {
+	case "/api/license/remote/result", "/api/license/telemetry/endpoint-errors":
+		return remoteRequestBodyLimit
+	default:
+		return defaultRequestBodyLimit
+	}
+}
+
+func trustedLoopbackProxy(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
+		host = strings.TrimSpace(r.RemoteAddr)
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func requestIsSecure(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	return trustedLoopbackProxy(r) && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+}
+
+func validAdminRequestOrigin(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
+		return sameRequestOrigin(r, origin)
+	}
+	if referer := strings.TrimSpace(r.Header.Get("Referer")); referer != "" {
+		return sameRequestOrigin(r, referer)
+	}
+	return true
+}
+
+func sameRequestOrigin(r *http.Request, value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	expectedScheme := "http"
+	if requestIsSecure(r) {
+		expectedScheme = "https"
+	}
+	return strings.EqualFold(parsed.Scheme, expectedScheme) && strings.EqualFold(parsed.Host, r.Host)
 }

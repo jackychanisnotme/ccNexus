@@ -111,6 +111,172 @@ func TestOpenAIResponsesStreamHeartbeatDoesNotReplaceRealResponseID(t *testing.T
 	}
 }
 
+func TestOpenAIPythonResponsesMetadataFirstSynthesizesCreated(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"codex.response.metadata","request_id":"req-metadata-first"}`,
+			"",
+			`data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"type":"message","id":"msg-metadata-first","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello hermes"}]}}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+	p.streamHeartbeatInterval = time.Hour
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "OpenAI/Python_2.31.0")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if got := sseBlockEventType(body); got != "response.created" {
+		t.Fatalf("first downstream event type = %q, want response.created; body=%q", got, body)
+	}
+	if strings.Contains(body, "codex.response.metadata") {
+		t.Fatalf("private Codex metadata leaked to OpenAI Python client: %q", body)
+	}
+	if count := strings.Count(body, `"type":"response.created"`); count != 1 {
+		t.Fatalf("response.created count = %d, want 1; body=%q", count, body)
+	}
+	if !strings.Contains(body, `"id":"resp_ainexus_waiting"`) ||
+		!strings.Contains(body, "hello hermes") ||
+		!strings.Contains(body, `"type":"response.completed"`) {
+		t.Fatalf("expected synthesized created and completed response, got %q", body)
+	}
+}
+
+func TestOpenAIPythonResponsesMetadataBeforeRealCreatedPreservesRealID(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"codex.response.metadata","request_id":"req-real-created"}`,
+			"",
+			`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-real-created","object":"response","status":"in_progress","model":"gpt-5.6-sol","output":[]}}`,
+			"",
+			`data: {"type":"response.output_text.delta","sequence_number":2,"output_index":0,"content_index":0,"item_id":"msg-real-created","delta":"ok"}`,
+			"",
+			`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp-real-created","object":"response","status":"completed","model":"gpt-5.6-sol","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[{"type":"message","id":"msg-real-created","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}]}}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+	p.streamHeartbeatInterval = time.Hour
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "OpenAI/Python_2.31.0")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if got := sseBlockEventType(body); got != "response.created" {
+		t.Fatalf("first downstream event type = %q, want response.created; body=%q", got, body)
+	}
+	if strings.Contains(body, "codex.response.metadata") {
+		t.Fatalf("private Codex metadata leaked to OpenAI Python client: %q", body)
+	}
+	if count := strings.Count(body, `"type":"response.created"`); count != 1 {
+		t.Fatalf("response.created count = %d, want 1; body=%q", count, body)
+	}
+	if !strings.Contains(body, `"id":"resp-real-created"`) {
+		t.Fatalf("expected real response ID to be preserved, got %q", body)
+	}
+}
+
+func TestOpenAIPythonResponsesHeartbeatThenRealCreatedDoesNotDuplicate(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		time.Sleep(80 * time.Millisecond)
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"codex.response.metadata","request_id":"req-heartbeat-created"}`,
+			"",
+			`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-late-real","object":"response","status":"in_progress","model":"gpt-5.6-sol","output":[]}}`,
+			"",
+			`data: {"type":"response.output_text.delta","sequence_number":2,"output_index":0,"content_index":0,"item_id":"msg-late-real","delta":"late ok"}`,
+			"",
+			`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp-late-real","object":"response","status":"completed","model":"gpt-5.6-sol","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3},"output":[{"type":"message","id":"msg-late-real","role":"assistant","status":"completed","content":[{"type":"output_text","text":"late ok"}]}]}}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+	p.streamHeartbeatInterval = 20 * time.Millisecond
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "OpenAI/Python_2.31.0")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if got := sseBlockEventType(body); got != "response.created" {
+		t.Fatalf("first downstream event type = %q, want response.created; body=%q", got, body)
+	}
+	if strings.Contains(body, "codex.response.metadata") {
+		t.Fatalf("private Codex metadata leaked to OpenAI Python client: %q", body)
+	}
+	if count := strings.Count(body, `"type":"response.created"`); count != 1 {
+		t.Fatalf("response.created count = %d, want 1; body=%q", count, body)
+	}
+}
+
+func TestCodexDesktopResponsesKeepsCodexMetadata(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"codex.response.metadata","request_id":"req-codex-desktop"}`,
+			"",
+			`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp-codex-desktop","object":"response","status":"in_progress","model":"gpt-5.6-sol","output":[]}}`,
+			"",
+			`data: {"type":"response.output_text.delta","sequence_number":2,"output_index":0,"content_index":0,"item_id":"msg-codex-desktop","delta":"desktop ok"}`,
+			"",
+			`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp-codex-desktop","object":"response","status":"completed","model":"gpt-5.6-sol","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3},"output":[{"type":"message","id":"msg-codex-desktop","role":"assistant","status":"completed","content":[{"type":"output_text","text":"desktop ok"}]}]}}`,
+			"",
+			"",
+		}, "\n")))
+	}))
+	defer upstream.Close()
+
+	p := newFailoverPolicyTestProxy([]config.Endpoint{
+		failoverPolicyTestEndpoint("Primary", upstream.URL),
+	}, upstream.Client())
+	p.streamHeartbeatInterval = time.Hour
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Codex_Desktop/0.142.0-alpha.1")
+	rec := httptest.NewRecorder()
+
+	p.handleProxy(rec, req)
+
+	body := rec.Body.String()
+	if got := sseBlockEventType(body); got != "codex.response.metadata" {
+		t.Fatalf("first downstream event type = %q, want codex.response.metadata; body=%q", got, body)
+	}
+	if !strings.Contains(body, `"id":"resp-codex-desktop"`) {
+		t.Fatalf("expected real Codex response to remain intact, got %q", body)
+	}
+}
+
 // TestOpenAIResponsesStreamFromChatUpstreamEmitsCreatedOnce verifies that when
 // a Codex Desktop /v1/responses streaming client hits a Poe (OpenAI Chat)
 // upstream behind AINexus, the downstream SSE body contains exactly one

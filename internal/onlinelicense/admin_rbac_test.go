@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -244,6 +245,55 @@ func TestRootAdminResponsesKeepAbsoluteLevels(t *testing.T) {
 	}
 	if levels["admin"] != AdminLevelRoot || levels["reseller"] != AdminLevelReseller {
 		t.Fatalf("root account levels = %#v, want absolute levels", levels)
+	}
+}
+
+func TestNonRootCannotEscalateAccountHierarchyToRoot(t *testing.T) {
+	_, service := newRBACService(t)
+	root, err := service.EnsureBootstrapAdmin("root", "root-pass")
+	if err != nil {
+		t.Fatalf("bootstrap root: %v", err)
+	}
+	reseller, err := service.CreateAdminAccount(root, CreateAdminAccountRequest{
+		Username: "reseller",
+		Password: "reseller-pass",
+		Level:    AdminLevelReseller,
+	})
+	if err != nil {
+		t.Fatalf("create reseller: %v", err)
+	}
+
+	if _, err := service.CreateAdminAccount(reseller, CreateAdminAccountRequest{
+		Username: "forged-root",
+		Password: "forged-pass",
+		Level:    AdminLevelRoot,
+		ParentID: reseller.ID,
+	}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("reseller create-root error = %v, want ErrForbidden", err)
+	}
+	if _, err := service.CreateAdminAccount(reseller, CreateAdminAccountRequest{
+		Username: "peer-reseller",
+		Password: "peer-pass",
+		Level:    AdminLevelReseller,
+		ParentID: reseller.ID,
+	}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("reseller create-peer error = %v, want ErrForbidden", err)
+	}
+
+	distributor, err := service.CreateAdminAccount(reseller, CreateAdminAccountRequest{
+		Username: "distributor",
+		Password: "distributor-pass",
+		Level:    AdminLevelDistributor,
+		ParentID: reseller.ID,
+	})
+	if err != nil {
+		t.Fatalf("create distributor: %v", err)
+	}
+	if _, err := service.UpdateAdminAccount(reseller, distributor.ID, UpdateAdminAccountRequest{
+		Level:    AdminLevelRoot,
+		hasLevel: true,
+	}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("reseller promote-to-root error = %v, want ErrForbidden", err)
 	}
 }
 

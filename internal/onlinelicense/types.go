@@ -23,9 +23,11 @@ const (
 	DefaultLicenseServerDomainURL = "https://license.wenche.xyz"
 	DefaultLicenseServerIPURL     = "http://207.57.134.147:24220"
 	DefaultLicenseServerURL       = DefaultLicenseServerDomainURL
+
+	RemoteCommandSignatureVersion = "ainexus-remote-command-v1"
 )
 
-var DefaultLicenseServerURLs = []string{DefaultLicenseServerDomainURL, DefaultLicenseServerIPURL}
+var DefaultLicenseServerURLs = []string{DefaultLicenseServerDomainURL}
 
 const (
 	AdminLevelRoot        = 1
@@ -66,7 +68,8 @@ const (
 )
 
 type Options struct {
-	Now func() time.Time
+	Now                       func() time.Time
+	RemoteSecretRevealEnabled bool
 }
 
 type GenerateCardsRequest struct {
@@ -484,20 +487,22 @@ type RemotePollOutcome struct {
 }
 
 type RemoteCommandRecord struct {
-	ID          int64                 `json:"id"`
-	DeviceID    string                `json:"deviceId"`
-	CommandType string                `json:"commandType"`
-	Status      string                `json:"status"`
-	ActorID     int64                 `json:"actorId,omitempty"`
-	ActorName   string                `json:"actorName,omitempty"`
-	Summary     *RemoteCommandSummary `json:"summary,omitempty"`
-	Envelope    RemoteEnvelope        `json:"envelope,omitempty"`
-	Result      string                `json:"result,omitempty"`
-	ResultJSON  *RemoteCommandResult  `json:"resultJson,omitempty"`
-	Error       string                `json:"error,omitempty"`
-	ExpiresAt   time.Time             `json:"expiresAt,omitempty"`
-	CreatedAt   time.Time             `json:"createdAt"`
-	UpdatedAt   time.Time             `json:"updatedAt"`
+	ID           int64                 `json:"id"`
+	DeviceID     string                `json:"deviceId"`
+	CommandType  string                `json:"commandType"`
+	Status       string                `json:"status"`
+	CommandNonce string                `json:"commandNonce,omitempty"`
+	Signature    string                `json:"signature,omitempty"`
+	ActorID      int64                 `json:"actorId,omitempty"`
+	ActorName    string                `json:"actorName,omitempty"`
+	Summary      *RemoteCommandSummary `json:"summary,omitempty"`
+	Envelope     RemoteEnvelope        `json:"envelope,omitempty"`
+	Result       string                `json:"result,omitempty"`
+	ResultJSON   *RemoteCommandResult  `json:"resultJson,omitempty"`
+	Error        string                `json:"error,omitempty"`
+	ExpiresAt    time.Time             `json:"expiresAt,omitempty"`
+	CreatedAt    time.Time             `json:"createdAt"`
+	UpdatedAt    time.Time             `json:"updatedAt"`
 }
 
 type RemoteCommandSummary struct {

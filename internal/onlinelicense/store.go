@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -23,6 +24,10 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	}
 	store := &SQLiteStore{db: db}
 	if err := store.init(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureDatabaseFilePermissions(path); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -116,6 +121,8 @@ func (s *SQLiteStore) init() error {
 		device_id TEXT NOT NULL,
 		command_type TEXT NOT NULL,
 		status TEXT NOT NULL,
+		command_nonce TEXT,
+		signature TEXT,
 		actor_account_id INTEGER NOT NULL DEFAULT 0,
 		actor_username TEXT,
 		owner_account_id INTEGER NOT NULL DEFAULT 0,
@@ -202,6 +209,8 @@ func (s *SQLiteStore) init() error {
 		{"license_remote_commands", "summary_json", "TEXT"},
 		{"license_remote_commands", "result_json", "TEXT"},
 		{"license_remote_commands", "expires_at", "DATETIME"},
+		{"license_remote_commands", "command_nonce", "TEXT"},
+		{"license_remote_commands", "signature", "TEXT"},
 	} {
 		if err := s.ensureColumn(column.table, column.name, column.definition); err != nil {
 			return err
@@ -467,10 +476,11 @@ func (s *SQLiteStore) CreateRemoteCommand(command *RemoteCommandRecord, ownerAcc
 	}
 	result, err := s.db.Exec(`
 		INSERT INTO license_remote_commands (
-			device_id, command_type, status, actor_account_id, actor_username, owner_account_id,
+			device_id, command_type, status, command_nonce, signature, actor_account_id, actor_username, owner_account_id,
 			envelope_json, summary_json, result, result_json, error, expires_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, strings.TrimSpace(command.DeviceID), strings.TrimSpace(command.CommandType), command.Status, command.ActorID,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, strings.TrimSpace(command.DeviceID), strings.TrimSpace(command.CommandType), command.Status,
+		strings.TrimSpace(command.CommandNonce), strings.TrimSpace(command.Signature), command.ActorID,
 		strings.TrimSpace(command.ActorName), ownerAccountID, string(envelope), remoteCommandSummaryJSON(command.Summary),
 		command.Result, remoteCommandResultJSON(command.ResultJSON), command.Error,
 		nullableFormattedTime(command.ExpiresAt),
@@ -495,7 +505,8 @@ func (s *SQLiteStore) ListRemoteCommands(deviceID string, limit int) ([]RemoteCo
 		limit = 20
 	}
 	rows, err := s.db.Query(`
-		SELECT id, device_id, command_type, status, actor_account_id, COALESCE(actor_username,''),
+		SELECT id, device_id, command_type, status, COALESCE(command_nonce,''), COALESCE(signature,''),
+			actor_account_id, COALESCE(actor_username,''),
 			envelope_json, COALESCE(summary_json,''), COALESCE(result,''), COALESCE(result_json,''), COALESCE(error,''), expires_at, created_at, updated_at
 		FROM license_remote_commands
 		WHERE device_id=?
@@ -522,7 +533,8 @@ func (s *SQLiteStore) ListQueuedRemoteCommands(deviceID string, limit int) ([]Re
 		limit = 10
 	}
 	rows, err := s.db.Query(`
-		SELECT id, device_id, command_type, status, actor_account_id, COALESCE(actor_username,''),
+		SELECT id, device_id, command_type, status, COALESCE(command_nonce,''), COALESCE(signature,''),
+			actor_account_id, COALESCE(actor_username,''),
 			envelope_json, COALESCE(summary_json,''), COALESCE(result,''), COALESCE(result_json,''), COALESCE(error,''), expires_at, created_at, updated_at
 		FROM license_remote_commands
 		WHERE device_id=? AND status=?
@@ -590,12 +602,36 @@ func (s *SQLiteStore) MarkRemoteCommandsDelivered(deviceID string, commandIDs []
 
 func (s *SQLiteStore) GetRemoteCommand(deviceID string, commandID int64) (*RemoteCommandRecord, error) {
 	row := s.db.QueryRow(`
-		SELECT id, device_id, command_type, status, actor_account_id, COALESCE(actor_username,''),
+		SELECT id, device_id, command_type, status, COALESCE(command_nonce,''), COALESCE(signature,''),
+			actor_account_id, COALESCE(actor_username,''),
 			envelope_json, COALESCE(summary_json,''), COALESCE(result,''), COALESCE(result_json,''), COALESCE(error,''), expires_at, created_at, updated_at
 		FROM license_remote_commands
 		WHERE device_id=? AND id=?
 	`, strings.TrimSpace(deviceID), commandID)
 	return scanRemoteCommand(row)
+}
+
+func (s *SQLiteStore) UpdateRemoteCommandSignature(deviceID string, commandID int64, commandNonce, signature string, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	result, err := s.db.Exec(`
+		UPDATE license_remote_commands
+		SET command_nonce=?, signature=?, updated_at=?
+		WHERE id=? AND device_id=? AND status=?
+	`, strings.TrimSpace(commandNonce), strings.TrimSpace(signature), formatTime(now),
+		commandID, strings.TrimSpace(deviceID), RemoteCommandStatusQueued)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *SQLiteStore) UpdateRemoteCommandResult(deviceID string, commandID int64, status, resultText, errorText string, resultJSON *RemoteCommandResult, expiresAt time.Time, now time.Time) error {
@@ -784,7 +820,8 @@ func scanRemoteCommand(scanner interface {
 	var rawSummary string
 	var rawResult string
 	var expiresAt sql.NullTime
-	if err := scanner.Scan(&command.ID, &command.DeviceID, &command.CommandType, &command.Status, &command.ActorID,
+	if err := scanner.Scan(&command.ID, &command.DeviceID, &command.CommandType, &command.Status,
+		&command.CommandNonce, &command.Signature, &command.ActorID,
 		&command.ActorName, &rawEnvelope, &rawSummary, &command.Result, &rawResult, &command.Error, &expiresAt, &command.CreatedAt, &command.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -807,6 +844,19 @@ func scanRemoteCommand(scanner interface {
 	command.CreatedAt = command.CreatedAt.UTC()
 	command.UpdatedAt = command.UpdatedAt.UTC()
 	return &command, nil
+}
+
+func ensureDatabaseFilePermissions(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return nil
+	}
+	for _, candidate := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(candidate, 0600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("secure database file %s: %w", candidate, err)
+		}
+	}
+	return nil
 }
 
 func normalizeEndpointErrorTelemetryItem(item EndpointErrorTelemetryItem) EndpointErrorTelemetryItem {

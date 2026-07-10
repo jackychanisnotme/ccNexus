@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/lich0821/ccNexus/internal/onlinelicense"
 )
@@ -42,7 +43,9 @@ func main() {
 		log.Fatal("CCNEXUS_LICENSE_ADMIN_PASSWORD is required")
 	}
 
-	service := onlinelicense.NewService(store, privateKey, onlinelicense.Options{})
+	service := onlinelicense.NewService(store, privateKey, onlinelicense.Options{
+		RemoteSecretRevealEnabled: envBool("CCNEXUS_LICENSE_REMOTE_SECRET_REVEAL_ENABLED"),
+	})
 	if _, err := service.EnsureBootstrapAdmin(admin.Username, admin.Password); err != nil {
 		log.Fatalf("bootstrap admin account: %v", err)
 	}
@@ -66,7 +69,16 @@ func main() {
 	log.Printf("AINexus license server listening on %s", addr)
 	log.Printf("admin: http://%s/admin/", addr)
 	log.Printf("public key for client builds: %s", base64.StdEncoding.EncodeToString(publicKey))
-	if err := http.ListenAndServe(addr, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       20 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    64 << 10,
+	}
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server stopped: %v", err)
 	}
 }
@@ -147,6 +159,15 @@ func envInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func adminPage(w http.ResponseWriter, r *http.Request) {

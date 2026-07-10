@@ -91,6 +91,44 @@ func TestRemoteManagementSnapshotIncludesModelAndThinking(t *testing.T) {
 	}
 }
 
+func TestRemoteManagementSnapshotStripsURLCredentialsQueryAndFragment(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.UpdateEndpoints([]config.Endpoint{{
+		Name:        "Sensitive URL",
+		APIUrl:      "https://user:password@example.com/v1/responses?api_key=url-secret#token-fragment",
+		APIKey:      "header-secret",
+		AuthMode:    config.AuthModeAPIKey,
+		Enabled:     true,
+		Transformer: "openai2",
+	}})
+	executor := NewRemoteManagementExecutor(cfg, nil, nil)
+	snapshot, err := executor.Snapshot()
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snapshot.Endpoints) != 1 || snapshot.Endpoints[0].APIUrl != "https://example.com/v1/responses" {
+		t.Fatalf("sanitized API URL = %#v", snapshot.Endpoints)
+	}
+	wire := mustJSONString(t, snapshot)
+	for _, secret := range []string{"user", "password", "url-secret", "token-fragment", "header-secret"} {
+		if strings.Contains(wire, secret) {
+			t.Fatalf("snapshot leaked %q: %s", secret, wire)
+		}
+	}
+}
+
+func TestRemoteManagementExecutorRejectsSecretRevealByDefault(t *testing.T) {
+	t.Setenv("AINEXUS_ALLOW_REMOTE_SECRET_REVEAL", "")
+	executor := NewRemoteManagementExecutor(config.DefaultConfig(), nil, nil)
+	_, err := executor.ExecuteRemoteCommand(onlinelicense.RemoteCommandPayload{
+		CommandType: "secret.reveal",
+		Payload:     json.RawMessage(`{}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("secret reveal error = %v, want disabled", err)
+	}
+}
+
 func TestRemoteManagementExecutorUpdatePreservesOmittedFields(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.UpdateEndpoints([]config.Endpoint{{
@@ -403,6 +441,7 @@ func TestRemoteManagementExecutorRejectsInvalidReorderWithoutChangingConfig(t *t
 }
 
 func TestRemoteManagementExecutorSecretRevealEncryptsAPIKey(t *testing.T) {
+	t.Setenv("AINEXUS_ALLOW_REMOTE_SECRET_REVEAL", "true")
 	cfg := config.DefaultConfig()
 	cfg.UpdateEndpoints([]config.Endpoint{{
 		Name:        "Existing",

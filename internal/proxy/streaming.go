@@ -42,19 +42,24 @@ func openAIResponsesWaitingCreatedEvent() []byte {
 }
 
 type downstreamStreamSession struct {
-	w                       http.ResponseWriter
-	flusher                 http.Flusher
-	heartbeatInterval       time.Duration
-	clientFormat            ClientFormat
-	done                    chan struct{}
-	mu                      sync.Mutex
-	closeOnce               sync.Once
-	heartbeatOnce           sync.Once
-	started                 bool
-	closed                  bool
-	responsesCreatedWritten bool
-	responsesWaitingCreated bool
-	synthesizeMissingDone   bool
+	w                        http.ResponseWriter
+	flusher                  http.Flusher
+	heartbeatInterval        time.Duration
+	clientFormat             ClientFormat
+	done                     chan struct{}
+	mu                       sync.Mutex
+	closeOnce                sync.Once
+	heartbeatOnce            sync.Once
+	started                  bool
+	closed                   bool
+	strictResponsesProtocol  bool
+	responsesCreatedWritten  bool
+	responsesCreatedReserved bool
+	responsesWaitingCreated  bool
+	responsesCreatedID       string
+	responsesCreatedModel    string
+	responsesCreatedSequence int
+	synthesizeMissingDone    bool
 }
 
 func newDownstreamStreamSession(w http.ResponseWriter, heartbeatInterval time.Duration, clientFormat ClientFormat) *downstreamStreamSession {
@@ -218,7 +223,7 @@ func (s *downstreamStreamSession) writeOpenAIResponsesWaitingCreatedIfNeeded() (
 	if s.closed {
 		return false, fmt.Errorf("downstream stream is closed")
 	}
-	if s.responsesCreatedWritten {
+	if s.responsesCreatedWritten || s.responsesCreatedReserved {
 		return false, nil
 	}
 	if _, err := s.w.Write(openAIResponsesWaitingCreatedEvent()); err != nil {
@@ -226,8 +231,61 @@ func (s *downstreamStreamSession) writeOpenAIResponsesWaitingCreatedIfNeeded() (
 	}
 	s.responsesCreatedWritten = true
 	s.responsesWaitingCreated = true
+	s.responsesCreatedID = openAIResponsesWaitingID
+	s.responsesCreatedSequence = 1
 	s.flusher.Flush()
 	return true, nil
+}
+
+func (s *downstreamStreamSession) prepareOpenAIResponsesData(data []byte) []byte {
+	if s == nil ||
+		len(data) == 0 ||
+		s.clientFormat != ClientFormatOpenAIResponses ||
+		!s.strictResponsesProtocol {
+		return data
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	parts := strings.SplitAfter(string(data), "\n\n")
+	var prepared strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		eventType := strings.TrimSpace(sseBlockEventType(part))
+		if strings.HasPrefix(strings.ToLower(eventType), "codex.") {
+			continue
+		}
+		if eventType == "response.created" {
+			if s.responsesCreatedWritten || s.responsesCreatedReserved {
+				continue
+			}
+			s.responsesCreatedReserved = true
+			prepared.WriteString(part)
+			continue
+		}
+		if eventType != "" && !s.responsesCreatedWritten && !s.responsesCreatedReserved {
+			prepared.Write(openAIResponsesWaitingCreatedEvent())
+			s.responsesCreatedReserved = true
+			s.responsesWaitingCreated = true
+		}
+		prepared.WriteString(part)
+	}
+	return []byte(prepared.String())
+}
+
+func (s *downstreamStreamSession) releaseOpenAIResponsesCreatedReservation() {
+	if s == nil || s.clientFormat != ClientFormatOpenAIResponses || !s.strictResponsesProtocol {
+		return
+	}
+	s.mu.Lock()
+	if !s.responsesCreatedWritten {
+		s.responsesCreatedReserved = false
+		s.responsesWaitingCreated = false
+	}
+	s.mu.Unlock()
 }
 
 func (s *downstreamStreamSession) primeStreamContext(ctx *transformer.StreamContext) {
@@ -245,6 +303,26 @@ func (s *downstreamStreamSession) primeStreamContext(ctx *transformer.StreamCont
 	ctx.ResponseSequenceNumber = 1
 }
 
+func (s *downstreamStreamSession) primeResponsesCompletionState(state *openAIResponsesCompletionState) {
+	if s == nil || state == nil || s.clientFormat != ClientFormatOpenAIResponses {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.responsesCreatedWritten {
+		return
+	}
+	if state.ResponseID == "" {
+		state.ResponseID = s.responsesCreatedID
+	}
+	if state.Model == "" {
+		state.Model = s.responsesCreatedModel
+	}
+	if s.responsesCreatedSequence > state.SequenceNumber {
+		state.SequenceNumber = s.responsesCreatedSequence
+	}
+}
+
 // filterDuplicateOpenAIResponsesCreatedLocked filters out duplicate response.created
 // SSE events from OpenAI Responses streams. Callers must pass data that contains
 // complete SSE blocks separated by \n\n; partial writes will split incorrectly.
@@ -260,17 +338,47 @@ func (s *downstreamStreamSession) filterDuplicateOpenAIResponsesCreatedLocked(da
 		}
 		if sseBlockEventType(part) == "response.created" {
 			if s.responsesCreatedWritten {
+				if s.strictResponsesProtocol {
+					continue
+				}
 				if s.responsesWaitingCreated {
 					s.responsesWaitingCreated = false
 					filtered.WriteString(part)
 				}
 				continue
 			}
+			if s.strictResponsesProtocol && s.responsesCreatedReserved {
+				s.responsesCreatedReserved = false
+			}
 			s.responsesCreatedWritten = true
+			s.responsesCreatedID, s.responsesCreatedModel, s.responsesCreatedSequence = openAIResponsesCreatedState(part)
 		}
 		filtered.WriteString(part)
 	}
 	return []byte(filtered.String())
+}
+
+func openAIResponsesCreatedState(block string) (string, string, int) {
+	scanner := bufio.NewScanner(strings.NewReader(block))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		jsonData := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonData), &payload); err != nil {
+			continue
+		}
+		if eventType, _ := payload["type"].(string); eventType != "response.created" {
+			continue
+		}
+		response, _ := payload["response"].(map[string]interface{})
+		id, _ := response["id"].(string)
+		model, _ := response["model"].(string)
+		return strings.TrimSpace(id), strings.TrimSpace(model), parseTokenNumber(payload["sequence_number"])
+	}
+	return "", "", 0
 }
 
 func sseBlockEventType(block string) string {
@@ -1133,6 +1241,10 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 	var pendingWrites bytes.Buffer
 	var outputText strings.Builder
 	var responsesCompletion openAIResponsesCompletionState
+	if streamSession != nil {
+		streamSession.primeResponsesCompletionState(&responsesCompletion)
+		defer streamSession.releaseOpenAIResponsesCreatedReservation()
+	}
 	eventCount := 0
 	streamDone := false
 	semanticDataSeen := false
@@ -1220,6 +1332,12 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 		if len(completedEvent) == 0 {
 			return false
 		}
+		if streamSession != nil {
+			completedEvent = streamSession.prepareOpenAIResponsesData(completedEvent)
+		}
+		if len(completedEvent) == 0 {
+			return false
+		}
 		responsesCompletion.observe(completedEvent)
 		streamInspection := inspectSemanticStreamEvent(completedEvent)
 		if writeErr := writeTransformedEvent(completedEvent, streamInspection.HasOutput, streamInspection.HasProgress); writeErr != nil {
@@ -1300,6 +1418,9 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 				streamSession.primeStreamContext(streamCtx)
 			}
 			transformedEvent, err := p.transformStreamEvent(eventData, trans, transformerName, streamCtx)
+			if err == nil && streamSession != nil {
+				transformedEvent = streamSession.prepareOpenAIResponsesData(transformedEvent)
+			}
 			if err == nil && len(transformedEvent) > 0 {
 				recordFirstTransformedEventType(transformedEvent)
 				logPoeResponsesDiagnostics(transformedEvent)
@@ -1375,6 +1496,9 @@ func (p *Proxy) handleStreamingResponse(ctx context.Context, w http.ResponseWrit
 				streamSession.primeStreamContext(streamCtx)
 			}
 			transformedEvent, err := p.transformStreamEvent(eventData, trans, transformerName, streamCtx)
+			if err == nil && streamSession != nil {
+				transformedEvent = streamSession.prepareOpenAIResponsesData(transformedEvent)
+			}
 			if err != nil {
 				logger.Error("[%s] Failed to transform SSE event: %v", endpoint.Name, err)
 				result.Reason = streamFinishTransformFailed

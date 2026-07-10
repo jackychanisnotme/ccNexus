@@ -53,8 +53,8 @@ go build ./cmd/server
 - PM2 进程：`ccnexus-license`
 - 端口：`24220`
 - HTTPS 入口：`https://license.wenche.xyz`
-- IP 备用入口：`http://207.57.134.147:24220`
-- 绑定：`0.0.0.0:24220`（如后续只保留 Nginx 反代，可改为 `127.0.0.1:24220`）
+- 绑定：`127.0.0.1:24220`
+- 公网入口：仅允许独立 Nginx HTTPS 入口
 
 必需环境变量：
 
@@ -67,20 +67,30 @@ CCNEXUS_LICENSE_ADMIN_PASSWORD=<strong-password>
 
 ```bash
 CCNEXUS_LICENSE_PORT=24220
-CCNEXUS_LICENSE_BIND=0.0.0.0
+CCNEXUS_LICENSE_BIND=127.0.0.1
 CCNEXUS_LICENSE_DATA_DIR=/var/www/ccnexus-license/shared
 CCNEXUS_LICENSE_DB_PATH=/var/www/ccnexus-license/shared/license.db
 CCNEXUS_LICENSE_KEY_PATH=/var/www/ccnexus-license/shared/private_key.txt
+CCNEXUS_LICENSE_REMOTE_SECRET_REVEAL_ENABLED=false
 CCNEXUS_LICENSE_SERVER_URL=https://license.wenche.xyz
-CCNEXUS_LICENSE_SERVER_URLS=https://license.wenche.xyz,http://207.57.134.147:24220
+CCNEXUS_LICENSE_SERVER_URLS=https://license.wenche.xyz
 ```
 
-客户端默认优先访问 HTTPS 域名，IP 直连作为备用。若构建或运行环境只设置 `CCNEXUS_LICENSE_SERVER_URL=http://207.57.134.147:24220`，新版客户端会自动把 `https://license.wenche.xyz` 加为备用；若设置 `CCNEXUS_LICENSE_SERVER_URLS`，则按列表顺序尝试并自动去重。
+客户端默认只访问 HTTPS 域名。`http://127.0.0.1` 和 `http://localhost` 仅用于本机开发；其他明文 HTTP 地址只有在显式设置 `CCNEXUS_LICENSE_ALLOW_INSECURE_HTTP=true` 时才会接受，客户环境禁止启用。
+
+远程密钥回传必须同时满足：
+
+```bash
+CCNEXUS_LICENSE_REMOTE_SECRET_REVEAL_ENABLED=true
+AINEXUS_ALLOW_REMOTE_SECRET_REVEAL=true
+```
+
+默认保持两项关闭。远程命令必须带 Ed25519 签名，客户端必须验证签名、过期时间和 nonce 防重放；服务端会在投递前为升级前遗留的完整 queued 命令补签。
 
 ## 维护流程
 
 1. 先确认 `ccnexus-license` 进程在线。
-2. 检查 `24220` 是否监听。
+2. 检查 `24220` 是否只监听 `127.0.0.1`。
 3. 生成卡密时只保存哈希，不要把明文写回日志、数据库或配置。
 4. App 侧必须使用在线激活，不要把旧离线卡密流程加回来。
 5. 修改桌面端时，确保 `CCNEXUS_LICENSE_PUBLIC_KEY` 仍正确嵌入。
@@ -90,6 +100,10 @@ CCNEXUS_LICENSE_SERVER_URLS=https://license.wenche.xyz,http://207.57.134.147:242
 go test ./... -count=1
 go vet ./...
 ```
+
+部署时必须新建 release 目录，停掉 `ccnexus-license` 后备份 `license.db`、`license.db-wal`、`license.db-shm`，保留上一版 release 和旧 Nginx 配置。只重启 `ccnexus-license`，不要操作共享服务器上的其他 PM2 进程。
+
+客户端签名校验和 HTTPS-only 逻辑只有在客户安装新版本后才生效。服务端部署完成后仍需安排客户端升级，不能把服务端加固视为已替换存量客户端。
 
 ## 常见问题
 
