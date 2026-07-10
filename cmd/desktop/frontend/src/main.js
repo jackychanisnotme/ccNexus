@@ -19,6 +19,7 @@ import { initFilterDropdowns, clearAllFilters } from './modules/filters.js'
 import { showAgentProviderModal, closeAgentProviderModal, selectAllAgentProviders, applyAgentProviderConfig, restoreAgentProviderBackup, openAgentProviderRestorePicker, closeAgentProviderRestorePicker, selectAllAgentProviderRestoreTargets, confirmAgentProviderRestore } from './modules/agentProvider.js'
 import { showAgentModal, closeAgentModal, runAgent, checkAgentConfigs, repairAgentConfigs, newAgentChat, selectAgentSession, deleteAgentChat, handleAgentComposerKeydown, handleAgentPromptInput } from './modules/agent.js'
 import { formatTokens } from './utils/format.js'
+import { summarizeRequestStats } from './utils/stats.js'
 import {
     showAddEndpointModal,
     showAddEndpointModalWithPreset,
@@ -77,6 +78,7 @@ function handleStatsUpdate(data) {
     // 1. Update header stats (top summary) using backend-provided aggregated data
     const totalStats = data.totals && data.totals[currentPeriod];
     if (totalStats) {
+        const requestSummary = summarizeRequestStats(totalStats.requests, totalStats.errors);
         const totalRequestsEl = document.getElementById('periodTotalRequests');
         const successRequestsEl = document.getElementById('periodSuccess');
         const failedRequestsEl = document.getElementById('periodFailed');
@@ -84,9 +86,9 @@ function handleStatsUpdate(data) {
         const totalInputTokensEl = document.getElementById('periodInputTokens');
         const totalOutputTokensEl = document.getElementById('periodOutputTokens');
 
-        if (totalRequestsEl) totalRequestsEl.textContent = totalStats.requests;
-        if (successRequestsEl) successRequestsEl.textContent = totalStats.requests - totalStats.errors;
-        if (failedRequestsEl) failedRequestsEl.textContent = totalStats.errors;
+        if (totalRequestsEl) totalRequestsEl.textContent = requestSummary.total;
+        if (successRequestsEl) successRequestsEl.textContent = requestSummary.success;
+        if (failedRequestsEl) failedRequestsEl.textContent = requestSummary.failed;
         if (totalTokensEl) totalTokensEl.textContent = formatTokens(totalStats.inputTokens + totalStats.outputTokens);
         if (totalInputTokensEl) totalInputTokensEl.textContent = formatTokens(totalStats.inputTokens);
         if (totalOutputTokensEl) totalOutputTokensEl.textContent = formatTokens(totalStats.outputTokens);

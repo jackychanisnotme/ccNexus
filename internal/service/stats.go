@@ -23,10 +23,17 @@ func NewStatsService(p *proxy.Proxy, cfg *config.Config, store *storage.SQLiteSt
 
 // GetStats returns current statistics
 func (s *StatsService) GetStats() string {
-	totalRequests, endpointStats := s.proxy.GetStats().GetStats()
+	totalSuccess, endpointStats := s.proxy.GetStats().GetStats()
+	totalErrors := 0
+	for _, stats := range endpointStats {
+		totalErrors += stats.Errors
+	}
 	data, _ := json.Marshal(map[string]interface{}{
-		"totalRequests": totalRequests,
-		"endpoints":     endpointStats,
+		"totalRequests":      totalSuccess,
+		"totalAttempts":      totalSuccess + totalErrors,
+		"successfulRequests": totalSuccess,
+		"totalErrors":        totalErrors,
+		"endpoints":          endpointStats,
 	})
 	return string(data)
 }
@@ -103,15 +110,17 @@ func (s *StatsService) getPeriodStatsFiltered(period, startDate, endDate string,
 	activeEndpoints, totalEndpoints := s.countEndpoints()
 
 	result := map[string]interface{}{
-		"period":            period,
-		"totalRequests":     totalRequests,
-		"totalErrors":       totalErrors,
-		"totalSuccess":      totalRequests - totalErrors,
-		"totalInputTokens":  totalInputTokens,
-		"totalOutputTokens": totalOutputTokens,
-		"activeEndpoints":   activeEndpoints,
-		"totalEndpoints":    totalEndpoints,
-		"endpoints":         stats,
+		"period":             period,
+		"totalRequests":      totalRequests,
+		"totalAttempts":      totalRequests + totalErrors,
+		"successfulRequests": totalRequests,
+		"totalErrors":        totalErrors,
+		"totalSuccess":       totalRequests - totalErrors,
+		"totalInputTokens":   totalInputTokens,
+		"totalOutputTokens":  totalOutputTokens,
+		"activeEndpoints":    activeEndpoints,
+		"totalEndpoints":     totalEndpoints,
+		"endpoints":          stats,
 	}
 	if startDate == endDate {
 		result["date"] = startDate

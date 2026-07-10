@@ -32,7 +32,10 @@ func TestStatsAPISupportsEndpointAndIPFilters(t *testing.T) {
 	}
 
 	stats := decodeStatsPayload(t, rec)
-	if stats["totalRequests"] != float64(2) || stats["totalErrors"] != float64(1) {
+	if stats["totalRequests"] != float64(2) ||
+		stats["totalAttempts"] != float64(3) ||
+		stats["successfulRequests"] != float64(2) ||
+		stats["totalErrors"] != float64(1) {
 		t.Fatalf("filtered totals = %#v, want only Primary 192.168.1.20", stats)
 	}
 	endpoints := stats["endpoints"].(map[string]interface{})
@@ -82,6 +85,36 @@ func TestStatsAPIFilterOptionsIncludeDeletedEndpointsAndClientIPs(t *testing.T) 
 	clientIPs := data["clientIps"].([]interface{})
 	if len(clientIPs) != 1 || clientIPs[0] != "192.168.1.50" {
 		t.Fatalf("client IP options = %#v, want [192.168.1.50]", clientIPs)
+	}
+}
+
+func TestStatsAPIIncludesErrorOnlyRowsWithoutNegativeSuccess(t *testing.T) {
+	store := newAPITestStorage(t)
+	cfg := config.DefaultConfig()
+	cfg.BasicAuthEnabled = false
+	proxyInstance := proxy.New(cfg, storage.NewStatsStorageAdapter(store), store, "test-device")
+	handler := NewHandler(cfg, proxyInstance, store)
+	today := time.Now().Format("2006-01-02")
+
+	seedAPIStat(t, store, "FailureOnly", today, "192.168.1.66", 0, 66, 0, 0)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/stats/daily?endpoint=FailureOnly", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET error-only stats status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	stats := decodeStatsPayload(t, rec)
+	if stats["totalRequests"] != float64(0) ||
+		stats["totalAttempts"] != float64(66) ||
+		stats["successfulRequests"] != float64(0) ||
+		stats["totalErrors"] != float64(66) {
+		t.Fatalf("error-only totals = %#v, want 66 total / 0 success / 66 errors", stats)
+	}
+	endpoints := stats["endpoints"].(map[string]interface{})
+	if _, ok := endpoints["FailureOnly"]; !ok {
+		t.Fatalf("error-only endpoint missing from response: %#v", endpoints)
 	}
 }
 

@@ -163,21 +163,25 @@ class Stats {
 
     renderStats(data) {
         const stats = data.stats || {};
+        const totalErrors = stats.totalErrors || 0;
+        const totalAttempts = stats.totalAttempts ?? ((stats.totalRequests || 0) + totalErrors);
+        const totalSuccess = stats.successfulRequests ??
+            Math.max((stats.totalRequests || 0) - totalErrors, 0);
         const container = document.getElementById('stats-content');
 
         container.innerHTML = `
             <div class="grid grid-cols-4 mb-4">
                 <div class="stat-card">
                     <div class="stat-label">${t('stats.totalRequests')}</div>
-                    <div class="stat-value">${formatNumber(stats.totalRequests || 0)}</div>
+                    <div class="stat-value">${formatNumber(totalAttempts)}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">${t('stats.successful')}</div>
-                    <div class="stat-value">${formatNumber(stats.totalSuccess || 0)}</div>
+                    <div class="stat-value">${formatNumber(totalSuccess)}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">${t('stats.errors')}</div>
-                    <div class="stat-value">${formatNumber(stats.totalErrors || 0)}</div>
+                    <div class="stat-value">${formatNumber(totalErrors)}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">${t('stats.totalTokens')}</div>

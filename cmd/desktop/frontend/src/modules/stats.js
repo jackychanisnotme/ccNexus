@@ -1,4 +1,5 @@
 import { formatTokens } from '../utils/format.js';
+import { summarizeRequestStats } from '../utils/stats.js';
 import { t } from '../i18n/index.js';
 
 let endpointStats = {}; // Backward compatibility - stores current period only
@@ -67,20 +68,19 @@ export async function loadStats() {
         const statsStr = await window.go.main.App.GetStats();
         const stats = JSON.parse(statsStr);
 
-        document.getElementById('totalRequests').textContent = stats.totalRequests;
-
         let totalSuccess = 0;
         let totalFailed = 0;
         let totalInputTokens = 0;
         let totalOutputTokens = 0;
 
         for (const epStats of Object.values(stats.endpoints || {})) {
-            totalSuccess += (epStats.requests - epStats.errors);
-            totalFailed += epStats.errors;
+            totalSuccess += epStats.requests || 0;
+            totalFailed += epStats.errors || 0;
             totalInputTokens += epStats.inputTokens || 0;
             totalOutputTokens += epStats.outputTokens || 0;
         }
 
+        document.getElementById('totalRequests').textContent = totalSuccess + totalFailed;
         document.getElementById('successRequests').textContent = totalSuccess;
         document.getElementById('failedRequests').textContent = totalFailed;
 
@@ -131,11 +131,17 @@ export async function loadStatsByPeriod(period = 'daily') {
         }
 
         const stats = JSON.parse(statsStr);
+        const requestSummary = summarizeRequestStats(
+            stats.successfulRequests ??
+                stats.totalSuccess ??
+                Math.max((stats.totalRequests || 0) - (stats.totalErrors || 0), 0),
+            stats.totalErrors
+        );
 
         // Update UI elements
-        document.getElementById('periodTotalRequests').textContent = stats.totalRequests || 0;
-        document.getElementById('periodSuccess').textContent = stats.totalSuccess || 0;
-        document.getElementById('periodFailed').textContent = stats.totalErrors || 0;
+        document.getElementById('periodTotalRequests').textContent = requestSummary.total;
+        document.getElementById('periodSuccess').textContent = requestSummary.success;
+        document.getElementById('periodFailed').textContent = requestSummary.failed;
 
         const totalTokens = (stats.totalInputTokens || 0) + (stats.totalOutputTokens || 0);
         document.getElementById('periodTotalTokens').textContent = formatTokens(totalTokens);
@@ -162,8 +168,8 @@ export async function loadStatsByPeriod(period = 'daily') {
 
             // Store aggregated totals in 4-period cache
             totalStatsCache[period] = {
-                requests: stats.totalRequests || 0,
-                errors: stats.totalErrors || 0,
+                requests: requestSummary.success,
+                errors: requestSummary.failed,
                 inputTokens: stats.totalInputTokens || 0,
                 outputTokens: stats.totalOutputTokens || 0
             };
@@ -395,10 +401,11 @@ function escapeOption(text) {
 function updateDOMFromCache(period) {
     const totals = totalStatsCache[period];
     if (!totals) return;
+    const requestSummary = summarizeRequestStats(totals.requests, totals.errors);
 
-    document.getElementById('periodTotalRequests').textContent = totals.requests || 0;
-    document.getElementById('periodSuccess').textContent = (totals.requests - totals.errors) || 0;
-    document.getElementById('periodFailed').textContent = totals.errors || 0;
+    document.getElementById('periodTotalRequests').textContent = requestSummary.total;
+    document.getElementById('periodSuccess').textContent = requestSummary.success;
+    document.getElementById('periodFailed').textContent = requestSummary.failed;
 
     const totalTokens = (totals.inputTokens || 0) + (totals.outputTokens || 0);
     document.getElementById('periodTotalTokens').textContent = formatTokens(totalTokens);

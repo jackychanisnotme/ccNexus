@@ -1,4 +1,5 @@
 import { formatTokens } from '../utils/format.js';
+import { summarizeRequestStats } from '../utils/stats.js';
 import { t } from '../i18n/index.js';
 import { showConfirm } from './modal.js';
 import { showNotification } from './modal.js';
@@ -221,19 +222,25 @@ function updateTrendDisplay(trend) {
 
 // Update summary statistics cards
 function updateSummaryCards(summary) {
+    const requestSummary = summarizeRequestStats(
+        summary.successfulRequests ??
+            summary.totalSuccess ??
+            Math.max((summary.totalRequests || 0) - (summary.totalErrors || 0), 0),
+        summary.totalErrors
+    );
+
     // Total requests
     const totalRequestsEl = document.getElementById('historyTotalRequests');
     if (totalRequestsEl) {
-        totalRequestsEl.textContent = summary.totalRequests || 0;
+        totalRequestsEl.textContent = requestSummary.total;
     }
 
     // Success/Failed
     const successEl = document.getElementById('historySuccess');
     const failedEl = document.getElementById('historyFailed');
     if (successEl && failedEl) {
-        const success = (summary.totalRequests || 0) - (summary.totalErrors || 0);
-        successEl.textContent = success;
-        failedEl.textContent = summary.totalErrors || 0;
+        successEl.textContent = requestSummary.success;
+        failedEl.textContent = requestSummary.failed;
     }
 
     // Tokens

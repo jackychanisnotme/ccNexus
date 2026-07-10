@@ -31,6 +31,8 @@ func (h *Handler) handleStatsSummary(w http.ResponseWriter, r *http.Request) {
 
 	WriteSuccess(w, map[string]interface{}{
 		"TotalRequests":     totalRequests,
+		"TotalAttempts":     totalRequests + totalErrors,
+		"TotalSuccess":      totalRequests,
 		"TotalErrors":       totalErrors,
 		"TotalInputTokens":  totalInputTokens,
 		"TotalOutputTokens": totalOutputTokens,
@@ -231,7 +233,7 @@ func (h *Handler) getStatsForPeriod(startDate, endDate string, filter storage.St
 	endpointStats := make(map[string]interface{})
 
 	for endpointName, stats := range allStats {
-		if stats.Requests > 0 {
+		if stats.Requests > 0 || stats.Errors > 0 {
 			endpointStats[endpointName] = map[string]interface{}{
 				"requests":     stats.Requests,
 				"errors":       stats.Errors,
@@ -247,12 +249,14 @@ func (h *Handler) getStatsForPeriod(startDate, endDate string, filter storage.St
 	}
 
 	return map[string]interface{}{
-		"totalRequests":     totalRequests,
-		"totalErrors":       totalErrors,
-		"totalSuccess":      totalRequests - totalErrors,
-		"totalInputTokens":  totalInputTokens,
-		"totalOutputTokens": totalOutputTokens,
-		"endpoints":         endpointStats,
+		"totalRequests":      totalRequests,
+		"totalAttempts":      totalRequests + totalErrors,
+		"successfulRequests": totalRequests,
+		"totalErrors":        totalErrors,
+		"totalSuccess":       totalRequests - totalErrors,
+		"totalInputTokens":   totalInputTokens,
+		"totalOutputTokens":  totalOutputTokens,
+		"endpoints":          endpointStats,
 	}, nil
 }
 

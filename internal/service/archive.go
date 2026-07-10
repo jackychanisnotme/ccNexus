@@ -99,10 +99,12 @@ func (a *ArchiveService) GetArchiveData(month string) string {
 	}
 
 	summary := map[string]interface{}{
-		"totalRequests":     totalRequests,
-		"totalErrors":       totalErrors,
-		"totalInputTokens":  totalInputTokens,
-		"totalOutputTokens": totalOutputTokens,
+		"totalRequests":      totalRequests,
+		"totalAttempts":      totalRequests + totalErrors,
+		"successfulRequests": totalRequests,
+		"totalErrors":        totalErrors,
+		"totalInputTokens":   totalInputTokens,
+		"totalOutputTokens":  totalOutputTokens,
 	}
 
 	archive := map[string]interface{}{

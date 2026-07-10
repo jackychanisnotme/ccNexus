@@ -475,12 +475,14 @@ class Dashboard {
 
     updateStats(stats) {
         const totalRequests = stats.TotalRequests || 0;
+        const totalAttempts = stats.TotalAttempts ?? (totalRequests + (stats.TotalErrors || 0));
+        const totalSuccess = stats.TotalSuccess ?? Math.max(totalRequests - (stats.TotalErrors || 0), 0);
         const totalErrors = stats.TotalErrors || 0;
-        const successRate = totalRequests > 0
-            ? ((totalRequests - totalErrors) / totalRequests * 100).toFixed(1)
+        const successRate = totalAttempts > 0
+            ? (totalSuccess / totalAttempts * 100).toFixed(1)
             : 0;
 
-        document.getElementById('stat-requests').textContent = formatNumber(totalRequests);
+        document.getElementById('stat-requests').textContent = formatNumber(totalAttempts);
         document.getElementById('stat-success').textContent = successRate + '%';
         document.getElementById('stat-input-tokens').textContent = formatTokens(stats.TotalInputTokens || 0);
         document.getElementById('stat-output-tokens').textContent = formatTokens(stats.TotalOutputTokens || 0);

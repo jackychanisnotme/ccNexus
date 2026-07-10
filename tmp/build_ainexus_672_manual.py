@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 
 from docx import Document
@@ -251,8 +250,8 @@ def cover(doc):
         p.add_run().add_picture(str(icon), width=Inches(1.1))
     callout(
         doc,
-        "文档基准",
-        "本手册按用户指定的 AINexus 6.7.2 版本重做，内容依据当前本地 6.7.x 源码、前端界面截图和公开 release 查询结果整理；截图中的后端数据为脱敏示例，不含真实客户密钥或私有服务器信息。",
+        "适用范围",
+        "本手册适用于 AINexus 6.7.2，覆盖桌面客户端模式、服务器模式、授权服务器后台、Token Pool、数据同步、Agent Provider、远程端点维护和常见接入流程。界面字段和按钮说明以 6.7.2 功能为准。",
     )
     add_table(
         doc,
@@ -261,8 +260,8 @@ def cover(doc):
             ["产品定位", "Codex / Claude Code / OpenClaw / Hermes Agent 的本地 API Provider、Token Pool 与 Agent 管理中枢"],
             ["默认代理地址", "桌面客户端：http://127.0.0.1:3000；服务器 Web UI：http://127.0.0.1:3000/ui/"],
             ["授权方式", "在线卡密激活；Ed25519 票据；最近一次在线校验成功后可离线宽限 30 天"],
-            ["6.7.x 重点", "远程端点维护、端点错误遥测、Codex Token Pool 额度/重置次数/凭证级用量、Agent Provider 修复"],
-            ["文档生成日期", str(date.today())],
+            ["6.7.2 重点", "远程端点维护、端点错误遥测、Codex Token Pool 额度/重置次数/凭证级用量、Agent Provider 修复"],
+            ["适用对象", "桌面客户端用户、服务器部署者、授权后台管理员和售后维护人员"],
         ],
         widths=[1.35, 4.95],
         font_size=9.3,
@@ -653,7 +652,7 @@ def reference(doc):
         ],
         widths=[1.55, 2.2, 2.55],
     )
-    doc.add_heading("6.4 发布与升级检查清单", level=2)
+    doc.add_heading("6.4 升级与备份检查清单", level=2)
     bullets(
         doc,
         [
@@ -662,7 +661,7 @@ def reference(doc):
             "SQLite 迁移必须幂等，不删除旧字段或旧表；重命名/拆表要保留旧读路径。",
             "默认端口、授权服务器地址、代理行为和端点认证模式不要随意改变。",
             "远程维护默认不能暴露客户 API Key、refresh token、access token 明文。",
-            "GitHub Release / pre-release 只能基于指定发布源码构建安装包，不得上传当前工作区源码、配置或私有服务器信息。",
+            "升级安装包应来自可信发布渠道；升级失败时先恢复数据库或备份目录，再回退到上一版可用程序。",
         ],
     )
 

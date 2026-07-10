@@ -23,7 +23,7 @@
   "info": {
     "companyName": "AINexus",
     "productName": "AINexus",
-    "productVersion": "6.7.3",
+    "productVersion": "6.7.5",
     "copyright": "Copyright © 2024 Chuck",
     "comments": "A smart API endpoint rotation proxy for Claude Code"
   }
