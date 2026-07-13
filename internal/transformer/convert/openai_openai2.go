@@ -1024,6 +1024,7 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 
 	case "response.output_text.delta":
 		text := firstNonEmpty(evt.Delta, evt.Text)
+		recordOpenAI2OutputItemID(ctx, evt.OutputIndex, evt.ItemID)
 		recordOpenAI2Text(ctx, evt.OutputIndex, text)
 		return buildOpenAIChunk(ctx.MessageID, model, text, nil, "")
 
@@ -1032,6 +1033,7 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 		if text == "" && evt.Part != nil {
 			text = evt.Part.Text
 		}
+		recordOpenAI2OutputItemID(ctx, evt.OutputIndex, evt.ItemID)
 		missingText := missingOpenAI2Text(ctx, evt.OutputIndex, text)
 		if missingText == "" {
 			return nil, nil
@@ -1039,9 +1041,13 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 		return buildOpenAIChunk(ctx.MessageID, model, missingText, nil, "")
 
 	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
+		recordOpenAI2OutputItemID(ctx, evt.OutputIndex, evt.ItemID)
 		return buildOpenAIReasoningChunk(ctx.MessageID, model, firstNonEmpty(evt.Delta, evt.Text))
 
 	case "response.output_item.added":
+		if evt.Item != nil {
+			recordOpenAI2OutputItemID(ctx, evt.OutputIndex, evt.Item.ID)
+		}
 		if evt.Item != nil && evt.Item.Type == "function_call" {
 			callID := evt.Item.CallID
 			if callID == "" {
@@ -1055,10 +1061,14 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 		return nil, nil
 
 	case "response.function_call_arguments.delta":
+		recordOpenAI2OutputItemID(ctx, evt.OutputIndex, evt.ItemID)
 		recordOpenAI2ToolArguments(ctx, evt.OutputIndex, evt.Delta)
 		return nil, nil
 
 	case "response.output_item.done":
+		if evt.Item != nil {
+			recordOpenAI2OutputItemID(ctx, evt.OutputIndex, evt.Item.ID)
+		}
 		if evt.Item != nil && evt.Item.Type == "function_call" {
 			callID := evt.Item.CallID
 			if callID == "" {
@@ -1091,7 +1101,8 @@ func OpenAI2StreamToOpenAI(event []byte, ctx *transformer.StreamContext, model s
 			if evt.Response.Usage.OutputTokens > 0 {
 				ctx.OutputTokens = evt.Response.Usage.OutputTokens
 			}
-			for outputIndex, item := range evt.Response.Output {
+			for fallbackIndex, item := range evt.Response.Output {
+				outputIndex := resolveOpenAI2CompletedOutputIndex(ctx, fallbackIndex, item)
 				if item.Type != "function_call" || ctx.ResponseToolCallIDByIndex[outputIndex] != "" {
 					continue
 				}

@@ -598,6 +598,68 @@ func TestOpenAI2StreamToOpenAIEmitsCompletedOnlyFunctionCall(t *testing.T) {
 	}
 }
 
+func TestOpenAI2StreamToOpenAIDoesNotDuplicateCompactedCompletedOutput(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	events := []string{
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1"}}`,
+		`data: {"type":"response.output_item.added","output_index":1,"item":{"type":"message","id":"msg_1","role":"assistant"}}`,
+		`data: {"type":"response.output_text.delta","output_index":1,"item_id":"msg_1","delta":"hello"}`,
+		`data: {"type":"response.output_item.added","output_index":2,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec"}}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":2,"item_id":"fc_1","delta":"{}"}`,
+		`data: {"type":"response.output_item.done","output_index":2,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec","arguments":"{}"}}`,
+	}
+	for _, event := range events {
+		if _, err := OpenAI2StreamToOpenAI([]byte(event), ctx, "gpt-5.5"); err != nil {
+			t.Fatalf("stream event failed: %v", err)
+		}
+	}
+
+	completed := `data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},"output":[{"type":"message","id":"msg_1","role":"assistant","content":[{"type":"output_text","text":"hello"}]},{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec","arguments":"{}"}]}}`
+	out, err := OpenAI2StreamToOpenAI([]byte(completed), ctx, "gpt-5.5")
+	if err != nil {
+		t.Fatalf("completed event failed: %v", err)
+	}
+
+	_, jsonData := parseSSE(out)
+	var chunk map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonData), &chunk); err != nil {
+		t.Fatalf("unmarshal completed chunk failed: %v, raw=%s", err, jsonData)
+	}
+	choice := chunk["choices"].([]interface{})[0].(map[string]interface{})
+	delta := choice["delta"].(map[string]interface{})
+	if _, ok := delta["content"]; ok {
+		t.Fatalf("did not expect completed event to repeat streamed text, got %#v", delta)
+	}
+	if _, ok := delta["tool_calls"]; ok {
+		t.Fatalf("did not expect completed event to repeat streamed tool call, got %#v", delta)
+	}
+}
+
+func TestOpenAI2StreamToOpenAIDoesNotDuplicateCompactedCompletedTextWithoutItemID(t *testing.T) {
+	ctx := transformer.NewStreamContext()
+	textDelta := `data: {"type":"response.output_text.delta","output_index":1,"delta":"hello"}`
+	if _, err := OpenAI2StreamToOpenAI([]byte(textDelta), ctx, "gpt-5.5"); err != nil {
+		t.Fatalf("text delta failed: %v", err)
+	}
+
+	completed := `data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}]}}`
+	out, err := OpenAI2StreamToOpenAI([]byte(completed), ctx, "gpt-5.5")
+	if err != nil {
+		t.Fatalf("completed event failed: %v", err)
+	}
+
+	_, jsonData := parseSSE(out)
+	var chunk map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonData), &chunk); err != nil {
+		t.Fatalf("unmarshal completed chunk failed: %v, raw=%s", err, jsonData)
+	}
+	choice := chunk["choices"].([]interface{})[0].(map[string]interface{})
+	delta := choice["delta"].(map[string]interface{})
+	if _, ok := delta["content"]; ok {
+		t.Fatalf("did not expect completed event to repeat streamed text, got %#v", delta)
+	}
+}
+
 func TestOpenAIStreamToOpenAI2SuppressesReasoningDeltaForResponsesSDK(t *testing.T) {
 	ctx := transformer.NewStreamContext()
 

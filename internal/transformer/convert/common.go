@@ -219,6 +219,14 @@ func openAI2OutputItemID(ctx *transformer.StreamContext, outputIndex int) string
 	return id
 }
 
+func recordOpenAI2OutputItemID(ctx *transformer.StreamContext, outputIndex int, itemID string) {
+	ensureOpenAI2StreamState(ctx)
+	if ctx == nil || strings.TrimSpace(itemID) == "" {
+		return
+	}
+	ctx.ResponseOutputItemIDByIndex[outputIndex] = itemID
+}
+
 func openAI2CreatedEvent(ctx *transformer.StreamContext) map[string]interface{} {
 	return map[string]interface{}{
 		"type": "response.created",
@@ -311,13 +319,75 @@ func openAI2ReasoningTextFromItem(item transformer.OpenAI2OutputItem) string {
 
 func openAI2MissingOutputText(ctx *transformer.StreamContext, output []transformer.OpenAI2OutputItem) string {
 	var text strings.Builder
-	for outputIndex, item := range output {
+	for fallbackIndex, item := range output {
 		if item.Type != "message" {
 			continue
 		}
+		outputIndex := resolveOpenAI2CompletedOutputIndex(ctx, fallbackIndex, item)
 		text.WriteString(missingOpenAI2Text(ctx, outputIndex, openAI2TextFromParts(item.Content)))
 	}
 	return text.String()
+}
+
+func resolveOpenAI2CompletedOutputIndex(ctx *transformer.StreamContext, fallbackIndex int, item transformer.OpenAI2OutputItem) int {
+	ensureOpenAI2StreamState(ctx)
+	if ctx == nil {
+		return fallbackIndex
+	}
+
+	itemID := strings.TrimSpace(item.ID)
+	if itemID != "" {
+		resolvedIndex := -1
+		for outputIndex, streamedItemID := range ctx.ResponseOutputItemIDByIndex {
+			if strings.TrimSpace(streamedItemID) != itemID {
+				continue
+			}
+			if resolvedIndex < 0 || outputIndex < resolvedIndex {
+				resolvedIndex = outputIndex
+			}
+		}
+		if resolvedIndex >= 0 {
+			return resolvedIndex
+		}
+	}
+
+	if item.Type == "function_call" {
+		callID := strings.TrimSpace(firstNonEmpty(item.CallID, item.ID))
+		if callID != "" {
+			resolvedIndex := -1
+			for outputIndex, streamedCallID := range ctx.ResponseToolCallIDByIndex {
+				if strings.TrimSpace(streamedCallID) != callID {
+					continue
+				}
+				if resolvedIndex < 0 || outputIndex < resolvedIndex {
+					resolvedIndex = outputIndex
+				}
+			}
+			if resolvedIndex >= 0 {
+				return resolvedIndex
+			}
+		}
+	}
+
+	if item.Type == "message" {
+		fullText := openAI2TextFromParts(item.Content)
+		bestIndex := -1
+		bestLength := -1
+		for outputIndex, streamedText := range ctx.ResponseTextByIndex {
+			if streamedText == "" || !strings.HasPrefix(fullText, streamedText) {
+				continue
+			}
+			if len(streamedText) > bestLength || (len(streamedText) == bestLength && (bestIndex < 0 || outputIndex < bestIndex)) {
+				bestIndex = outputIndex
+				bestLength = len(streamedText)
+			}
+		}
+		if bestIndex >= 0 {
+			return bestIndex
+		}
+	}
+
+	return fallbackIndex
 }
 
 func recordOpenAI2Text(ctx *transformer.StreamContext, outputIndex int, delta string) {

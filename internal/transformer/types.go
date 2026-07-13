@@ -444,6 +444,7 @@ type OpenAI2StreamEvent struct {
 	Response     *OpenAI2Response    `json:"response,omitempty"`
 	OutputIndex  int                 `json:"output_index,omitempty"`
 	ContentIndex int                 `json:"content_index,omitempty"`
+	ItemID       string              `json:"item_id,omitempty"`
 	Item         *OpenAI2OutputItem  `json:"item,omitempty"`
 	Part         *OpenAI2ContentPart `json:"part,omitempty"`
 	Delta        string              `json:"delta,omitempty"` // Direct string for text delta
