@@ -45,24 +45,24 @@ func (s *Service) runScheduledAIJobs(ctx context.Context) {
 	dailyEndLocal := time.Date(now.Year(), now.Month(), now.Day(), dailyHour, dailyMinute, 0, 0, location)
 	if !now.Before(dailyEndLocal) {
 		job, queueErr := s.queueAIJob(AIJobTypeDailyDiagnosis, 0, dailyEndLocal.Add(-24*time.Hour).UTC(), dailyEndLocal.UTC())
-		if queueErr == nil && job != nil && !isAIJobTerminal(job.Status) {
+		if queueErr == nil && shouldRunAIJob(job) {
 			if runErr := s.RunAIJob(ctx, job.ID); runErr != nil {
 				log.Printf("run daily AI diagnosis: %v", runErr)
 			}
 		}
 	}
 	monthlyHour, monthlyMinute := parseClockTime(settings.MonthlyTime, 9, 0)
-	currentMonthStart := time.Date(now.Year(), now.Month(), 1, monthlyHour, monthlyMinute, 0, 0, location)
-	if !now.Before(currentMonthStart) {
-		periodStart := currentMonthStart.AddDate(0, -1, 0)
-		periodEnd := currentMonthStart
+	monthlyRunAt := time.Date(now.Year(), now.Month(), 1, monthlyHour, monthlyMinute, 0, 0, location)
+	if !now.Before(monthlyRunAt) {
+		periodEnd := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, location)
+		periodStart := periodEnd.AddDate(0, -1, 0)
 		ownerIDs, ownerErr := store.ListAIUsageOwnerIDs(periodStart.UTC(), periodEnd.UTC())
 		if ownerErr != nil {
 			log.Printf("list monthly AI report owners: %v", ownerErr)
 		}
 		for _, ownerID := range ownerIDs {
 			job, queueErr := s.queueAIJob(AIJobTypeMonthlyReport, ownerID, periodStart.UTC(), periodEnd.UTC())
-			if queueErr == nil && job != nil && !isAIJobTerminal(job.Status) {
+			if queueErr == nil && shouldRunAIJob(job) {
 				if runErr := s.RunAIJob(ctx, job.ID); runErr != nil {
 					log.Printf("run monthly AI report owner=%d: %v", ownerID, runErr)
 				}

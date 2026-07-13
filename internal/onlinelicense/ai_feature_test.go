@@ -3,6 +3,7 @@ package onlinelicense
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +11,19 @@ import (
 	"testing"
 	"time"
 )
+
+type failingAIProvider struct {
+	calls int
+}
+
+func (p *failingAIProvider) ListModels(context.Context) ([]string, error) {
+	return []string{"analysis-model"}, nil
+}
+
+func (p *failingAIProvider) Analyze(context.Context, string, interface{}) (AIModelAnalysis, error) {
+	p.calls++
+	return AIModelAnalysis{}, errors.New("provider unavailable")
+}
 
 func TestRemoteSnapshotCreatesUsageDeltasAndHandlesCounterReset(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "license.db"))
@@ -173,6 +187,112 @@ func TestAIAdminRoutesRequireSessionAndRootCanUseThem(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update AI settings status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAIWindowClippingAndTemporalCorrelation(t *testing.T) {
+	from := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+	clipped := clipUsageRecords([]EndpointUsageRecord{{
+		WindowStart: from.Add(-24 * time.Hour),
+		WindowEnd:   to,
+		Requests:    100,
+		Errors:      10,
+	}}, from, to)
+	if len(clipped) != 1 || clipped[0].Requests != 50 || clipped[0].Errors != 5 {
+		t.Fatalf("clipped usage = %#v", clipped)
+	}
+
+	usage := []EndpointUsageRecord{
+		{DeviceID: "a", APIHost: "supplier.example", Requests: 50, WindowStart: from, WindowEnd: to},
+		{DeviceID: "b", APIHost: "supplier.example", Requests: 50, WindowStart: from, WindowEnd: to},
+	}
+	result := correlateAIAnalysis(usage, []EndpointErrorTelemetryRecord{
+		{DeviceID: "a", APIHost: "supplier.example", Reason: "upstream_5xx", StatusCode: 503, Count: 2, WindowStart: from},
+		{DeviceID: "b", APIHost: "supplier.example", Reason: "credential_auth_failed", StatusCode: 401, Count: 1, WindowStart: from},
+		{DeviceID: "a", APIHost: "supplier.example", Reason: "transient_network_error", Count: 2, WindowStart: from},
+		{DeviceID: "b", APIHost: "supplier.example", Reason: "transient_network_error", Count: 2, WindowStart: from.Add(time.Hour)},
+	}, false, to)
+	assertClassificationCount(t, result.Findings, AIFindingSupplierIssue, 0)
+	assertClassificationCount(t, result.Findings, AIFindingUnknown, 2)
+	assertClassificationCount(t, result.Findings, AIFindingCustomerNetwork, 4)
+	assertClassificationCount(t, result.Findings, AIFindingCustomerConfigAccount, 1)
+}
+
+func TestAIJobLimitsAtomicClaimAndProviderRetryState(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "license.db"))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 7, 13, 4, 0, 0, 0, time.UTC)
+	provider := &failingAIProvider{}
+	service := NewService(store, nil, Options{Now: func() time.Time { return now }, AIProvider: provider})
+	root := &AdminAccount{ID: 1, Level: AdminLevelRoot, Status: AdminAccountStatusActive, Permissions: allAdminPermissions()}
+	if _, err := service.QueueAIJobFor(root, AIJobRequest{
+		From: now.Add(-32 * 24 * time.Hour), To: now,
+	}); err == nil {
+		t.Fatal("oversized AI window unexpectedly accepted")
+	}
+	if _, err := service.QueueAIJobFor(root, AIJobRequest{
+		From: now, To: now.Add(time.Hour),
+	}); err == nil {
+		t.Fatal("future AI window unexpectedly accepted")
+	}
+	if err := store.SaveAISettings(AISettings{
+		Enabled: true, Model: "analysis-model", Timezone: defaultAITimezone,
+		DailyTime: defaultAIDailyTime, MonthlyTime: defaultAIMonthlyTime,
+		PromptVersion: defaultAIPromptVersion,
+	}, now); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+	job, err := service.QueueAIJobFor(root, AIJobRequest{
+		From: now.Add(-24 * time.Hour), To: now,
+	})
+	if err != nil {
+		t.Fatalf("queue job: %v", err)
+	}
+	if err := service.RunAIJob(context.Background(), job.ID); err == nil {
+		t.Fatal("provider failure unexpectedly returned success")
+	}
+	saved, err := store.GetAIJob(job.ID)
+	if err != nil {
+		t.Fatalf("get failed job: %v", err)
+	}
+	if saved.Status != AIJobStatusFailed || saved.Attempts != 1 || len(saved.Result) == 0 {
+		t.Fatalf("failed provider job = %#v", saved)
+	}
+	for attempt := 1; attempt < maxAIJobAttempts; attempt++ {
+		_ = service.RunAIJob(context.Background(), job.ID)
+	}
+	_ = service.RunAIJob(context.Background(), job.ID)
+	saved, _ = store.GetAIJob(job.ID)
+	if saved.Attempts != maxAIJobAttempts || provider.calls != maxAIJobAttempts {
+		t.Fatalf("retry attempts=%d provider calls=%d", saved.Attempts, provider.calls)
+	}
+}
+
+func TestAIJobCapacityAndSpreadsheetCellEscaping(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "license.db"))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 7, 13, 5, 0, 0, 0, time.UTC)
+	service := NewService(store, nil, Options{Now: func() time.Time { return now }})
+	for index := 0; index < 2; index++ {
+		_, err := service.queueAIJob(AIJobTypeManual, 9, now.Add(time.Duration(-index-1)*time.Hour), now.Add(time.Duration(-index)*time.Hour))
+		if err != nil {
+			t.Fatalf("queue active job %d: %v", index, err)
+		}
+	}
+	if _, err := service.queueAIJob(AIJobTypeManual, 9, now.Add(-4*time.Hour), now.Add(-3*time.Hour)); !errors.Is(err, ErrAIJobCapacity) {
+		t.Fatalf("third active job error = %v, want capacity", err)
+	}
+	for _, value := range []string{"=cmd()", "+SUM(1,1)", "-1+1", "@test"} {
+		if escaped := spreadsheetSafeCell(value); !strings.HasPrefix(escaped, "'") {
+			t.Fatalf("spreadsheet cell %q was not escaped: %q", value, escaped)
+		}
 	}
 }
 

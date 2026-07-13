@@ -1496,7 +1496,6 @@ func defaultPermissionsForLevel(level int) []string {
 			PermissionAccountsView,
 			PermissionAccountsManage,
 			PermissionAIAnalysisView,
-			PermissionAIAnalysisRun,
 			PermissionAIReportsView,
 		}
 	case AdminLevelDistributor:

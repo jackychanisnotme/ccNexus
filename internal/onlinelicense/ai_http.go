@@ -65,6 +65,9 @@ func (h *HTTPHandler) handleAIJobs(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSONSuccess(w, jobs)
 	case http.MethodPost:
+		if !h.allowRate(w, r, "admin_ai_run", 6, time.Minute) {
+			return
+		}
 		var req AIJobRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid request body")
@@ -148,6 +151,9 @@ func (h *HTTPHandler) handleAIReports(w http.ResponseWriter, r *http.Request) {
 func (h *HTTPHandler) handleAIGenerateReport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.allowRate(w, r, "admin_ai_run", 6, time.Minute) {
 		return
 	}
 	var req AIReportRequest

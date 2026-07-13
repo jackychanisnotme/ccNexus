@@ -28,6 +28,13 @@ type AIModelAnalysis struct {
 	Narrative string `json:"narrative"`
 }
 
+var ErrAIJobCapacity = errors.New("too many active AI jobs")
+
+const (
+	maxAIAnalysisWindow = 31 * 24 * time.Hour
+	maxAIJobAttempts    = 3
+)
+
 type OpenAICompatibleProvider struct {
 	BaseURL string
 	Client  *http.Client
@@ -44,6 +51,7 @@ type aiDataStore interface {
 	GetAIJob(id int64) (*AIJob, error)
 	FindAIJob(jobType string, ownerAccountID int64, from, to time.Time, promptVersion string) (*AIJob, error)
 	UpdateAIJob(job *AIJob) error
+	ClaimAIJob(id int64, now time.Time, maxAttempts int) (*AIJob, bool, error)
 	ListAIJobs(query AIQuery) ([]AIJob, error)
 	ReplaceAIFindings(jobID int64, findings []AIFinding, now time.Time) error
 	ListAIFindings(query AIQuery) ([]AIFinding, error)
@@ -243,7 +251,10 @@ func (s *Service) QueueAIJobFor(actor *AdminAccount, req AIJobRequest) (*AIJob, 
 	if jobType != AIJobTypeManual && jobType != AIJobTypeDailyDiagnosis && jobType != AIJobTypeMonthlyReport {
 		return nil, fmt.Errorf("invalid ai job type")
 	}
-	from, to := normalizeAIWindow(req.From, req.To, s.currentTime())
+	from, to, err := validateAIWindow(req.From, req.To, s.currentTime())
+	if err != nil {
+		return nil, err
+	}
 	return s.queueAIJob(jobType, ownerID, from, to)
 }
 
@@ -255,6 +266,11 @@ func (s *Service) queueAIJob(jobType string, ownerID int64, from, to time.Time) 
 	settings, err := store.GetAISettings()
 	if err != nil {
 		return nil, err
+	}
+	if existing, findErr := store.FindAIJob(jobType, ownerID, from, to, settings.PromptVersion); findErr == nil {
+		return existing, nil
+	} else if !errors.Is(findErr, sql.ErrNoRows) {
+		return nil, findErr
 	}
 	job := &AIJob{
 		JobType:        jobType,
@@ -279,20 +295,12 @@ func (s *Service) RunAIJob(ctx context.Context, jobID int64) error {
 	if err != nil {
 		return err
 	}
-	job, err := store.GetAIJob(jobID)
+	job, claimed, err := store.ClaimAIJob(jobID, s.currentTime(), maxAIJobAttempts)
 	if err != nil {
 		return err
 	}
-	if job.Status == AIJobStatusRunning || job.Status == AIJobStatusCompleted {
+	if !claimed {
 		return nil
-	}
-	now := s.currentTime()
-	job.Status = AIJobStatusRunning
-	job.Attempts++
-	job.StartedAt = now
-	job.Error = ""
-	if err := store.UpdateAIJob(job); err != nil {
-		return err
 	}
 	result, analysisErr := s.analyzeWindow(job.OwnerAccountID, job.PeriodStart, job.PeriodEnd)
 	if analysisErr != nil {
@@ -310,6 +318,7 @@ func (s *Service) RunAIJob(ctx context.Context, jobID int64) error {
 		return err
 	}
 	settings, _ := store.GetAISettings()
+	var modelErr error
 	if settings.Enabled && strings.TrimSpace(settings.Model) != "" && s.aiProvider != nil {
 		modelInput := map[string]interface{}{
 			"periodStart": job.PeriodStart,
@@ -318,7 +327,8 @@ func (s *Service) RunAIJob(ctx context.Context, jobID int64) error {
 			"findings":    redactFindingsForModel(result.Findings),
 		}
 		modelCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		modelResult, modelErr := s.aiProvider.Analyze(modelCtx, settings.Model, modelInput)
+		var modelResult AIModelAnalysis
+		modelResult, modelErr = s.aiProvider.Analyze(modelCtx, settings.Model, modelInput)
 		cancel()
 		if modelErr != nil {
 			job.Error = sanitizeAIText(modelErr.Error(), 500)
@@ -330,7 +340,9 @@ func (s *Service) RunAIJob(ctx context.Context, jobID int64) error {
 	}
 	resultJSON, _ := json.Marshal(result)
 	job.Result = resultJSON
-	if job.Status != AIJobStatusSkippedNoAIProvider {
+	if modelErr != nil {
+		job.Status = AIJobStatusFailed
+	} else if job.Status != AIJobStatusSkippedNoAIProvider {
 		job.Status = AIJobStatusCompleted
 	}
 	job.FinishedAt = s.currentTime()
@@ -345,7 +357,7 @@ func (s *Service) RunAIJob(ctx context.Context, jobID int64) error {
 		return err
 	}
 	_ = store.CleanupAIData(s.currentTime())
-	return nil
+	return modelErr
 }
 
 func (s *Service) analyzeWindow(ownerID int64, from, to time.Time) (AIAnalysisResult, error) {
@@ -362,6 +374,7 @@ func (s *Service) analyzeWindow(ownerID int64, from, to time.Time) (AIAnalysisRe
 	if err != nil {
 		return AIAnalysisResult{}, err
 	}
+	usage = clipUsageRecords(usage, from, to)
 	return correlateAIAnalysis(usage, errorRows, to.Sub(from) >= 27*24*time.Hour, s.currentTime()), nil
 }
 
@@ -423,6 +436,7 @@ func (s *Service) SupplierSummaryFor(actor *AdminAccount, query AIQuery) ([]Supp
 	if err != nil {
 		return nil, err
 	}
+	usage = clipUsageRecords(usage, query.From, query.To)
 	result := correlateAIAnalysis(usage, errorRows, query.To.Sub(query.From) >= 27*24*time.Hour, s.currentTime())
 	return result.Suppliers, nil
 }
@@ -508,13 +522,14 @@ func correlateAIAnalysis(usage []EndpointUsageRecord, errorsRows []EndpointError
 			entry.lastSeen = item.WindowEnd
 		}
 	}
-	errorDevicesByHost := map[string]map[string]bool{}
+	errorDevicesByGroup := map[string]map[string]bool{}
 	for _, item := range errorsRows {
 		host := normalizedAIHost(item.APIHost, item.EndpointName)
-		if errorDevicesByHost[host] == nil {
-			errorDevicesByHost[host] = map[string]bool{}
+		group := aiCorrelationGroup(item)
+		if errorDevicesByGroup[group] == nil {
+			errorDevicesByGroup[group] = map[string]bool{}
 		}
-		errorDevicesByHost[host][item.DeviceID] = true
+		errorDevicesByGroup[group][item.DeviceID] = true
 		if hostStats[host] == nil {
 			hostStats[host] = &hostAggregate{devices: map[string]bool{}}
 		}
@@ -526,7 +541,7 @@ func correlateAIAnalysis(usage []EndpointUsageRecord, errorsRows []EndpointError
 		category := classifyEndpointStabilityError(item.Reason, item.StatusCode)
 		classification := string(category)
 		hostDeviceCount := len(hostStats[host].devices)
-		errorDeviceCount := len(errorDevicesByHost[host])
+		errorDeviceCount := len(errorDevicesByGroup[aiCorrelationGroup(item)])
 		if category == EndpointStabilityFindingSupplierIssue && errorDeviceCount < 2 {
 			classification = AIFindingUnknown
 		}
@@ -666,12 +681,25 @@ func RenderAIReportCSV(report *AIReport) ([]byte, error) {
 	writer := csv.NewWriter(&output)
 	_ = writer.Write([]string{"API Host", "Requests", "Errors", "Supplier Failures", "Score", "Sample Sufficient", "Devices"})
 	for _, item := range metrics.Suppliers {
-		_ = writer.Write([]string{item.APIHost, strconv.Itoa(item.Requests), strconv.Itoa(item.Errors),
+		_ = writer.Write([]string{spreadsheetSafeCell(item.APIHost), strconv.Itoa(item.Requests), strconv.Itoa(item.Errors),
 			strconv.Itoa(item.SupplierFailures), strconv.FormatFloat(item.Score, 'f', 2, 64),
 			strconv.FormatBool(item.SampleSufficient), strconv.Itoa(item.DeviceCount)})
 	}
 	writer.Flush()
 	return output.Bytes(), writer.Error()
+}
+
+func spreadsheetSafeCell(value string) string {
+	trimmed := strings.TrimLeft(value, " \t\r\n")
+	if trimmed == "" {
+		return value
+	}
+	switch trimmed[0] {
+	case '=', '+', '-', '@':
+		return "'" + value
+	default:
+		return value
+	}
 }
 
 func redactFindingsForModel(findings []AIFinding) []map[string]interface{} {
@@ -697,6 +725,80 @@ func normalizeAIWindow(from, to, now time.Time) (time.Time, time.Time) {
 		from = to.Add(-24 * time.Hour)
 	}
 	return from.UTC(), to.UTC()
+}
+
+func validateAIWindow(from, to, now time.Time) (time.Time, time.Time, error) {
+	from, to = normalizeAIWindow(from, to, now)
+	if !from.Before(to) {
+		return time.Time{}, time.Time{}, fmt.Errorf("analysis start must be before end")
+	}
+	if to.After(now.Add(5 * time.Minute)) {
+		return time.Time{}, time.Time{}, fmt.Errorf("analysis end cannot be in the future")
+	}
+	if to.Sub(from) > maxAIAnalysisWindow {
+		return time.Time{}, time.Time{}, fmt.Errorf("analysis window cannot exceed 31 days")
+	}
+	if from.Before(now.AddDate(0, 0, -90)) {
+		return time.Time{}, time.Time{}, fmt.Errorf("analysis start is outside telemetry retention")
+	}
+	return from, to, nil
+}
+
+func clipUsageRecords(records []EndpointUsageRecord, from, to time.Time) []EndpointUsageRecord {
+	if from.IsZero() || to.IsZero() || !from.Before(to) {
+		return records
+	}
+	result := make([]EndpointUsageRecord, 0, len(records))
+	for _, item := range records {
+		duration := item.WindowEnd.Sub(item.WindowStart)
+		if duration <= 0 {
+			continue
+		}
+		start := item.WindowStart
+		if start.Before(from) {
+			start = from
+		}
+		end := item.WindowEnd
+		if end.After(to) {
+			end = to
+		}
+		overlap := end.Sub(start)
+		if overlap <= 0 {
+			continue
+		}
+		ratio := float64(overlap) / float64(duration)
+		item.WindowStart = start
+		item.WindowEnd = end
+		item.Requests = proportionalCounter(item.Requests, ratio)
+		item.Errors = proportionalCounter(item.Errors, ratio)
+		item.InputTokens = proportionalCounter(item.InputTokens, ratio)
+		item.OutputTokens = proportionalCounter(item.OutputTokens, ratio)
+		result = append(result, item)
+	}
+	return result
+}
+
+func proportionalCounter(value int, ratio float64) int {
+	if value <= 0 || ratio <= 0 {
+		return 0
+	}
+	if ratio >= 1 {
+		return value
+	}
+	return int(math.Round(float64(value) * ratio))
+}
+
+func aiCorrelationGroup(item EndpointErrorTelemetryRecord) string {
+	at := item.WindowStart
+	if at.IsZero() {
+		at = item.FirstAt
+	}
+	category := classifyEndpointStabilityError(item.Reason, item.StatusCode)
+	return strings.Join([]string{
+		normalizedAIHost(item.APIHost, item.EndpointName),
+		string(category),
+		at.UTC().Truncate(15 * time.Minute).Format(time.RFC3339),
+	}, "\x00")
 }
 
 func normalizedAIHost(host, endpointName string) string {
@@ -814,7 +916,14 @@ func parseAIQuery(values url.Values) (AIQuery, error) {
 }
 
 func isAIJobTerminal(status string) bool {
-	return status == AIJobStatusCompleted || status == AIJobStatusFailed || status == AIJobStatusSkippedNoAIProvider
+	return status == AIJobStatusCompleted || status == AIJobStatusSkippedNoAIProvider
+}
+
+func shouldRunAIJob(job *AIJob) bool {
+	if job == nil {
+		return false
+	}
+	return job.Status == AIJobStatusQueued || (job.Status == AIJobStatusFailed && job.Attempts < maxAIJobAttempts)
 }
 
 func aiReportJSON(report *AIReport) ([]byte, error) {

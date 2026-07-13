@@ -640,7 +640,7 @@ const adminHTML = `<!doctype html>
     }
     function defaultPermissionsForLevel(level){
       if (level === 1) return permissionCatalog.map(p => p[0]);
-      if (level === 2) return ['cards:view','cards:generate','cards:disable','devices:view','devices:remark','devices:expiry','devices:remote:view','devices:remote:write','activations:disable','accounts:view','accounts:manage','history:view','ai:analysis:view','ai:analysis:run','ai:reports:view'];
+      if (level === 2) return ['cards:view','cards:generate','cards:disable','devices:view','devices:remark','devices:expiry','devices:remote:view','devices:remote:write','activations:disable','accounts:view','accounts:manage','history:view','ai:analysis:view','ai:reports:view'];
       return ['cards:view','cards:generate','cards:disable','devices:view','devices:remark','devices:expiry','devices:remote:view','devices:remote:write','activations:disable','history:view','ai:analysis:view','ai:reports:view'];
     }
     async function createAccount(){

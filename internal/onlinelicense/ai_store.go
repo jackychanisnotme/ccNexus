@@ -327,7 +327,22 @@ func (s *SQLiteStore) CreateAIJob(job *AIJob) error {
 	if job == nil {
 		return fmt.Errorf("ai job is required")
 	}
-	result, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var active int
+	if err := tx.QueryRow(`
+		SELECT COUNT(*) FROM license_ai_jobs
+		WHERE owner_account_id=? AND status IN (?, ?)
+	`, job.OwnerAccountID, AIJobStatusQueued, AIJobStatusRunning).Scan(&active); err != nil {
+		return err
+	}
+	if active >= 2 {
+		return ErrAIJobCapacity
+	}
+	result, err := tx.Exec(`
 		INSERT INTO license_ai_jobs (
 			job_type, owner_account_id, period_start, period_end, prompt_version,
 			status, attempts, error, result_json, created_at
@@ -338,7 +353,10 @@ func (s *SQLiteStore) CreateAIJob(job *AIJob) error {
 		return err
 	}
 	job.ID, err = result.LastInsertId()
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) GetAIJob(id int64) (*AIJob, error) {
@@ -373,6 +391,29 @@ func (s *SQLiteStore) UpdateAIJob(job *AIJob) error {
 	`, job.Status, job.Attempts, job.Error, string(job.Result), nullableFormattedTime(job.StartedAt),
 		nullableFormattedTime(job.FinishedAt), job.ID)
 	return err
+}
+
+func (s *SQLiteStore) ClaimAIJob(id int64, now time.Time, maxAttempts int) (*AIJob, bool, error) {
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	result, err := s.db.Exec(`
+		UPDATE license_ai_jobs
+		SET status=?, attempts=attempts+1, error='', started_at=?, finished_at=NULL
+		WHERE id=? AND status IN (?, ?) AND attempts < ?
+	`, AIJobStatusRunning, formatTime(now), id, AIJobStatusQueued, AIJobStatusFailed, maxAttempts)
+	if err != nil {
+		return nil, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	if affected == 0 {
+		return nil, false, nil
+	}
+	job, err := s.GetAIJob(id)
+	return job, true, err
 }
 
 func (s *SQLiteStore) ListAIJobs(query AIQuery) ([]AIJob, error) {
@@ -615,11 +656,11 @@ func aiScopeWhere(query AIQuery, endColumn, startColumn string) (string, []inter
 		args = append(args, strings.TrimSpace(query.APIHost))
 	}
 	if !query.From.IsZero() {
-		clauses = append(clauses, endColumn+">=?")
+		clauses = append(clauses, endColumn+">?")
 		args = append(args, formatTime(query.From))
 	}
 	if !query.To.IsZero() {
-		clauses = append(clauses, startColumn+"<=?")
+		clauses = append(clauses, startColumn+"<?")
 		args = append(args, formatTime(query.To))
 	}
 	if len(clauses) == 0 {
