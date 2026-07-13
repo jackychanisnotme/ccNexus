@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -43,12 +44,17 @@ func main() {
 		log.Fatal("CCNEXUS_LICENSE_ADMIN_PASSWORD is required")
 	}
 
+	aiProvider := onlinelicense.NewOpenAICompatibleProvider(envString("CCNEXUS_LICENSE_AI_GATEWAY_URL", "http://127.0.0.1:24221"))
 	service := onlinelicense.NewService(store, privateKey, onlinelicense.Options{
 		RemoteSecretRevealEnabled: envBool("CCNEXUS_LICENSE_REMOTE_SECRET_REVEAL_ENABLED"),
+		AIProvider:                aiProvider,
 	})
 	if _, err := service.EnsureBootstrapAdmin(admin.Username, admin.Password); err != nil {
 		log.Fatalf("bootstrap admin account: %v", err)
 	}
+	schedulerContext, stopScheduler := context.WithCancel(context.Background())
+	defer stopScheduler()
+	go service.RunAIScheduler(schedulerContext)
 	apiHandler := onlinelicense.NewHTTPHandler(service, admin)
 	mux := http.NewServeMux()
 	mux.Handle("/api/", apiHandler)
@@ -261,10 +267,10 @@ const adminHTML = `<!doctype html>
     .table-wrap{overflow:auto;max-height:520px;border:1px solid var(--soft-line);border-radius:8px;background:#fff}.mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.muted{color:var(--muted)}.status-active,.status-disabled,.status-expired{display:inline-flex;border-radius:999px;padding:3px 8px;font-weight:650;font-size:12px}.status-active{background:var(--ok-bg);color:var(--ok)}.status-disabled,.status-expired{background:var(--danger-bg);color:var(--danger)}
     .detail-label{font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 8px}
     dialog{width:min(480px,calc(100% - 32px));border:1px solid var(--line);border-radius:8px;padding:0;color:var(--text);box-shadow:0 28px 80px rgba(29,29,31,.22)}dialog::backdrop{background:rgba(29,29,31,.34);backdrop-filter:blur(2px)}.dialog-body{padding:20px}.dialog-body h2{font-size:18px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.remote-endpoint-dialog{width:min(720px,calc(100% - 32px))}.remote-table-wrap{width:100%;min-width:0;overflow:auto;contain:inline-size;border:1px solid var(--soft-line);border-radius:8px;background:#fff}.remote-table-wrap table{min-width:920px}
-    body.workspace-open{overflow:hidden}.workspace-backdrop{position:fixed;inset:0;z-index:20;background:rgba(29,29,31,.34);backdrop-filter:blur(2px)}.workspace-backdrop[hidden],.device-workspace[hidden]{display:none!important}.device-workspace{position:fixed;z-index:21;top:0;right:0;width:min(1100px,calc(100vw - 40px));height:100dvh;background:#f7f7f9;border-left:1px solid var(--line);box-shadow:-24px 0 70px rgba(29,29,31,.18);display:grid;grid-template-rows:auto auto auto minmax(0,1fr);overflow:hidden}.workspace-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 22px 14px;background:#fff;border-bottom:1px solid var(--soft-line)}.workspace-header h2{font-size:22px}.workspace-meta{display:flex;gap:8px 14px;flex-wrap:wrap;margin-top:8px;color:var(--muted);font-size:12px}.workspace-close{min-width:38px;padding:7px 10px}.workspace-tabs{display:flex;gap:4px;padding:10px 14px;background:#fff;border-bottom:1px solid var(--soft-line);overflow:auto}.workspace-tabs button{background:transparent;border-color:transparent;color:var(--muted);box-shadow:none}.workspace-tabs button.active{background:var(--panel-soft);border-color:var(--line);color:var(--text)}.workspace-task-bar{display:grid;gap:6px;padding:0 18px;background:#fff}.workspace-task-bar:not(:empty){padding-top:10px;padding-bottom:10px;border-bottom:1px solid var(--soft-line)}.workspace-task{display:flex;align-items:center;justify-content:space-between;gap:10px;border-left:3px solid var(--accent);padding:7px 10px;background:#f4f8ff}.workspace-task.error{border-left-color:var(--danger);background:var(--danger-bg)}.workspace-body{min-height:0;overflow:auto;padding:18px 20px}.workspace-panel[hidden]{display:none!important}.workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.workspace-toolbar h3{margin:0;font-size:16px}.workspace-toolbar .actions{margin-top:0}.workspace-empty{padding:34px 12px;text-align:center;color:var(--muted)}.status-online,.status-stale,.status-offline,.status-queued,.status-delivered,.status-applied,.status-failed{display:inline-flex;border-radius:999px;padding:3px 8px;font-weight:650;font-size:12px}.status-online,.status-applied{background:var(--ok-bg);color:var(--ok)}.status-stale,.status-queued,.status-delivered{background:#fff7e8;color:var(--warn)}.status-offline,.status-failed{background:var(--danger-bg);color:var(--danger)}.endpoint-main{display:grid;gap:3px}.endpoint-main strong{font-size:13px}.endpoint-config{max-width:310px;word-break:break-word}.pending-note{color:var(--warn);font-size:11px;font-weight:650}.action-menu{position:relative}.action-menu summary{list-style:none;cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:#fff;font-size:12px;font-weight:650}.action-menu summary::-webkit-details-marker{display:none}.action-menu[open] .action-menu-popover{display:grid}.action-menu-popover{display:none;position:absolute;z-index:5;right:0;top:36px;width:140px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 16px 36px rgba(29,29,31,.16)}.action-menu-popover button{width:100%;justify-content:flex-start;background:#fff;color:var(--text);border-color:transparent;box-shadow:none}.action-menu-popover button.danger{color:var(--danger)}.sort-list{display:grid;gap:8px;margin-top:12px}.sort-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;border:1px solid var(--soft-line);border-radius:8px;padding:8px 10px}.change-summary{margin:12px 0 0;padding:10px 12px;background:var(--panel-soft);border:1px solid var(--soft-line);border-radius:8px}.secret-value{white-space:pre-wrap;word-break:break-all;padding:12px;background:#111;color:#fff;border-radius:8px;min-height:48px}.telemetry-range{display:flex;gap:6px}.telemetry-range button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+    body.workspace-open{overflow:hidden}.workspace-backdrop{position:fixed;inset:0;z-index:20;background:rgba(29,29,31,.34);backdrop-filter:blur(2px)}.workspace-backdrop[hidden],.device-workspace[hidden]{display:none!important}.device-workspace{position:fixed;z-index:21;top:0;right:0;width:min(1100px,calc(100vw - 40px));height:100dvh;background:#f7f7f9;border-left:1px solid var(--line);box-shadow:-24px 0 70px rgba(29,29,31,.18);display:grid;grid-template-rows:auto auto auto minmax(0,1fr);overflow:hidden}.workspace-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 22px 14px;background:#fff;border-bottom:1px solid var(--soft-line)}.workspace-header h2{font-size:22px}.workspace-meta{display:flex;gap:8px 14px;flex-wrap:wrap;margin-top:8px;color:var(--muted);font-size:12px}.workspace-close{min-width:38px;padding:7px 10px}.workspace-tabs{display:flex;gap:4px;padding:10px 14px;background:#fff;border-bottom:1px solid var(--soft-line);overflow:auto}.workspace-tabs button{background:transparent;border-color:transparent;color:var(--muted);box-shadow:none}.workspace-tabs button.active{background:var(--panel-soft);border-color:var(--line);color:var(--text)}.workspace-task-bar{display:grid;gap:6px;padding:0 18px;background:#fff}.workspace-task-bar:not(:empty){padding-top:10px;padding-bottom:10px;border-bottom:1px solid var(--soft-line)}.workspace-task{display:flex;align-items:center;justify-content:space-between;gap:10px;border-left:3px solid var(--accent);padding:7px 10px;background:#f4f8ff}.workspace-task.error{border-left-color:var(--danger);background:var(--danger-bg)}.workspace-body{min-height:0;overflow:auto;padding:18px 20px}.workspace-panel[hidden]{display:none!important}.workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.workspace-toolbar h3{margin:0;font-size:16px}.workspace-toolbar .actions{margin-top:0}.workspace-empty{padding:34px 12px;text-align:center;color:var(--muted)}.status-online,.status-stale,.status-offline,.status-queued,.status-delivered,.status-applied,.status-failed{display:inline-flex;border-radius:999px;padding:3px 8px;font-weight:650;font-size:12px}.status-online,.status-applied{background:var(--ok-bg);color:var(--ok)}.status-stale,.status-queued,.status-delivered{background:#fff7e8;color:var(--warn)}.status-offline,.status-failed{background:var(--danger-bg);color:var(--danger)}.endpoint-main{display:grid;gap:3px}.endpoint-main strong{font-size:13px}.endpoint-config{max-width:310px;word-break:break-word}.pending-note{color:var(--warn);font-size:11px;font-weight:650}.action-menu{position:relative}.action-menu summary{list-style:none;cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:#fff;font-size:12px;font-weight:650}.action-menu summary::-webkit-details-marker{display:none}.action-menu[open] .action-menu-popover{display:grid}.action-menu-popover{display:none;position:absolute;z-index:5;right:0;top:36px;width:140px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 16px 36px rgba(29,29,31,.16)}.action-menu-popover button{width:100%;justify-content:flex-start;background:#fff;color:var(--text);border-color:transparent;box-shadow:none}.action-menu-popover button.danger{color:var(--danger)}.sort-list{display:grid;gap:8px;margin-top:12px}.sort-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;border:1px solid var(--soft-line);border-radius:8px;padding:8px 10px}.change-summary{margin:12px 0 0;padding:10px 12px;background:var(--panel-soft);border:1px solid var(--soft-line);border-radius:8px}.secret-value{white-space:pre-wrap;word-break:break-all;padding:12px;background:#111;color:#fff;border-radius:8px;min-height:48px}.telemetry-range{display:flex;gap:6px}.telemetry-range button.active{background:var(--accent);border-color:var(--accent);color:#fff}.ai-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;gap:10px;align-items:end}.ai-score{font-size:20px;font-weight:700}.ai-score.insufficient{font-size:13px;color:var(--muted)}.ai-settings-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.report-links{display:flex;gap:6px;flex-wrap:wrap}
     #generated{white-space:pre-wrap;word-break:break-all;background:#fff;border:1px solid var(--soft-line);border-radius:8px;padding:12px;margin-top:12px;min-height:188px;max-height:280px;overflow:auto}.message{min-height:20px;margin-top:12px;color:var(--danger);font-size:13px}.empty{text-align:center;color:var(--muted);padding:26px!important}
     @media(max-width:1100px){.admin-shell{grid-template-columns:1fr}.sidebar{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--soft-line)}.page-tabs{grid-template-columns:repeat(5,minmax(0,1fr))}.content{padding:20px}.topbar{margin:-20px -20px 18px;padding:16px 20px}.overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.generate-grid{grid-template-columns:1fr}}
-    @media(max-width:720px){html,body{overflow-x:hidden}.topbar{align-items:flex-start;flex-direction:column}.toolbar{width:100%;justify-content:space-between}.page-tabs{grid-template-columns:1fr 1fr}.overview-grid,.row{grid-template-columns:1fr}.content{width:100%;max-width:100vw;overflow-x:hidden;padding:14px}.topbar{margin:-14px -14px 16px;padding:14px}.sidebar{padding:16px}.permission-grid{grid-template-columns:1fr}.device-workspace{width:100vw;border-left:0}.workspace-header{padding:16px 14px 12px}.workspace-tabs{padding:8px}.workspace-body{padding:14px}.workspace-toolbar{align-items:flex-start;flex-direction:column}.workspace-toolbar .actions{width:100%}.remote-endpoint-dialog{width:calc(100% - 20px)}}
+    @media(max-width:720px){html,body{overflow-x:hidden}.topbar{align-items:flex-start;flex-direction:column}.toolbar{width:100%;justify-content:space-between}.page-tabs{grid-template-columns:1fr 1fr}.overview-grid,.row,.ai-settings-grid,.ai-toolbar{grid-template-columns:1fr}.content{width:100%;max-width:100vw;overflow-x:hidden;padding:14px}.topbar{margin:-14px -14px 16px;padding:14px}.sidebar{padding:16px}.permission-grid{grid-template-columns:1fr}.device-workspace{width:100vw;border-left:0}.workspace-header{padding:16px 14px 12px}.workspace-tabs{padding:8px}.workspace-body{padding:14px}.workspace-toolbar{align-items:flex-start;flex-direction:column}.workspace-toolbar .actions{width:100%}.remote-endpoint-dialog{width:calc(100% - 20px)}}
   </style>
 </head>
 <body>
@@ -282,6 +288,8 @@ const adminHTML = `<!doctype html>
         <button type="button" data-page-target="cards" onclick="showPage('cards')">卡密</button>
         <button type="button" data-page-target="accounts" onclick="showPage('accounts')">后台账号</button>
         <button type="button" data-page-target="devices" onclick="showPage('devices')">设备授权</button>
+        <button type="button" data-page-target="ai" onclick="showPage('ai')">AI 分析</button>
+        <button type="button" data-page-target="reports" onclick="showPage('reports')">客户报告</button>
         <button type="button" data-page-target="history" onclick="showPage('history')">历史记录</button>
       </nav>
       <div class="sidebar-footer">
@@ -347,6 +355,35 @@ const adminHTML = `<!doctype html>
         <section class="admin-page" data-page="devices">
           <div class="section-head"><div><h2>设备授权</h2><p>默认隐藏敏感值，按需展开查看。</p></div><button id="devicePrivacyBulkButton" class="secondary small-btn" onclick="toggleAllDevicePrivacy()" title="显示当前列表全部设备ID和IP">批量可视</button></div>
           <div class="table-wrap"><table><thead><tr><th>归属</th><th>设备ID</th><th>备注</th><th>状态</th><th>当前到期</th><th>最近校验</th><th>平台/版本</th><th>IP</th><th>兑换次数</th><th>操作</th></tr></thead><tbody id="devices"><tr><td colspan="10" class="empty">加载中</td></tr></tbody></table></div>
+        </section>
+        <section class="admin-page" data-page="ai">
+          <div class="section-head"><div><h2>AI 稳定性分析</h2><p>确定性指标为事实来源，AI 仅生成解释与运维建议。</p></div><a href="https://ainexus.wenche.xyz/ui/" target="_blank" rel="noopener"><button type="button" class="secondary">供应商管理</button></a></div>
+          <div class="ai-settings-grid">
+            <div><label>分析模型</label><select id="aiModel"><option value="">未配置</option></select></div>
+            <div><label>每日任务</label><input id="aiDailyTime" value="02:30"></div>
+            <div><label>月报任务</label><input id="aiMonthlyTime" value="09:00"></div>
+          </div>
+          <div class="actions"><label class="inline-check"><input id="aiEnabled" type="checkbox">启用模型分析</label><button id="aiSaveButton" onclick="saveAISettings()">保存设置</button><button class="secondary" onclick="loadAIModels()">刷新模型</button><button id="aiRunButton" class="secondary" onclick="runAIAnalysis()">立即分析近24小时</button></div>
+          <div class="ai-toolbar">
+            <div><label>归属账号</label><select id="aiOwner"></select></div>
+            <div><label>统计范围</label><select id="aiRange" onchange="refreshAIAnalysis()"><option value="24h">近24小时</option><option value="7d">近7天</option><option value="30d">近30天</option></select></div>
+            <button class="secondary" onclick="refreshAIAnalysis()">刷新分析</button>
+          </div>
+          <div class="detail-label">供应商稳定性</div>
+          <div class="table-wrap"><table><thead><tr><th>API Host</th><th>请求</th><th>错误</th><th>供应商失败</th><th>设备</th><th>评分</th><th>最近</th></tr></thead><tbody id="aiSuppliers"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table></div>
+          <div class="detail-label">诊断结果</div>
+          <div class="table-wrap"><table><thead><tr><th>归因</th><th>供应商/端点</th><th>严重度</th><th>置信度</th><th>次数</th><th>建议</th><th>时间</th></tr></thead><tbody id="aiFindings"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table></div>
+          <div class="detail-label">任务记录</div>
+          <div class="table-wrap"><table><thead><tr><th>ID</th><th>类型</th><th>周期</th><th>状态</th><th>尝试</th><th>错误</th><th>创建</th></tr></thead><tbody id="aiJobs"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table></div>
+        </section>
+        <section class="admin-page" data-page="reports">
+          <div class="section-head"><div><h2>客户报告</h2><p>按归属账号生成月度稳定性报告，由管理员审核后交付。</p></div></div>
+          <div class="ai-toolbar">
+            <div><label>归属账号</label><select id="reportOwner"></select></div>
+            <div><label>报告月份</label><input id="reportMonth" type="month"></div>
+            <button id="reportGenerateButton" onclick="generateAIReport()">生成月报</button>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th>ID</th><th>归属</th><th>标题</th><th>统计周期</th><th>生成时间</th><th>下载</th></tr></thead><tbody id="aiReports"><tr><td colspan="6" class="empty">加载中</td></tr></tbody></table></div>
         </section>
         <section class="admin-page" data-page="history">
           <div class="section-head"><div><h2>历史记录</h2><p>保留操作轨迹，便于审计和追踪。</p></div><label class="inline-check"><input id="showRefresh" type="checkbox" onchange="renderHistory()">显示自动刷新</label></div>
@@ -479,13 +516,16 @@ const adminHTML = `<!doctype html>
     let remoteConfirmationExpected = '';
     let remoteSecretPlaintext = '';
     let remoteSecretClearTimer = 0;
+    let aiSettings = null;
+    let aiModelRows = [];
     const remoteCommandPollers = new Map();
     let revealedDeviceIndexes = new Set();
     const permissionCatalog = [
       ['cards:view','看卡密'],['cards:generate','生成卡密'],['cards:disable','禁用卡密'],['cards:delete','删除卡密'],
       ['devices:view','看设备'],['devices:remark','备注设备'],['devices:expiry','改到期'],['activations:disable','禁用授权'],
       ['devices:remote:view','远程查看'],['devices:remote:write','远程维护'],['devices:remote:secrets','查看密钥'],
-      ['accounts:view','看账号'],['accounts:manage','管账号'],['history:view','看历史']
+      ['accounts:view','看账号'],['accounts:manage','管账号'],['history:view','看历史'],
+      ['ai:analysis:view','看AI分析'],['ai:analysis:run','运行AI分析'],['ai:reports:view','看客户报告'],['ai:settings:manage','维护AI设置']
     ];
     const historyBody = document.getElementById('history');
     const showRefreshInput = document.getElementById('showRefresh');
@@ -563,19 +603,25 @@ const adminHTML = `<!doctype html>
     function accountLabel(account){return account ? account.username+' #'+account.id : '-'}
     function ownerLabel(row){return esc(row.ownerUsername || row.ownerAccountId || '-')}
     function showPage(page){
-      const allowed = new Set(['generate','cards','accounts','devices','history']);
+      const allowed = new Set(['generate','cards','accounts','devices','ai','reports','history']);
       if (!allowed.has(page)) page = 'cards';
       document.querySelectorAll('[data-page]').forEach(section => { section.hidden = section.getAttribute('data-page') !== page; });
       document.querySelectorAll('[data-page-target]').forEach(button => { button.classList.toggle('active', button.getAttribute('data-page-target') === page); });
       if (location.hash !== '#'+page) history.replaceState(null, '', '#'+page);
+      if(page==='ai')refreshAIAnalysis();
+      if(page==='reports')refreshAIReports();
     }
     function refreshAccountSelectors(){
       const visible = accountRows.length ? accountRows : (currentAccount ? [currentAccount] : []);
       ownerAccount.innerHTML = visible.map(a => '<option value="'+a.id+'">'+esc(accountLabel(a))+'</option>').join('');
       accountParent.innerHTML = visible.map(a => '<option value="'+a.id+'">'+esc(accountLabel(a))+'</option>').join('');
+      if(typeof aiOwner!=='undefined')aiOwner.innerHTML=(isRootAccount()?'<option value="0">全部账号</option>':'')+visible.map(a => '<option value="'+a.id+'">'+esc(accountLabel(a))+'</option>').join('');
+      if(typeof reportOwner!=='undefined')reportOwner.innerHTML=visible.map(a => '<option value="'+a.id+'">'+esc(accountLabel(a))+'</option>').join('');
       if (currentAccount) {
         ownerAccount.value = String(currentAccount.id);
         accountParent.value = String(currentAccount.id);
+        if(typeof aiOwner!=='undefined'&&!isRootAccount())aiOwner.value=String(currentAccount.id);
+        if(typeof reportOwner!=='undefined')reportOwner.value=String(currentAccount.id);
       }
     }
     async function refreshAccounts(){
@@ -594,8 +640,8 @@ const adminHTML = `<!doctype html>
     }
     function defaultPermissionsForLevel(level){
       if (level === 1) return permissionCatalog.map(p => p[0]);
-      if (level === 2) return ['cards:view','cards:generate','cards:disable','devices:view','devices:remark','devices:expiry','devices:remote:view','devices:remote:write','activations:disable','accounts:view','accounts:manage','history:view'];
-      return ['cards:view','cards:generate','cards:disable','devices:view','devices:remark','devices:expiry','devices:remote:view','devices:remote:write','activations:disable','history:view'];
+      if (level === 2) return ['cards:view','cards:generate','cards:disable','devices:view','devices:remark','devices:expiry','devices:remote:view','devices:remote:write','activations:disable','accounts:view','accounts:manage','history:view','ai:analysis:view','ai:analysis:run','ai:reports:view'];
+      return ['cards:view','cards:generate','cards:disable','devices:view','devices:remark','devices:expiry','devices:remote:view','devices:remote:write','activations:disable','history:view','ai:analysis:view','ai:reports:view'];
     }
     async function createAccount(){
       setError('');
@@ -1137,7 +1183,60 @@ const adminHTML = `<!doctype html>
     async function disableCard(id){if(confirm('禁用这张卡密？该卡对应的激活会立即失效，到期时间会同步调整。')){try{await api('/api/admin/cards/'+id+'/disable',{method:'POST'});await refreshAll();}catch(err){setError(err);}}}
     async function deleteCard(id){if(confirm('删除这张卡密及其设备激活记录？')){try{await api('/api/admin/cards/'+id,{method:'DELETE'});await refreshAll();}catch(err){setError(err);}}}
     async function disableActivation(id){if(confirm('禁用这条授权明细？它的到期时间会立即调整。')){try{await api('/api/admin/activations/'+id+'/disable',{method:'POST'});await refreshAll();}catch(err){setError(err);}}}
-    async function refreshAll(){setError('');try{await refreshMe();await refreshAccounts();await Promise.all([refreshCards(),refreshDevices(),refreshHistory()]);}catch(err){setError(err);}}
+    function aiOwnerQuery(){const value=Number((typeof aiOwner!=='undefined'&&aiOwner.value)||0);return value>0?'&ownerAccountId='+encodeURIComponent(value):''}
+    function aiRangeDates(){const hours=({'24h':24,'7d':168,'30d':720}[(typeof aiRange!=='undefined'&&aiRange.value)||'24h']||24);const to=new Date();const from=new Date(to.getTime()-hours*60*60*1000);return {from:from.toISOString(),to:to.toISOString()}}
+    function aiClassificationName(value){return ({supplier_issue:'供应商问题',customer_network:'客户网络',customer_config_or_account:'客户配置/账户',unknown:'证据不足'}[value]||value||'-')}
+    function aiJobStatusName(value){return ({queued:'等待执行',running:'分析中',completed:'已完成',failed:'失败',skipped_no_ai_provider:'无AI供应商'}[value]||value||'-')}
+    function renderAIModelOptions(){if(typeof aiModel==='undefined')return;const selected=(aiSettings&&aiSettings.model)||aiModel.value||'';const values=Array.from(new Set([selected].concat(aiModelRows||[]).filter(Boolean)));aiModel.innerHTML='<option value="">未配置</option>'+values.map(value=>'<option value="'+esc(value)+'">'+esc(value)+'</option>').join('');aiModel.value=selected}
+    async function loadAISettings(){
+      if(!can('ai:analysis:view'))return;
+      aiSettings=await api('/api/admin/ai/settings');
+      aiEnabled.checked=!!aiSettings.enabled;
+      aiDailyTime.value=aiSettings.dailyTime||'02:30';
+      aiMonthlyTime.value=aiSettings.monthlyTime||'09:00';
+      aiSaveButton.disabled=!can('ai:settings:manage');
+      aiRunButton.disabled=!can('ai:analysis:run');
+      reportGenerateButton.disabled=!can('ai:analysis:run');
+      renderAIModelOptions();
+    }
+    async function loadAIModels(){if(!can('ai:settings:manage'))return;try{const data=await api('/api/admin/ai/models');aiModelRows=data.models||[];renderAIModelOptions()}catch(err){setError(err)}}
+    async function saveAISettings(){
+      if(!can('ai:settings:manage'))return;
+      try{
+        aiSettings=await api('/api/admin/ai/settings',{method:'PUT',body:JSON.stringify({enabled:aiEnabled.checked,model:aiModel.value,timezone:'Asia/Shanghai',dailyTime:aiDailyTime.value,monthlyTime:aiMonthlyTime.value,promptVersion:(aiSettings&&aiSettings.promptVersion)||'endpoint-stability-v1'})});
+        message.textContent='AI 分析设置已保存';
+        renderAIModelOptions();
+      }catch(err){setError(err)}
+    }
+    async function refreshAIAnalysis(){
+      if(!currentAccount||!can('ai:analysis:view'))return;
+      const range=aiRangeDates();const owner=aiOwnerQuery();const suffix='?from='+encodeURIComponent(range.from)+'&to='+encodeURIComponent(range.to)+owner;
+      try{
+        const results=await Promise.all([api('/api/admin/ai/suppliers/summary'+suffix),api('/api/admin/ai/findings'+suffix+'&limit=100'),api('/api/admin/ai/jobs'+suffix+'&limit=50')]);
+        const suppliers=results[0]||[];const findings=results[1]||[];const jobs=results[2]||[];
+        aiSuppliers.innerHTML=suppliers.length?suppliers.map(item=>'<tr><td class="mono">'+esc(item.apiHost||'-')+'</td><td>'+esc(item.requests||0)+'</td><td>'+esc(item.errors||0)+'</td><td>'+esc(item.supplierFailures||0)+'</td><td>'+esc(item.deviceCount||0)+'</td><td>'+(item.sampleSufficient?'<span class="ai-score">'+esc(Number(item.score||0).toFixed(2))+'</span>':'<span class="ai-score insufficient">样本不足</span>')+'</td><td>'+dt(item.lastSeen)+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">暂无使用量窗口；客户端产生下一份快照后开始统计</td></tr>';
+        aiFindings.innerHTML=findings.length?findings.map(item=>'<tr><td>'+esc(aiClassificationName(item.classification))+'</td><td class="mono">'+esc(item.apiHost||item.endpointName||'-')+'</td><td>'+esc(item.severity||'-')+'</td><td>'+esc(Math.round(Number(item.confidence||0)*100))+'%</td><td>'+esc(item.count||0)+'</td><td>'+esc(item.recommendation||'-')+'</td><td>'+dt(item.createdAt)+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">暂无诊断结果</td></tr>';
+        aiJobs.innerHTML=jobs.length?jobs.map(item=>'<tr><td>'+esc(item.id)+'</td><td>'+esc(item.jobType)+'</td><td>'+dt(item.periodStart)+'<br><span class="muted">至 '+dt(item.periodEnd)+'</span></td><td>'+esc(aiJobStatusName(item.status))+'</td><td>'+esc(item.attempts||0)+'</td><td class="status-failed">'+esc(item.error||'-')+'</td><td>'+dt(item.createdAt)+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">暂无分析任务</td></tr>';
+      }catch(err){setError(err)}
+    }
+    async function runAIAnalysis(){
+      if(!can('ai:analysis:run'))return;
+      const range=aiRangeDates();
+      try{await api('/api/admin/ai/jobs',{method:'POST',body:JSON.stringify({jobType:'manual',ownerAccountId:Number(aiOwner.value||0),from:range.from,to:range.to})});message.textContent='分析任务已进入队列';setTimeout(refreshAIAnalysis,1200)}catch(err){setError(err)}
+    }
+    function ensureReportMonth(){if(reportMonth.value)return;const date=new Date();date.setMonth(date.getMonth()-1);reportMonth.value=date.toISOString().slice(0,7)}
+    async function refreshAIReports(){
+      if(!currentAccount||!can('ai:reports:view'))return;
+      ensureReportMonth();
+      const owner=Number(reportOwner.value||0);const suffix=owner>0?'?ownerAccountId='+encodeURIComponent(owner):'';
+      try{const rows=await api('/api/admin/ai/reports'+suffix);aiReports.innerHTML=rows.length?rows.map(item=>'<tr><td>'+esc(item.id)+'</td><td>'+esc(item.ownerAccountId||'全部')+'</td><td>'+esc(item.title)+'</td><td>'+dt(item.periodStart)+'<br><span class="muted">至 '+dt(item.periodEnd)+'</span></td><td>'+dt(item.createdAt)+'</td><td><div class="report-links"><a target="_blank" rel="noopener" href="/api/admin/ai/reports/'+item.id+'/html">HTML</a><a target="_blank" rel="noopener" href="/api/admin/ai/reports/'+item.id+'/json">JSON</a><a href="/api/admin/ai/reports/'+item.id+'/csv">CSV</a></div></td></tr>').join(''):'<tr><td colspan="6" class="empty">暂无客户报告</td></tr>'}catch(err){setError(err)}
+    }
+    async function generateAIReport(){
+      if(!can('ai:analysis:run'))return;
+      ensureReportMonth();const start=new Date(reportMonth.value+'-01T00:00:00');const end=new Date(start);end.setMonth(end.getMonth()+1);
+      try{await api('/api/admin/ai/reports/generate',{method:'POST',body:JSON.stringify({ownerAccountId:Number(reportOwner.value||0),from:start.toISOString(),to:end.toISOString()})});message.textContent='月报任务已进入队列';setTimeout(refreshAIReports,1500)}catch(err){setError(err)}
+    }
+    async function refreshAll(){setError('');try{await refreshMe();await refreshAccounts();await Promise.all([refreshCards(),refreshDevices(),refreshHistory()]);if(can('ai:analysis:view'))await loadAISettings();if(can('ai:analysis:view'))await refreshAIAnalysis();if(can('ai:reports:view'))await refreshAIReports();}catch(err){setError(err);}}
     async function copyGenerated(){try{await navigator.clipboard.writeText(generated.textContent || '');}catch(err){setError(err);}}
     async function logout(){try{await api('/api/admin/logout',{method:'POST'});}finally{location.replace('/admin/login');}}
     showPage((location.hash || '#cards').slice(1));

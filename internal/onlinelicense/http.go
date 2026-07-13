@@ -146,6 +146,30 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveAdmin(w, r, h.handleEndpointErrorTelemetry)
 	case path == "/api/admin/telemetry/endpoint-errors/summary":
 		h.serveAdmin(w, r, h.handleEndpointErrorTelemetry)
+	case path == "/api/admin/ai/settings":
+		if r.Method == http.MethodGet {
+			h.serveAdmin(w, r, h.handleAISettings)
+		} else {
+			h.serveAdminMutation(w, r, h.handleAISettings)
+		}
+	case path == "/api/admin/ai/models":
+		h.serveAdmin(w, r, h.handleAIModels)
+	case path == "/api/admin/ai/jobs":
+		if r.Method == http.MethodGet {
+			h.serveAdmin(w, r, h.handleAIJobs)
+		} else {
+			h.serveAdminMutation(w, r, h.handleAIJobs)
+		}
+	case path == "/api/admin/ai/findings":
+		h.serveAdmin(w, r, h.handleAIFindings)
+	case path == "/api/admin/ai/suppliers/summary":
+		h.serveAdmin(w, r, h.handleAISupplierSummary)
+	case path == "/api/admin/ai/reports":
+		h.serveAdmin(w, r, h.handleAIReports)
+	case path == "/api/admin/ai/reports/generate":
+		h.serveAdminMutation(w, r, h.handleAIGenerateReport)
+	case strings.HasPrefix(path, "/api/admin/ai/reports/"):
+		h.serveAdmin(w, r, h.handleAIReportDownload)
 	case strings.HasPrefix(path, "/api/admin/devices/") && strings.Contains(path, "/remote/commands/"):
 		h.serveAdmin(w, r, h.handleRemoteCommandStatus)
 	case strings.HasPrefix(path, "/api/admin/devices/") && strings.HasSuffix(path, "/remote/commands"):

@@ -219,7 +219,7 @@ func (s *SQLiteStore) init() error {
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_license_cards_owner ON license_cards(owner_account_id)`); err != nil {
 		return err
 	}
-	return nil
+	return s.initAIStore()
 }
 
 func (s *SQLiteStore) UpsertRemoteDeviceState(state *RemoteDeviceState, now time.Time) error {
@@ -286,6 +286,19 @@ func (s *SQLiteStore) UpsertRemoteSnapshot(deviceID string, snapshot RemoteSnaps
 			_ = tx.Rollback()
 		}
 	}()
+	var previous *RemoteSnapshot
+	var previousRaw string
+	if err := tx.QueryRow(`SELECT snapshot_json FROM license_remote_snapshots WHERE device_id=?`, deviceID).Scan(&previousRaw); err == nil {
+		var parsed RemoteSnapshot
+		if json.Unmarshal([]byte(previousRaw), &parsed) == nil {
+			previous = &parsed
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err := recordSnapshotUsageTx(tx, deviceID, previous, snapshot, now); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`
 		INSERT INTO license_remote_snapshots (device_id, snapshot_json, updated_at)
 		VALUES (?, ?, ?)

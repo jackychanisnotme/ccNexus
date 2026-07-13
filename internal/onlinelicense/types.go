@@ -70,6 +70,7 @@ const (
 type Options struct {
 	Now                       func() time.Time
 	RemoteSecretRevealEnabled bool
+	AIProvider                AIProvider
 }
 
 type GenerateCardsRequest struct {

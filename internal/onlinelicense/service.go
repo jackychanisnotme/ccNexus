@@ -96,6 +96,7 @@ type Service struct {
 	publicKey                 ed25519.PublicKey
 	now                       func() time.Time
 	remoteSecretRevealEnabled bool
+	aiProvider                AIProvider
 }
 
 type ticketPayload struct {
@@ -121,6 +122,7 @@ func NewService(store Store, privateKey ed25519.PrivateKey, opts Options) *Servi
 		privateKey:                privateKey,
 		now:                       time.Now,
 		remoteSecretRevealEnabled: opts.RemoteSecretRevealEnabled,
+		aiProvider:                opts.AIProvider,
 	}
 	if opts.Now != nil {
 		service.now = opts.Now
@@ -1493,6 +1495,9 @@ func defaultPermissionsForLevel(level int) []string {
 			PermissionHistoryView,
 			PermissionAccountsView,
 			PermissionAccountsManage,
+			PermissionAIAnalysisView,
+			PermissionAIAnalysisRun,
+			PermissionAIReportsView,
 		}
 	case AdminLevelDistributor:
 		return []string{
@@ -1507,6 +1512,8 @@ func defaultPermissionsForLevel(level int) []string {
 			PermissionActivationsView,
 			PermissionActivationsDisable,
 			PermissionHistoryView,
+			PermissionAIAnalysisView,
+			PermissionAIReportsView,
 		}
 	default:
 		return []string{}
@@ -1530,6 +1537,10 @@ func allAdminPermissions() []string {
 		PermissionHistoryView,
 		PermissionAccountsView,
 		PermissionAccountsManage,
+		PermissionAIAnalysisView,
+		PermissionAIAnalysisRun,
+		PermissionAIReportsView,
+		PermissionAISettingsManage,
 	}
 }
 

@@ -38,6 +38,8 @@ func TestAdminHTMLHasModuleNavigation(t *testing.T) {
 		{"cards", "卡密"},
 		{"accounts", "后台账号"},
 		{"devices", "设备授权"},
+		{"ai", "AI 分析"},
+		{"reports", "客户报告"},
 		{"history", "历史记录"},
 	} {
 		button := `data-page-target="` + item.id + `"`
@@ -66,6 +68,16 @@ func TestAdminHTMLHasModuleNavigation(t *testing.T) {
 	}
 	if !strings.Contains(adminHTML, "**") {
 		t.Fatalf("devices page missing default masked placeholder")
+	}
+	for _, marker := range []string{
+		"/api/admin/ai/settings",
+		"/api/admin/ai/suppliers/summary",
+		"/api/admin/ai/reports/generate",
+		"https://ainexus.wenche.xyz/ui/",
+	} {
+		if !strings.Contains(adminHTML, marker) {
+			t.Fatalf("admin page missing AI operations marker %s", marker)
+		}
 	}
 }
 
